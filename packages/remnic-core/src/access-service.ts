@@ -4224,23 +4224,14 @@ export class EngramAccessService {
     } catch (err) {
       throw new EngramAccessInputError((err as Error).message);
     }
-    const { promises: fs } = await import("node:fs");
-    const path = await import("node:path");
-    const identityFile = path.join(
-      this.orchestrator.config.memoryDir,
-      "peers",
-      peerId,
-      "identity.md",
-    );
-    try {
-      await fs.unlink(identityFile);
-      return { ok: true, deleted: true };
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return { ok: true, deleted: false };
-      }
-      throw err;
-    }
+    // Cursor M (PR #756 review): route through `peers.deletePeer` so
+    // the unlink runs `assertPeerDirNotEscaped`, the peers-root
+    // symlink check, and the parent-inode-stable / O_NOFOLLOW guards
+    // shared with `readPeer`/`writePeer`. A manual `path.join` +
+    // raw `fs.unlink` would let a symlinked `peers/<id>/` redirect
+    // the delete to an arbitrary `identity.md` outside `memoryDir`.
+    const deleted = await peers.deletePeer(this.orchestrator.config.memoryDir, peerId);
+    return { ok: true, deleted };
   }
 
   /**

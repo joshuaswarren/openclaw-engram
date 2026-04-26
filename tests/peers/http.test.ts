@@ -255,3 +255,78 @@ test("POST /engram/v1/peers/:id — 405 method not allowed", async () => {
     await server.stop();
   }
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// PR #756 review: input-hardening for the peer ID surface.
+// ──────────────────────────────────────────────────────────────────────
+
+test("GET /engram/v1/peers/:id — malformed percent-encoding returns 400 not 500", async () => {
+  // Codex P2 #1 (PR #756): a path segment like `%E0%A4%A` is malformed
+  // percent-encoding. The handler must convert the URIError into a 400
+  // client-error rather than letting it bubble up as a 500.
+  const service = createFakeService();
+  const server = new EngramAccessHttpServer({ service, authToken: AUTH_TOKEN });
+  const { port } = await server.start();
+  try {
+    const { status, json } = await request(port, "GET", "/engram/v1/peers/%E0%A4%A");
+    assert.equal(status, 400);
+    const body = json as { error: string; code: string };
+    assert.equal(body.code, "input_error");
+    assert.match(body.error, /percent-encoded/);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("PUT /engram/v1/peers/:id — non-string `kind` is rejected with 400", async () => {
+  // Codex P2 #2 (PR #756): a payload like `{ "kind": 123 }` previously
+  // got coerced to undefined and silently fell back to the "human"
+  // default on create. The handler must reject the malformed type up
+  // front rather than producing an unintended record.
+  const service = createFakeService();
+  const server = new EngramAccessHttpServer({ service, authToken: AUTH_TOKEN });
+  const { port } = await server.start();
+  try {
+    const { status, json } = await request(port, "PUT", "/engram/v1/peers/bob", { kind: 123 });
+    assert.equal(status, 400);
+    const body = json as { error: string; code: string };
+    assert.equal(body.code, "input_error");
+    assert.match(body.error, /kind must be a string/);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("PUT /engram/v1/peers/:id — non-string `displayName` is rejected with 400", async () => {
+  const service = createFakeService();
+  const server = new EngramAccessHttpServer({ service, authToken: AUTH_TOKEN });
+  const { port } = await server.start();
+  try {
+    const { status, json } = await request(port, "PUT", "/engram/v1/peers/bob", {
+      displayName: 42,
+    });
+    assert.equal(status, 400);
+    const body = json as { error: string; code: string };
+    assert.equal(body.code, "input_error");
+    assert.match(body.error, /displayName must be a string/);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("PUT /engram/v1/peers/:id — non-string `notes` is rejected with 400", async () => {
+  const service = createFakeService();
+  const server = new EngramAccessHttpServer({ service, authToken: AUTH_TOKEN });
+  const { port } = await server.start();
+  try {
+    const { status, json } = await request(port, "PUT", "/engram/v1/peers/bob", {
+      notes: { a: 1 },
+    });
+    assert.equal(status, 400);
+    const body = json as { error: string; code: string };
+    assert.equal(body.code, "input_error");
+    assert.match(body.error, /notes must be a string/);
+  } finally {
+    await server.stop();
+  }
+});

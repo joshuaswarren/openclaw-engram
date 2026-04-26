@@ -108,6 +108,19 @@ function parseTrustZoneFilter(raw: string | null): TrustZoneName | undefined {
   throw new HttpError(400, "zone must be one of quarantine|working|trusted", "invalid_zone_filter");
 }
 
+/**
+ * Decode a `:peerId` URL path segment, converting malformed percent-encoded
+ * input (e.g., `%E0%A4%A`) into a 400 client error rather than letting
+ * `URIError` bubble up as a 500 `internal_error`.
+ */
+function decodePeerIdSegment(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    throw new EngramAccessInputError("peerId path segment is not valid percent-encoded input");
+  }
+}
+
 export class EngramAccessHttpServer {
   private readonly service: EngramAccessService;
   private readonly host: string;
@@ -1137,7 +1150,7 @@ export class EngramAccessHttpServer {
         this.respondJson(res, 405, { error: "method_not_allowed", code: "method_not_allowed" });
         return;
       }
-      const peerId = decodeURIComponent(peerProfileMatch[1] ?? "");
+      const peerId = decodePeerIdSegment(peerProfileMatch[1] ?? "");
       const result = await this.service.peerProfileGet(peerId);
       if (!result.found) {
         this.respondJson(res, 404, { error: "peer_profile_not_found", code: "peer_profile_not_found" });
@@ -1149,7 +1162,7 @@ export class EngramAccessHttpServer {
 
     const peerIdMatch = /^\/engram\/v1\/peers\/([^/]+)$/.exec(pathname);
     if (peerIdMatch) {
-      const peerId = decodeURIComponent(peerIdMatch[1] ?? "");
+      const peerId = decodePeerIdSegment(peerIdMatch[1] ?? "");
 
       if (req.method === "GET") {
         const result = await this.service.peerGet(peerId);
@@ -1163,6 +1176,22 @@ export class EngramAccessHttpServer {
 
       if (req.method === "PUT") {
         const body = await this.readJsonBody(req) as Record<string, unknown>;
+        // Reject malformed types up front rather than silently dropping them
+        // to undefined and letting peerSet fall back to defaults
+        // (CLAUDE.md rule 51: no silent defaults on bad input).
+        if ("kind" in body && body.kind !== undefined && typeof body.kind !== "string") {
+          throw new EngramAccessInputError("kind must be a string when provided");
+        }
+        if (
+          "displayName" in body &&
+          body.displayName !== undefined &&
+          typeof body.displayName !== "string"
+        ) {
+          throw new EngramAccessInputError("displayName must be a string when provided");
+        }
+        if ("notes" in body && body.notes !== undefined && typeof body.notes !== "string") {
+          throw new EngramAccessInputError("notes must be a string when provided");
+        }
         const result = await this.service.peerSet({
           id: peerId,
           kind: typeof body.kind === "string" ? body.kind : undefined,

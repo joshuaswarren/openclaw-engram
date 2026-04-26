@@ -7715,56 +7715,28 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             console.error("peer id is required");
             process.exit(1);
           }
-          const peersSet = await import("./peers/index.js");
-          const validateIdSet: (id: unknown) => void = peersSet.assertValidPeerId;
+          // Cursor L (PR #756 review): route through EngramAccessService.peerSet
+          // so the CLI shares the canonical create-or-update flow (existence
+          // check, kind validation, immutable-field preservation, notes/displayName
+          // merge) with HTTP and MCP. Reimplementing here previously risked
+          // silent divergence when the service-layer semantics changed.
+          const peerSetService = new EngramAccessService(orchestrator);
           try {
-            validateIdSet(id);
+            const result = await peerSetService.peerSet({
+              id,
+              ...(typeof options.kind === "string" ? { kind: options.kind } : {}),
+              ...(typeof options.displayName === "string" ? { displayName: options.displayName } : {}),
+              ...(typeof options.notes === "string" ? { notes: options.notes } : {}),
+            });
+            if (options.json === true) {
+              console.log(JSON.stringify(result, null, 2));
+              return;
+            }
+            console.log(`${result.created ? "Created" : "Updated"} peer "${id}".`);
           } catch (err) {
-            console.error(`Invalid peer id: ${(err as Error).message}`);
+            console.error(`Failed to set peer: ${(err as Error).message}`);
             process.exit(1);
           }
-          const memoryDir = orchestrator.config.memoryDir;
-          const now = new Date().toISOString();
-          const existing = await peersSet.readPeer(memoryDir, id);
-          const ALLOWED_KINDS = new Set(["self", "human", "agent", "integration"]);
-          let peer: import("./peers/types.js").Peer;
-          let created: boolean;
-          if (!existing) {
-            const kind = (typeof options.kind === "string" ? options.kind : "human");
-            if (!ALLOWED_KINDS.has(kind)) {
-              console.error(`Invalid kind "${kind}". Must be one of: ${[...ALLOWED_KINDS].join(", ")}`);
-              process.exit(1);
-            }
-            peer = {
-              id,
-              kind: kind as import("./peers/types.js").PeerKind,
-              displayName: typeof options.displayName === "string" ? options.displayName : id,
-              createdAt: now,
-              updatedAt: now,
-              ...(typeof options.notes === "string" ? { notes: options.notes } : {}),
-            };
-            created = true;
-          } else {
-            peer = {
-              id: existing.id,
-              kind: existing.kind,
-              createdAt: existing.createdAt,
-              updatedAt: now,
-              displayName: typeof options.displayName === "string" ? options.displayName : existing.displayName,
-              ...(options.notes !== undefined
-                ? { notes: options.notes as string }
-                : existing.notes !== undefined
-                  ? { notes: existing.notes }
-                  : {}),
-            };
-            created = false;
-          }
-          await peersSet.writePeer(memoryDir, peer);
-          if (options.json === true) {
-            console.log(JSON.stringify({ ok: true, created, peer }, null, 2));
-            return;
-          }
-          console.log(`${created ? "Created" : "Updated"} peer "${id}".`);
         });
 
       peerCmd
@@ -7778,32 +7750,24 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             console.error("peer id is required");
             process.exit(1);
           }
-          const peersDelete = await import("./peers/index.js");
-          const validateIdDelete: (id: unknown) => void = peersDelete.assertValidPeerId;
+          // Cursor M (PR #756 review): route through EngramAccessService.peerDelete
+          // so the CLI gets the same `assertPeerDirNotEscaped` + symlink + parent-
+          // inode-stable guards used by HTTP and MCP. The previous direct
+          // `path.join` + `fs.unlink` bypassed the storage module's protections
+          // and would have followed a symlinked `peers/<id>/` to an arbitrary
+          // `identity.md` outside `memoryDir`.
+          const peerDeleteService = new EngramAccessService(orchestrator);
           try {
-            validateIdDelete(id);
+            const result = await peerDeleteService.peerDelete(id);
+            if (options.json === true) {
+              console.log(JSON.stringify(result, null, 2));
+              return;
+            }
+            console.log(result.deleted ? `Deleted peer "${id}".` : `Peer "${id}" not found (no-op).`);
           } catch (err) {
-            console.error(`Invalid peer id: ${(err as Error).message}`);
+            console.error(`Failed to delete peer: ${(err as Error).message}`);
             process.exit(1);
           }
-          const { promises: fsP } = await import("node:fs");
-          const pathM = await import("node:path");
-          const identityFile = pathM.join(orchestrator.config.memoryDir, "peers", id, "identity.md");
-          let deleted = false;
-          try {
-            await fsP.unlink(identityFile);
-            deleted = true;
-          } catch (err) {
-            if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-              console.error(`Failed to delete peer: ${(err as Error).message}`);
-              process.exit(1);
-            }
-          }
-          if (options.json === true) {
-            console.log(JSON.stringify({ ok: true, deleted }, null, 2));
-            return;
-          }
-          console.log(deleted ? `Deleted peer "${id}".` : `Peer "${id}" not found (no-op).`);
         });
 
       peerCmd
