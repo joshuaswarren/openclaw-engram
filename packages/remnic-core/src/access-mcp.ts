@@ -1002,6 +1002,76 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
+      // ── Peer Registry tools (issue #679 PR 4/5) ─────────────────────────
+      {
+        name: "engram.peer_list",
+        description:
+          "List all registered peers in the peer registry (issue #679). Returns an array of peer identity records sorted alphabetically by id.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.peer_get",
+        description:
+          "Get a single peer by id. Returns the peer's identity record or { found: false } when not found (issue #679).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Peer id to look up." },
+          },
+          required: ["id"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.peer_set",
+        description:
+          "Create or update a peer identity record (issue #679). On first write, creates the peer with the given kind (default 'human'). On subsequent writes, updates displayName and/or notes; kind and createdAt are immutable.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Peer id — must match PEER_ID_PATTERN." },
+            kind: {
+              type: "string",
+              enum: ["self", "human", "agent", "integration"],
+              description: "Kind of peer. Required on first write; ignored on updates.",
+            },
+            displayName: { type: "string", description: "Human-readable display name." },
+            notes: { type: "string", description: "Optional free-form markdown notes." },
+          },
+          required: ["id"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.peer_delete",
+        description:
+          "Delete a peer's identity record (issue #679). Idempotent — succeeds even if the peer does not exist. The peer directory is preserved so profile and interaction-log data are not destroyed.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Peer id to delete." },
+          },
+          required: ["id"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.peer_profile_get",
+        description:
+          "Get the evolving cognitive profile for a peer (issue #679). Returns the profile written by the async reasoner (PR 2/5), or { found: false } if no profile has been generated yet.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Peer id whose profile to retrieve." },
+          },
+          required: ["id"],
+          additionalProperties: false,
+        },
+      },
     ].flatMap((tool) => withToolAliases(tool));
   }
 
@@ -1992,6 +2062,53 @@ export class EngramMcpServer {
           },
         );
         return { results };
+      }
+      // ── Peer Registry dispatchers (issue #679 PR 4/5) ─────────────────
+      case "engram.peer_list":
+      case "remnic.peer_list":
+        return this.service.peerList();
+      case "engram.peer_get":
+      case "remnic.peer_get": {
+        const id = typeof args.id === "string" ? args.id : "";
+        if (!id) throw new Error("engram.peer_get: id is required");
+        return this.service.peerGet(id);
+      }
+      case "engram.peer_set":
+      case "remnic.peer_set": {
+        const id = typeof args.id === "string" ? args.id : "";
+        if (!id) throw new Error("engram.peer_set: id is required");
+        // Codex P2 (PR #756 round 2): mirror the HTTP surface — reject
+        // non-string `kind`/`displayName`/`notes` rather than silently
+        // coercing to `undefined` and letting peerSet fall back to its
+        // "human" default. Symmetry across access surfaces (CLAUDE.md
+        // rule 39) and no-silent-defaults on bad input (rule 51).
+        if (args.kind !== undefined && typeof args.kind !== "string") {
+          throw new Error("engram.peer_set: kind must be a string when provided");
+        }
+        if (args.displayName !== undefined && typeof args.displayName !== "string") {
+          throw new Error("engram.peer_set: displayName must be a string when provided");
+        }
+        if (args.notes !== undefined && typeof args.notes !== "string") {
+          throw new Error("engram.peer_set: notes must be a string when provided");
+        }
+        return this.service.peerSet({
+          id,
+          kind: typeof args.kind === "string" ? args.kind : undefined,
+          displayName: typeof args.displayName === "string" ? args.displayName : undefined,
+          notes: typeof args.notes === "string" ? args.notes : undefined,
+        });
+      }
+      case "engram.peer_delete":
+      case "remnic.peer_delete": {
+        const id = typeof args.id === "string" ? args.id : "";
+        if (!id) throw new Error("engram.peer_delete: id is required");
+        return this.service.peerDelete(id);
+      }
+      case "engram.peer_profile_get":
+      case "remnic.peer_profile_get": {
+        const id = typeof args.id === "string" ? args.id : "";
+        if (!id) throw new Error("engram.peer_profile_get: id is required");
+        return this.service.peerProfileGet(id);
       }
       default:
         throw new Error(`unknown tool: ${name}`);

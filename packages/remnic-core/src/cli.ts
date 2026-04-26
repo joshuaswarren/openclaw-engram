@@ -7637,6 +7637,188 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log(renderStatusReport(report));
         });
 
+      // ── Peer Registry subcommand (issue #679 PR 4/5) ────────────────────
+      const peerCmd = cmd.command("peer").description("Manage the peer registry (issue #679).");
+
+      peerCmd
+        .command("list")
+        .description("List all registered peers")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const { listPeers } = await import("./peers/index.js");
+          const peers = await listPeers(orchestrator.config.memoryDir);
+          if (options.json === true) {
+            console.log(JSON.stringify({ peers }, null, 2));
+            return;
+          }
+          if (peers.length === 0) {
+            console.log("No peers registered.");
+            return;
+          }
+          console.log(`${peers.length} peer(s):\n`);
+          for (const p of peers) {
+            console.log(`  ${p.id} (${p.kind})  ${p.displayName}`);
+            console.log(`    created: ${p.createdAt}  updated: ${p.updatedAt}`);
+          }
+        });
+
+      peerCmd
+        .command("show <id>")
+        .description("Show a peer's identity record")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const id = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!id) {
+            console.error("peer id is required");
+            process.exit(1);
+          }
+          const peersShow = await import("./peers/index.js");
+          const validateIdShow: (id: unknown) => void = peersShow.assertValidPeerId;
+          try {
+            validateIdShow(id);
+          } catch (err) {
+            console.error(`Invalid peer id: ${(err as Error).message}`);
+            process.exit(1);
+          }
+          const peer = await peersShow.readPeer(orchestrator.config.memoryDir, id);
+          if (!peer) {
+            console.error(`Peer "${id}" not found.`);
+            process.exit(1);
+          }
+          if (options.json === true) {
+            console.log(JSON.stringify(peer, null, 2));
+            return;
+          }
+          console.log(`Peer: ${peer.id}`);
+          console.log(`  Kind:         ${peer.kind}`);
+          console.log(`  Display name: ${peer.displayName}`);
+          console.log(`  Created:      ${peer.createdAt}`);
+          console.log(`  Updated:      ${peer.updatedAt}`);
+          if (peer.notes) {
+            console.log(`  Notes:\n${peer.notes.split("\n").map((l) => `    ${l}`).join("\n")}`);
+          }
+        });
+
+      peerCmd
+        .command("set <id>")
+        .description("Create or update a peer identity record")
+        // Cursor H (PR #756 round 2): no Commander default for --kind. A
+        // default would make `options.kind` always present, so the CLI
+        // would forward kind on every call — including updates where
+        // the user only set --display-name. peerSet treats kind as
+        // immutable on update, but forcing the default also overrides
+        // any future change to the service-layer create-time default.
+        // Let the service own the default; the CLI only forwards an
+        // explicit --kind flag.
+        .option("--kind <kind>", "Peer kind: self | human | agent | integration (only on first write)")
+        .option("--display-name <name>", "Human-readable display name")
+        .option("--notes <text>", "Optional free-form markdown notes")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const id = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!id) {
+            console.error("peer id is required");
+            process.exit(1);
+          }
+          // Cursor L (PR #756 review): route through EngramAccessService.peerSet
+          // so the CLI shares the canonical create-or-update flow (existence
+          // check, kind validation, immutable-field preservation, notes/displayName
+          // merge) with HTTP and MCP. Reimplementing here previously risked
+          // silent divergence when the service-layer semantics changed.
+          const peerSetService = new EngramAccessService(orchestrator);
+          try {
+            const result = await peerSetService.peerSet({
+              id,
+              ...(typeof options.kind === "string" ? { kind: options.kind } : {}),
+              ...(typeof options.displayName === "string" ? { displayName: options.displayName } : {}),
+              ...(typeof options.notes === "string" ? { notes: options.notes } : {}),
+            });
+            if (options.json === true) {
+              console.log(JSON.stringify(result, null, 2));
+              return;
+            }
+            console.log(`${result.created ? "Created" : "Updated"} peer "${id}".`);
+          } catch (err) {
+            console.error(`Failed to set peer: ${(err as Error).message}`);
+            process.exit(1);
+          }
+        });
+
+      peerCmd
+        .command("delete <id>")
+        .description("Delete a peer's identity record (idempotent; directory and profile are preserved)")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const id = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!id) {
+            console.error("peer id is required");
+            process.exit(1);
+          }
+          // Cursor M (PR #756 review): route through EngramAccessService.peerDelete
+          // so the CLI gets the same `assertPeerDirNotEscaped` + symlink + parent-
+          // inode-stable guards used by HTTP and MCP. The previous direct
+          // `path.join` + `fs.unlink` bypassed the storage module's protections
+          // and would have followed a symlinked `peers/<id>/` to an arbitrary
+          // `identity.md` outside `memoryDir`.
+          const peerDeleteService = new EngramAccessService(orchestrator);
+          try {
+            const result = await peerDeleteService.peerDelete(id);
+            if (options.json === true) {
+              console.log(JSON.stringify(result, null, 2));
+              return;
+            }
+            console.log(result.deleted ? `Deleted peer "${id}".` : `Peer "${id}" not found (no-op).`);
+          } catch (err) {
+            console.error(`Failed to delete peer: ${(err as Error).message}`);
+            process.exit(1);
+          }
+        });
+
+      peerCmd
+        .command("profile <id>")
+        .description("Show the evolving cognitive profile for a peer")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const id = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!id) {
+            console.error("peer id is required");
+            process.exit(1);
+          }
+          const peersProfile = await import("./peers/index.js");
+          const validateIdProfile: (id: unknown) => void = peersProfile.assertValidPeerId;
+          try {
+            validateIdProfile(id);
+          } catch (err) {
+            console.error(`Invalid peer id: ${(err as Error).message}`);
+            process.exit(1);
+          }
+          const profile = await peersProfile.readPeerProfile(orchestrator.config.memoryDir, id);
+          if (!profile) {
+            console.error(`No profile found for peer "${id}". The profile is written by the async reasoner.`);
+            process.exit(1);
+          }
+          if (options.json === true) {
+            console.log(JSON.stringify(profile, null, 2));
+            return;
+          }
+          console.log(`Profile for peer: ${id}`);
+          console.log(`  Updated: ${profile.updatedAt}`);
+          const fieldKeys = Object.keys(profile.fields);
+          if (fieldKeys.length === 0) {
+            console.log("  No profile fields yet.");
+          } else {
+            for (const k of fieldKeys) {
+              console.log(`  ${k}:`);
+              console.log(`    ${profile.fields[k]}`);
+            }
+          }
+        });
+
       // ── Console subcommand (issue #688) ─────────────────────────────────
       // PR 1/3 (#721) shipped the structured engine-state aggregator
       // and the `--state-only` flag (one-shot JSON snapshot). PR 2/3

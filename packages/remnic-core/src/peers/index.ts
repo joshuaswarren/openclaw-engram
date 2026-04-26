@@ -24,6 +24,7 @@ export {
   assertValidPeerId,
   readPeer,
   writePeer,
+  deletePeer,
   listPeers,
   appendInteractionLog,
   readInteractionLogRaw,
