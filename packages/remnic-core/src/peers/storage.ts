@@ -15,8 +15,55 @@
  * throw). Reading malformed files throws — callers can catch and recover.
  */
 
-import { promises as fs } from "node:fs";
+import { promises as fs, constants as fsConstants } from "node:fs";
 import path from "node:path";
+
+/**
+ * Atomic, symlink-rejecting open: returns a file handle whose
+ * underlying open(2) call carried `O_NOFOLLOW`, so the kernel itself
+ * refuses to follow a symlink at the target path. Closes the
+ * check-then-use TOCTOU race that a separate `assertPathNotSymlink`
+ * + `fs.writeFile` pattern leaves open (codex P1 round 5 on PR #723).
+ */
+async function openNoFollow(file: string, flags: number): Promise<import("node:fs/promises").FileHandle> {
+  return fs.open(file, flags | fsConstants.O_NOFOLLOW);
+}
+
+/** Read a file, refusing to follow symlinks at the kernel level. */
+async function readFileNoFollow(file: string): Promise<string> {
+  const fh = await openNoFollow(file, fsConstants.O_RDONLY);
+  try {
+    return await fh.readFile("utf8");
+  } finally {
+    await fh.close();
+  }
+}
+
+/** Overwrite a file, refusing to follow symlinks at the kernel level. */
+async function writeFileNoFollow(file: string, data: string): Promise<void> {
+  const fh = await openNoFollow(
+    file,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC,
+  );
+  try {
+    await fh.writeFile(data, "utf8");
+  } finally {
+    await fh.close();
+  }
+}
+
+/** Append to a file, refusing to follow symlinks at the kernel level. */
+async function appendFileNoFollow(file: string, data: string): Promise<void> {
+  const fh = await openNoFollow(
+    file,
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_APPEND,
+  );
+  try {
+    await fh.writeFile(data, "utf8");
+  } finally {
+    await fh.close();
+  }
+}
 
 import {
   PEER_ID_MAX_LENGTH,
@@ -122,26 +169,6 @@ async function assertPeersRootNotSymlink(memoryDir: string): Promise<void> {
   }
   if (rootStat && rootStat.isSymbolicLink()) {
     throw new Error(`peers root "${root}" is a symlink and is rejected`);
-  }
-}
-
-/**
- * Reject any path that exists and is a symlink. Used to gate every
- * file-level I/O so a malicious `peers/<id>/identity.md → /etc/passwd`
- * can't redirect a read or a write to an arbitrary file (codex P1 #2
- * on PR #723). Returns silently when the path does not exist (writes
- * create files under directories that have already been validated).
- */
-async function assertPathNotSymlink(p: string): Promise<void> {
-  let stat: import("node:fs").Stats | null = null;
-  try {
-    stat = await fs.lstat(p);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    return;
-  }
-  if (stat.isSymbolicLink()) {
-    throw new Error(`path "${p}" is a symlink and is rejected`);
   }
 }
 
@@ -351,10 +378,9 @@ export async function readPeer(
   // Codex P1 #2: even with the directory validated, a symlinked
   // identity.md inside a real peer dir would let us read arbitrary
   // out-of-scope files. Reject symlinks at the file level too.
-  await assertPathNotSymlink(file);
   let raw: string;
   try {
-    raw = await fs.readFile(file, "utf8");
+    raw = await readFileNoFollow(file);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return null;
@@ -427,8 +453,7 @@ export async function writePeer(memoryDir: string, peer: Peer): Promise<void> {
   const file = identityPath(memoryDir, peer.id);
   // Codex P1 #2: reject if identity.md exists as a symlink so we
   // don't follow it on overwrite.
-  await assertPathNotSymlink(file);
-  await fs.writeFile(file, emitPeerIdentity(peer), "utf8");
+  await writeFileNoFollow(file, emitPeerIdentity(peer));
 }
 
 /**
@@ -545,13 +570,12 @@ export async function appendInteractionLog(
   await fs.mkdir(dir, { recursive: true });
   await assertPeerDirNotEscaped(memoryDir, peerId);
   const file = interactionsPath(memoryDir, peerId);
-  await assertPathNotSymlink(file);
   const line = formatLogEntry(entry) + "\n";
   // `appendFile` creates the file if it does not exist. POSIX guarantees
   // writes < PIPE_BUF are atomic; entries on this path are well under
   // that bound. Ordering across concurrent writers is the caller's
   // responsibility for now — the reasoner runs serially in PR 2/5.
-  await fs.appendFile(file, line, "utf8");
+  await appendFileNoFollow(file, line);
   return file;
 }
 
@@ -686,10 +710,9 @@ export async function readPeerProfile(
   assertValidPeerId(peerId);
   await assertPeerDirNotEscaped(memoryDir, peerId);
   const file = profilePath(memoryDir, peerId);
-  await assertPathNotSymlink(file);
   let raw: string;
   try {
-    raw = await fs.readFile(file, "utf8");
+    raw = await readFileNoFollow(file);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return null;
@@ -715,8 +738,7 @@ export async function writePeerProfile(
   await fs.mkdir(dir, { recursive: true });
   await assertPeerDirNotEscaped(memoryDir, profile.peerId);
   const file = profilePath(memoryDir, profile.peerId);
-  await assertPathNotSymlink(file);
-  await fs.writeFile(file, emitPeerProfile(profile), "utf8");
+  await writeFileNoFollow(file, emitPeerProfile(profile));
 }
 
 /**
@@ -733,9 +755,8 @@ export async function readInteractionLogRaw(
   assertValidPeerId(peerId);
   await assertPeerDirNotEscaped(memoryDir, peerId);
   const file = interactionsPath(memoryDir, peerId);
-  await assertPathNotSymlink(file);
   try {
-    return await fs.readFile(file, "utf8");
+    return await readFileNoFollow(file);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return "";
