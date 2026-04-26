@@ -229,7 +229,13 @@ export async function replayTrace(
 ): Promise<ReplayTraceResult> {
   const output: Writable = options.output ?? process.stdout;
   const speed = normalizeSpeed(options.speed);
-  const sleep = options.sleep ?? defaultSleep;
+  // Codex P2: when the caller did not override `sleep`, bind the
+  // abort signal into the default sleeper so a SIGINT mid-wait
+  // resolves the timer immediately instead of leaving Ctrl-C
+  // unresponsive for up to MAX_REPLAY_DELAY_MS (60s). Custom sleep
+  // implementations are responsible for their own abort wiring.
+  const sleep =
+    options.sleep ?? ((ms: number) => defaultSleep(ms, options.signal));
   const manageCursor = options.manageCursor ?? true;
   const nowFn =
     options.now ??
@@ -380,8 +386,34 @@ function normalizeSpeed(speed: number | undefined): number {
   return speed;
 }
 
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Default sleep used by `replayTrace` between frames. Honors an
+ * optional `AbortSignal` so SIGINT can interrupt long inter-frame
+ * waits (the captured-time delta is clamped at 60s, but even a few
+ * seconds of `setTimeout` would otherwise leave Ctrl-C unresponsive).
+ * Resolves on either timer expiry OR signal abort. The replay loop
+ * checks `signal.aborted` immediately after `await sleep(...)`, so a
+ * signal-driven early resolve still triggers a clean exit.
+ */
+function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    let onAbort: (() => void) | null = null;
+    if (signal) {
+      onAbort = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
 }
 
 function safeWrite(output: Writable, chunk: string): void {

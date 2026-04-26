@@ -274,6 +274,52 @@ test("recorder error path does not crash on poisoned writes", async () => {
   });
 });
 
+test("replayTrace defaultSleep aborts immediately on signal (Codex P2 regression)", async () => {
+  // Regression for Codex review on PR #732: the default sleep used
+  // setTimeout with no abort hook, so SIGINT mid-wait could leave
+  // Ctrl-C unresponsive for up to MAX_REPLAY_DELAY_MS (60s). The
+  // default sleep is now bound to options.signal; aborting during a
+  // wait must resolve the sleep promise immediately.
+  await withTempDir(async (dir) => {
+    const tracePath = path.join(dir, "trace.jsonl");
+    const recorder = await openTraceRecorder(tracePath);
+    // Two frames 5 seconds apart — without abort wiring, replay
+    // would block for 5s after the first frame paints.
+    await recorder.append(
+      makeSnapshot({ capturedAt: "2026-04-26T00:00:00.000Z" }),
+    );
+    await recorder.append(
+      makeSnapshot({ capturedAt: "2026-04-26T00:00:05.000Z" }),
+    );
+    await recorder.close();
+
+    const stream = new CaptureStream();
+    const ac = new AbortController();
+    // Abort 50ms after replay starts — should land mid-sleep on
+    // the 5000ms inter-frame wait.
+    setTimeout(() => ac.abort(), 50);
+
+    const start = Date.now();
+    const result = await replayTrace(tracePath, {
+      output: stream,
+      manageCursor: false,
+      signal: ac.signal,
+      // Use the default sleep (no override) so we exercise the
+      // abort-aware code path.
+    });
+    const elapsed = Date.now() - start;
+
+    // Without the fix, this would take ~5000ms. With the fix, it
+    // resolves shortly after the abort fires (well under 1s).
+    assert.ok(
+      elapsed < 1000,
+      `expected abort to short-circuit sleep, took ${elapsed}ms`,
+    );
+    // First frame should have rendered before the abort interrupted.
+    assert.equal(result.framesRendered, 1);
+  });
+});
+
 test("recorder close() drains pending writes (Codex P1 regression)", async () => {
   // Regression for Codex review on PR #732: `close()` must NOT flip
   // `closed = true` before draining the write chain. Queued writes

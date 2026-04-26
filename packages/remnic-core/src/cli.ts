@@ -7422,8 +7422,22 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             await handle.done;
           } finally {
             if (recorder) {
+              // Codex P1: `recorder.close()` drains the internal
+              // writeChain, which can block indefinitely on a wedged
+              // network-backed filesystem. Race the drain against a
+              // 5s deadline so Ctrl-C exits the CLI cleanly even when
+              // a write is stuck. The error path (lastError) was
+              // already captured for any partial write that did
+              // commit. Honors the existing "don't block CLI exit on
+              // a stuck flush" intent of this finally block.
+              const CLOSE_TIMEOUT_MS = 5000;
               try {
-                await recorder.close();
+                await Promise.race([
+                  recorder.close(),
+                  new Promise<void>((resolve) =>
+                    setTimeout(resolve, CLOSE_TIMEOUT_MS),
+                  ),
+                ]);
               } catch {
                 // best effort — don't block CLI exit on a stuck flush
               }
