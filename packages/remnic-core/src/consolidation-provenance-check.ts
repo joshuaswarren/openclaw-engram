@@ -426,10 +426,11 @@ export async function runConsolidationProvenanceCheck(options: {
       for (const entry of derivedFrom!) {
         // Pattern-reinforcement (issue #687 PR 2/4) records source
         // memory IDs directly in `derived_from` rather than
-        // page-versioning snapshot references.  Memory IDs cannot
-        // contain `:` or `/`, so they unambiguously distinguish from
-        // the `<path>:<version>` form (PR #730 review feedback,
-        // Codex P2).  For ID-shaped entries we skip the snapshot
+        // page-versioning snapshot references.  Memory IDs may
+        // contain `:` for namespace-prefixed forms like
+        // `global:fact-abc-123`, but never `/` or `.` — those remain
+        // exclusive to snapshot paths (PR #730 review feedback,
+        // Codex P1).  For ID-shaped entries we skip the snapshot
         // file check entirely — pattern-reinforcement does not
         // produce snapshots.
         if (DERIVED_FROM_MEMORY_ID_RE.test(entry)) {

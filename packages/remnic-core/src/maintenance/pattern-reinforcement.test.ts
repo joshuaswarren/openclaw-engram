@@ -574,3 +574,174 @@ test("runPatternReinforcement: identical text in different categories is NOT cro
     `decision-category memory must not be touched; got ${JSON.stringify(decisionWrites)}`,
   );
 });
+
+// ─── PR #730 Codex P2: timestamp comparison handles mixed precision/format ────
+
+test("runPatternReinforcement: pickCanonical compares ms-precision against second-precision correctly", async () => {
+  // Same-instant memories with different ISO precision: a pure
+  // string-compare would order `2026-04-26T10:00:00Z` BEFORE
+  // `2026-04-26T10:00:00.000Z` (shorter sort first), but both encode
+  // the same instant.  The newer timestamp must still win.
+  const dupContent = "Mixed precision timestamps.";
+  const memories = [
+    makeMemory({
+      id: "m-second-precision",
+      content: dupContent,
+      created: "2026-04-25T09:00:00Z",
+      updated: "2026-04-25T09:00:00Z",
+    }),
+    makeMemory({
+      id: "m-ms-precision",
+      content: dupContent,
+      created: "2026-04-26T09:00:00.500Z",
+      updated: "2026-04-26T09:00:00.500Z",
+    }),
+  ];
+  const { stub } = makeStorageStub(memories);
+
+  const result = await runPatternReinforcement(stub, {
+    categories: ["preference"],
+    minCount: 2,
+    now: frozenNow,
+  });
+
+  assert.equal(result.clustersFound, 1);
+  // The ms-precision memory is genuinely newer (next day); confirm
+  // instant comparison preserves that across precision differences.
+  assert.equal(result.clusters[0].canonicalId, "m-ms-precision");
+});
+
+// ─── PR #730 Codex P2: refresh canonical when membership changes ─────────────
+
+test("runPatternReinforcement: refreshes canonical provenance when cluster membership rotates (Codex P2)", async () => {
+  // Models a stable canonical whose provenance was set with one
+  // member set, then a different member set arrives in a later run
+  // (same total size, different identities).  The canonical's
+  // `derived_from` must be refreshed even though
+  // `reinforcement_count` is unchanged — otherwise the on-disk
+  // provenance silently drifts away from the actual contributors.
+  const dupContent = "membership rotation";
+  const memories = [
+    // Canonical sits at count=3 with stale provenance pointing at
+    // members that no longer all exist (m-stale was archived
+    // out-of-band; we simulate that by omitting it from the corpus).
+    // The canonical remains the most-recent active member.
+    makeMemory({
+      id: "m-canon",
+      content: dupContent,
+      updated: "2026-05-01T00:00:00Z",
+      reinforcement_count: 3,
+      last_reinforced_at: "2026-03-01T00:00:00.000Z",
+      derived_via: "pattern-reinforcement",
+      derived_from: ["m-canon", "m-stale", "m-old-superseded"],
+    }),
+    // A still-active older duplicate that was always part of the
+    // cluster but never made canonical.
+    makeMemory({
+      id: "m-old-superseded",
+      content: dupContent,
+      updated: "2026-02-01T00:00:00Z",
+      status: "superseded",
+      supersededBy: "m-canon",
+    }),
+    // A new active duplicate from a later session, but still older
+    // than the canonical so the canonical does NOT pivot.
+    makeMemory({
+      id: "m-new-active",
+      content: dupContent,
+      updated: "2026-04-15T00:00:00Z",
+    }),
+  ];
+  const { stub, writes } = makeStorageStub(memories);
+
+  const result = await runPatternReinforcement(stub, {
+    categories: ["preference"],
+    minCount: 3,
+    now: frozenNow,
+  });
+
+  assert.equal(result.clustersFound, 1);
+  // Cluster size unchanged (3) but membership differs.
+  assert.equal(result.clusters[0]?.count, 3);
+  // The reinforcement counter did NOT bump (still 3) — the canonical
+  // was refreshed purely because membership changed.
+  assert.equal(result.clusters[0]?.reinforcementBumped, false);
+  assert.equal(result.canonicalsUpdated, 1);
+  // Canonical did NOT pivot — m-canon is still the most-recent
+  // active member.
+  assert.equal(result.clusters[0]?.canonicalId, "m-canon");
+  // The freshly-written canonical's `derived_from` reflects the
+  // current cluster membership only — no stale ID.
+  const canonicalWrite = writes.find(
+    (w) => w.memoryId === "m-canon" && w.patch.derived_via === "pattern-reinforcement",
+  );
+  assert.ok(
+    canonicalWrite,
+    "canonical must be patched even when reinforcement_count is unchanged",
+  );
+  assert.deepEqual(
+    [...(canonicalWrite!.patch.derived_from ?? [])].sort(),
+    ["m-canon", "m-new-active", "m-old-superseded"],
+  );
+  assert.equal(canonicalWrite!.patch.last_reinforced_at, FROZEN_NOW.toISOString());
+});
+
+test("runPatternReinforcement: canonical growth still refreshes provenance and bumps count", async () => {
+  // Existing canonical at count=3 with provenance.  Two new
+  // duplicates arrive.  Cluster size grows to 5; provenance must
+  // expand to include them.
+  const dupContent = "growing cluster";
+  const memories = [
+    makeMemory({
+      id: "m-old1",
+      content: dupContent,
+      updated: "2026-01-01T00:00:00Z",
+      status: "superseded",
+      supersededBy: "m-canon",
+    }),
+    makeMemory({
+      id: "m-old2",
+      content: dupContent,
+      updated: "2026-02-01T00:00:00Z",
+      status: "superseded",
+      supersededBy: "m-canon",
+    }),
+    makeMemory({
+      id: "m-canon",
+      content: dupContent,
+      updated: "2026-03-01T00:00:00Z",
+      reinforcement_count: 3,
+      last_reinforced_at: "2026-03-01T00:00:00.000Z",
+      derived_via: "pattern-reinforcement",
+      derived_from: ["m-canon", "m-old1", "m-old2"],
+    }),
+    makeMemory({
+      id: "m-new1",
+      content: dupContent,
+      updated: "2026-04-10T00:00:00Z",
+    }),
+    makeMemory({
+      id: "m-new2",
+      content: dupContent,
+      updated: "2026-04-20T00:00:00Z",
+    }),
+  ];
+  const { stub, writes } = makeStorageStub(memories);
+
+  const result = await runPatternReinforcement(stub, {
+    categories: ["preference"],
+    minCount: 3,
+    now: frozenNow,
+  });
+  assert.equal(result.clusters[0]?.count, 5);
+  assert.equal(result.clusters[0]?.reinforcementBumped, true);
+  const canonicalWrite = writes.find(
+    (w) => w.memoryId === "m-new2" && w.patch.derived_via === "pattern-reinforcement",
+  );
+  assert.ok(canonicalWrite);
+  assert.equal(canonicalWrite!.patch.reinforcement_count, 5);
+  assert.deepEqual(
+    [...(canonicalWrite!.patch.derived_from ?? [])].sort(),
+    ["m-canon", "m-new1", "m-new2", "m-old1", "m-old2"],
+  );
+});

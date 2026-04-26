@@ -98,6 +98,45 @@ test("isValidDerivedFromEntry accepts memory-id-shaped entries (issue #687 PR 2/
   assert.equal(isValidDerivedFromEntry("m-1"), true);
   assert.equal(isValidDerivedFromEntry("alpha"), true);
   assert.equal(isValidDerivedFromEntry("Mem_Underscored-Allowed"), true);
+  // Common bare-id form used by extraction.
+  assert.equal(isValidDerivedFromEntry("fact-abc-123"), true);
+});
+
+test("isValidDerivedFromEntry accepts namespace-prefixed memory IDs containing colons (PR #730 Codex P1)", () => {
+  // Namespace-prefixed IDs like `global:fact-abc-123` are a real
+  // shape this codebase already handles in graph retrieval
+  // (`stripDerivedFromVersion`).  The validator must NOT reject them
+  // just because they contain `:`.  Disambiguation against the
+  // `<path>:<version>` form is by checking whether the trailing
+  // segment is integer AND the left side looks like a path.
+  assert.equal(
+    isValidDerivedFromEntry("global:fact-abc-123"),
+    true,
+    "namespace-prefixed memory id must be accepted",
+  );
+  assert.equal(
+    isValidDerivedFromEntry("entity:person-alice"),
+    true,
+    "entity-prefixed memory id must be accepted",
+  );
+  assert.equal(
+    isValidDerivedFromEntry("tenant:proj:fact-xyz"),
+    true,
+    "multi-colon memory id must be accepted",
+  );
+});
+
+test("isValidDerivedFromEntry: snapshot-vs-id disambiguation handles ambiguous tail-numeric ids", () => {
+  // `path/file.md:42` is a valid snapshot reference (left side has
+  // `/` and `.`).  `global:42` is a valid memory id whose tail
+  // happens to be numeric — it must NOT be misclassified as a
+  // snapshot because there is no path-shaped left side.  This
+  // matches the precedence used by `stripDerivedFromVersion` in
+  // `graph-retrieval.ts`.
+  assert.equal(isValidDerivedFromEntry("path/file.md:42"), true, "valid snapshot reference");
+  assert.equal(isValidDerivedFromEntry("global:42"), true, "valid memory id with numeric tail");
+  // A memory id with no colon and no path characters is also valid.
+  assert.equal(isValidDerivedFromEntry("fact-abc-123"), true, "bare memory id");
 });
 
 test("isValidDerivedFromEntry rejects non-string values", () => {

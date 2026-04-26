@@ -2694,6 +2694,12 @@ export class Orchestrator {
    * review feedback, Codex P2).  Pass `force: true` for ad-hoc
    * operator runs that must bypass the cadence floor — mirrors the
    * pattern used by other maintenance MCP tools.
+   *
+   * `force` deliberately does NOT bypass the master
+   * `patternReinforcementEnabled` flag (PR #730 review feedback,
+   * Cursor Medium).  Operators who have explicitly disabled the
+   * feature must not have their corpus mutated by an MCP tool call —
+   * the only way to run the job is to enable the feature in config.
    */
   async runPatternReinforcement(options: {
     force?: boolean;
@@ -2705,7 +2711,9 @@ export class Orchestrator {
     result?: PatternReinforcementResult;
   }> {
     const cadenceKey = options.namespace ?? "";
-    if (!this.config.patternReinforcementEnabled && !options.force) {
+    // Master switch: a disabled feature is never bypassed, even with
+    // force=true.  `force` only relaxes the cadence floor below.
+    if (!this.config.patternReinforcementEnabled) {
       return { ran: false, skippedReason: "disabled", namespace: cadenceKey };
     }
     const cadence = this.config.patternReinforcementCadenceMs;

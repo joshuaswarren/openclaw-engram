@@ -61,36 +61,81 @@ const DERIVED_FROM_ENTRY_RE = /^(.+):(\d+)$/;
  * Regular expression for validating a memory-id `derived_from` entry
  * (issue #687 PR 2/4).  Pattern reinforcement records source memory IDs
  * directly rather than page-versioning snapshots, so we also need to
- * accept that shape.  Memory IDs are alphanumeric with hyphens or
- * underscores — crucially, they MUST NOT contain `:` or `/` so they
- * cannot collide with the `<path>:<version>` form.
+ * accept that shape.
+ *
+ * Memory IDs are alphanumeric with hyphens, underscores, or COLONS —
+ * the namespace-prefixed form (e.g. `global:fact-abc-123`,
+ * `entity:person-alice`) is a legitimate ID format already used
+ * throughout the graph-retrieval code path (`stripDerivedFromVersion`).
+ * The disambiguation against `<path>:<version>` is *not* "no colons
+ * allowed" — it's "the segment after the last colon must NOT be a
+ * non-negative integer" (PR #730 review feedback, Codex P1).
+ *
+ * Slashes and dots remain forbidden so paths cannot accidentally pass
+ * as memory IDs.
  *
  * Exported so the consolidation-provenance integrity scanner (PR
  * #730 review feedback) can recognize bare memory IDs instead of
  * flagging them as malformed snapshot references.
  */
-export const DERIVED_FROM_MEMORY_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+export const DERIVED_FROM_MEMORY_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_:-]*$/;
+
+/**
+ * Disambiguator: an entry is a `<path>:<version>` snapshot reference
+ * iff it ends with `:<digits>` AND the left side contains a `/` or
+ * `.` (path-shape).  Without the path-shape requirement a legitimate
+ * namespace-prefixed memory id like `global:42` would be silently
+ * misinterpreted as a snapshot reference.
+ *
+ * This mirrors the precedence used by `stripDerivedFromVersion` in
+ * `graph-retrieval.ts`: only strip the trailing `:<digits>` when the
+ * left side actually looks like a stored path.
+ */
+function looksLikeSnapshotEntry(entry: string): boolean {
+  const match = entry.match(DERIVED_FROM_ENTRY_RE);
+  if (!match) return false;
+  const pathPart = match[1];
+  // A real snapshot path always contains a directory separator or a
+  // file extension dot.  Memory IDs use neither.
+  return pathPart.includes("/") || pathPart.includes(".");
+}
 
 /**
  * Validate a `derived_from` entry string.  Returns `true` for either
  * - the snapshot format `<non-empty path>:<integer >= 0>` (issue #561), or
- * - a memory-id of the form `<prefix>-<ts>-<suffix>` (issue #687 PR 2/4
- *   — used by pattern-reinforcement provenance).
+ * - a memory-id of the form `[A-Za-z0-9][A-Za-z0-9_:-]*` (issue #687
+ *   PR 2/4 — used by pattern-reinforcement provenance).  Memory IDs
+ *   may include `:` for namespace-prefixed forms like
+ *   `global:fact-abc-123` (PR #730 review feedback, Codex P1).
+ *
+ * Disambiguation rule: only treat the entry as `<path>:<version>` when
+ * the trailing segment after the last `:` is a non-negative integer
+ * AND the left side looks like a path (contains `/` or `.`).
+ * Otherwise treat the entire string as a memory ID.  This is the same
+ * heuristic the graph retrieval path uses when splitting derived_from
+ * references back into a memory id.
  *
  * Kept pure so storage and future CLI/doctor paths can share the same
  * validator.
  */
 export function isValidDerivedFromEntry(entry: unknown): entry is string {
   if (typeof entry !== "string") return false;
-  // Memory-id form takes precedence: it has no `:` so it cannot collide
-  // with the `<path>:<version>` form.
-  if (DERIVED_FROM_MEMORY_ID_RE.test(entry)) return true;
-  const match = entry.match(DERIVED_FROM_ENTRY_RE);
-  if (!match) return false;
-  const pathPart = match[1];
-  if (pathPart.length === 0 || pathPart.trim().length === 0) return false;
-  const versionNum = Number(match[2]);
-  return Number.isInteger(versionNum) && versionNum >= 0;
+  if (entry.length === 0) return false;
+  // Snapshot format takes precedence ONLY when the left side looks
+  // like a real path.  This avoids misclassifying memory IDs whose
+  // tail happens to be numeric (e.g. `global:42`).
+  if (looksLikeSnapshotEntry(entry)) {
+    const match = entry.match(DERIVED_FROM_ENTRY_RE);
+    if (!match) return false;
+    const pathPart = match[1];
+    if (pathPart.length === 0 || pathPart.trim().length === 0) return false;
+    const versionNum = Number(match[2]);
+    return Number.isInteger(versionNum) && versionNum >= 0;
+  }
+  // Otherwise treat as a memory ID.  Empty or `:`-only entries are
+  // already excluded by the leading-alphanumeric requirement of the
+  // regex.
+  return DERIVED_FROM_MEMORY_ID_RE.test(entry);
 }
 
 /**

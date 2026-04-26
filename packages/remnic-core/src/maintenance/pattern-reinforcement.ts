@@ -274,9 +274,31 @@ export async function runPatternReinforcement(
     const newCount = cluster.length;
     const reinforcementBumped = newCount > previousCount;
 
-    // Patch the canonical only when the cluster actually grew —
-    // idempotent re-runs on a stable corpus produce zero writes.
-    if (reinforcementBumped) {
+    // Refresh provenance on the canonical whenever cluster membership
+    // changes — even if the cluster size happens to stay constant
+    // (e.g. one older member archived externally while a new
+    // duplicate arrived).  Without this, `derived_from` would
+    // silently fall out of sync with the actual contributors and
+    // diagnostics would surface false-positive "missing source"
+    // signals (PR #730 review feedback, Codex P2).
+    const previousDerivedFrom = Array.isArray(canonical.frontmatter.derived_from)
+      ? [...canonical.frontmatter.derived_from].sort()
+      : [];
+    const sortedSourceIds = [...sourceIds].sort();
+    const membershipChanged =
+      previousDerivedFrom.length !== sortedSourceIds.length ||
+      previousDerivedFrom.some((id, i) => id !== sortedSourceIds[i]);
+    const previousVia = canonical.frontmatter.derived_via;
+    const viaChanged = previousVia !== "pattern-reinforcement";
+    const canonicalNeedsRefresh =
+      reinforcementBumped || membershipChanged || viaChanged;
+
+    // Patch the canonical when the cluster grew, the cluster
+    // membership rotated, or the canonical was previously stamped by
+    // a different operator.  Idempotent re-runs on a stable corpus
+    // (same size, same members, same operator) still produce zero
+    // writes.
+    if (canonicalNeedsRefresh) {
       const patch: Partial<MemoryFrontmatter> = {
         reinforcement_count: newCount,
         last_reinforced_at: nowIso,
