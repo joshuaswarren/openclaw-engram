@@ -3796,10 +3796,17 @@ export class Orchestrator {
       `Seed paths (${snapshot.seedCount}):`,
       ...snapshot.seeds.map((p) => `- ${p}`),
       `Expanded paths (${snapshot.expandedCount}, showing ${expanded.length}):`,
-      ...expanded.map(
-        (e) =>
-          `- ${e.path} (score=${e.score.toFixed(3)}, ns=${e.namespace}, seed=${e.seed || "unknown"}, hop=${e.hopDepth}, w=${e.decayedWeight.toFixed(3)}, type=${e.graphType})`,
-      ),
+      ...expanded.map((e) => {
+        // Issue #681 PR 3/3 — surface per-edge confidence in the
+        // graph-explain document. Legacy snapshots without
+        // `edgeConfidence` render as `conf=n/a` so older payloads
+        // remain readable.
+        const confLabel =
+          typeof e.edgeConfidence === "number" && Number.isFinite(e.edgeConfidence)
+            ? e.edgeConfidence.toFixed(2)
+            : "n/a";
+        return `- ${e.path} (score=${e.score.toFixed(3)}, ns=${e.namespace}, seed=${e.seed || "unknown"}, hop=${e.hopDepth}, w=${e.decayedWeight.toFixed(3)}, type=${e.graphType}, conf=${confLabel})`;
+      }),
       `Final ranked results (${snapshot.finalResults?.length ?? 0}, showing ${finalResults.length}):`,
       ...finalResults.map(
         (entry) =>
@@ -5172,6 +5179,11 @@ export class Orchestrator {
           hopDepth: candidate.hopDepth,
           decayedWeight: candidate.decayedWeight,
           graphType: candidate.graphType,
+          // Issue #681 PR 3/3 — surface the per-edge confidence used for
+          // PageRank weighting / floor pruning so downstream observability
+          // (recall_xray, memory_graph_explain) can attribute ranking and
+          // pruning decisions to specific edges.
+          edgeConfidence: candidate.edgeConfidence,
         });
       }
     }

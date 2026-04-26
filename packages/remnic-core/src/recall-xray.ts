@@ -109,6 +109,17 @@ export interface RecallXrayResult {
   servedBy: RecallXrayServedBy;
   scoreDecomposition: RecallXrayScoreDecomposition;
   graphPath?: string[];
+  /**
+   * Issue #681 PR 3/3 — per-edge confidence values aligned with
+   * `graphPath`. When present, `graphEdgeConfidences[i]` is the
+   * confidence of the edge between `graphPath[i]` and `graphPath[i+1]`,
+   * so the array length is one less than `graphPath`. Legacy edges
+   * without a recorded confidence render as `1.0`. Operators use this
+   * to attribute floor-pruning and PageRank ranking decisions back to
+   * specific edges. The renderer drops the line when the array is
+   * empty or absent so legacy snapshots round-trip cleanly.
+   */
+  graphEdgeConfidences?: number[];
   auditEntryId?: string;
   /** Human-readable list of filters the candidate *passed*. */
   admittedBy: string[];
@@ -338,6 +349,23 @@ function cloneResult(result: RecallXrayResult): RecallXrayResult {
   const graphPath = Array.isArray(result.graphPath)
     ? result.graphPath.filter((x): x is string => typeof x === "string")
     : undefined;
+  // Issue #681 PR 3/3 — per-edge confidences alongside graph path.
+  // Each entry is clamped into [0, 1]; non-finite or missing values are
+  // dropped so a malformed snapshot can't poison the renderer. The
+  // alignment invariant (length === graphPath.length - 1) is enforced
+  // here so downstream surfaces can rely on it.
+  let graphEdgeConfidences: number[] | undefined;
+  if (Array.isArray(result.graphEdgeConfidences) && graphPath && graphPath.length > 1) {
+    const expected = graphPath.length - 1;
+    const cleaned: number[] = [];
+    for (const raw of result.graphEdgeConfidences) {
+      if (typeof raw !== "number" || !Number.isFinite(raw)) continue;
+      cleaned.push(Math.min(1, Math.max(0, raw)));
+    }
+    if (cleaned.length === expected) {
+      graphEdgeConfidences = cleaned;
+    }
+  }
   const auditEntryId = nonEmptyString(result.auditEntryId);
   const rejectedBy = nonEmptyString(result.rejectedBy);
   const scoreDecomposition = cloneScoreDecomposition(result.scoreDecomposition);
@@ -349,6 +377,9 @@ function cloneResult(result: RecallXrayResult): RecallXrayResult {
     admittedBy,
   };
   if (graphPath !== undefined) out.graphPath = graphPath;
+  if (graphEdgeConfidences !== undefined) {
+    out.graphEdgeConfidences = graphEdgeConfidences;
+  }
   if (auditEntryId !== undefined) out.auditEntryId = auditEntryId;
   if (rejectedBy !== undefined) out.rejectedBy = rejectedBy;
   // Disclosure + token telemetry (issue #677 PR 3/4).  Only attach when

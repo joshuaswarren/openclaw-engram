@@ -207,8 +207,36 @@ Before every write, Engram normalizes the content (lowercase, strip punctuation,
 
 Config: `factDeduplicationEnabled` (default `true`).
 
+## Graph Edge Lifecycle (issue #681)
+
+Memories are linked through the multi-graph layer (entity, time, causal). Each
+edge carries an optional `confidence ∈ [0, 1]` field that participates in the
+lifecycle in three places:
+
+1. **Reinforcement (PR 1/3, shipped)** — observing the same edge again bumps
+   `confidence` by `DEFAULT_REINFORCE_DELTA` (capped at `1.0`) and stamps
+   `lastReinforcedAt = now`.
+2. **Decay (PR 2/3, shipped)** — the maintenance job linearly decays
+   confidence by `perWindow` per `windowMs` once the grace period has
+   elapsed, never below `floor`.
+3. **Recall weighting & pruning (PR 3/3)** — the recall path multiplies edge
+   `weight` by `confidence` when computing activation, prunes edges below
+   `graphTraversalConfidenceFloor` (default `0.2`), and optionally refines
+   the ranking with `graphTraversalPageRankIterations` PageRank-style
+   iterations (default `8`). Operators see the resulting per-edge
+   confidences in the recall X-ray (`graphEdgeConfidences`) and the
+   recall-explain document (`conf=0.87`).
+
+Legacy edges that pre-date the schema have no `confidence` field; the recall
+layer treats them as `1.0` so existing graphs keep working unchanged until a
+reinforcement or decay event materializes the value.
+
+For the full traversal contract see
+[`graph-reasoning.md`](graph-reasoning.md).
+
 ## See Also
 
 - [Architecture Overview](overview.md)
 - [Retrieval Pipeline](retrieval-pipeline.md)
+- [Graph Reasoning](graph-reasoning.md)
 - [Config Reference](../config-reference.md)

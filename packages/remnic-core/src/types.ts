@@ -1294,6 +1294,21 @@ export interface PluginConfig {
   /** Confidence threshold for the "below visibility" telemetry counter. Default 0.2. */
   graphEdgeDecayVisibilityThreshold: number;
 
+  /**
+   * Issue #681 PR 3/3 — minimum edge confidence required for an edge to be
+   * traversed during spreading activation. Edges with `confidence` below this
+   * floor are pruned and contribute neither activation nor downstream
+   * neighbors. Legacy edges without `confidence` are treated as 1.0 so they
+   * always pass the floor. Range `[0, 1]`; default `0.2`.
+   */
+  graphTraversalConfidenceFloor: number;
+  /**
+   * Issue #681 PR 3/3 — number of PageRank-style refinement iterations applied
+   * on top of the BFS spreading-activation scores. Each iteration redistributes
+   * a node's confidence-weighted activation along its outgoing edges. Set to 0
+   * to disable refinement and use raw BFS scores. Default `8`.
+   */
+  graphTraversalPageRankIterations: number;
   // v8.2: Temporal Memory Tree
   temporalMemoryTreeEnabled: boolean;
   tmtHourlyMinMemories: number;

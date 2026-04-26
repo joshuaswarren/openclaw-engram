@@ -373,6 +373,60 @@ test("renderXray falls back to (unknown) for out-of-range finite capturedAt", ()
   assert.equal(json.capturedAt, 1e20);
 });
 
+// ─── Issue #681 PR 3/3 — per-edge confidence rendering ────────────────────
+
+test("renderXrayText surfaces per-edge confidences when present", () => {
+  const snap = fullSnapshot();
+  // Replace first result with one that carries graphEdgeConfidences.
+  const augmented: RecallXraySnapshot = {
+    ...snap,
+    results: [
+      {
+        ...snap.results[0],
+        graphPath: ["mem-root", "mid", "mem-1"],
+        graphEdgeConfidences: [0.8, 0.5],
+      },
+      ...snap.results.slice(1),
+    ],
+  };
+  const out = renderXrayText(augmented);
+  assert.ok(
+    out.includes("graph-path: mem-root -> mid -> mem-1"),
+    "graph-path line should still render",
+  );
+  assert.ok(
+    out.includes("edge-confidences: 0.80, 0.50"),
+    "edge-confidences line should render with two-decimal precision",
+  );
+});
+
+test("renderXrayMarkdown surfaces per-edge confidences when present", () => {
+  const snap = fullSnapshot();
+  const augmented: RecallXraySnapshot = {
+    ...snap,
+    results: [
+      {
+        ...snap.results[0],
+        graphPath: ["mem-root", "mid", "mem-1"],
+        graphEdgeConfidences: [0.8, 0.5],
+      },
+      ...snap.results.slice(1),
+    ],
+  };
+  const out = renderXrayMarkdown(augmented);
+  assert.ok(out.includes("**Graph path:** `mem-root` → `mid` → `mem-1`"));
+  assert.ok(
+    out.includes("**Edge confidences:** `0.80`, `0.50`"),
+    `markdown should include edge-confidences row, got:\n${out}`,
+  );
+});
+
+test("renderXrayText omits per-edge confidence line when graphEdgeConfidences absent", () => {
+  // Legacy snapshots without confidences must not introduce an empty row.
+  const out = renderXrayText(fullSnapshot());
+  assert.ok(!out.includes("edge-confidences:"));
+});
+
 test("renderXrayText tier-explain block matches shared helper output", async () => {
   // CLAUDE.md rule 22: the tier-explain text block must be a single
   // source of truth shared between recall-explain-renderer and

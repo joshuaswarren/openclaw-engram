@@ -171,6 +171,68 @@ test("buildXraySnapshot preserves graphPath, auditEntryId, rejectedBy when prese
   assert.equal(emitted.rejectedBy, "mmr-diversity");
 });
 
+// ─── Issue #681 PR 3/3 — graphEdgeConfidences ─────────────────────────────
+
+test("buildXraySnapshot preserves graphEdgeConfidences when length matches graphPath - 1", () => {
+  const result: RecallXrayResult = {
+    memoryId: "mem-x",
+    path: "/p.md",
+    servedBy: "graph",
+    admittedBy: [],
+    scoreDecomposition: { final: 0.42 },
+    graphPath: ["a", "b", "c"],
+    graphEdgeConfidences: [0.9, 0.4],
+  };
+  const snap = buildXraySnapshot({
+    query: "q",
+    results: [result],
+    now: fixedNow,
+    snapshotIdGenerator: idGen(),
+  });
+  assert.deepEqual(snap.results[0]?.graphEdgeConfidences, [0.9, 0.4]);
+});
+
+test("buildXraySnapshot drops graphEdgeConfidences when length disagrees with graphPath", () => {
+  // Misaligned snapshots are rejected wholesale rather than rendering
+  // partial / shifted confidence pairings — that would invite reviewers
+  // to ask "which edge does index 2 refer to?" and the answer is "none".
+  const result: RecallXrayResult = {
+    memoryId: "mem-x",
+    path: "/p.md",
+    servedBy: "graph",
+    admittedBy: [],
+    scoreDecomposition: { final: 0.42 },
+    graphPath: ["a", "b", "c"],
+    graphEdgeConfidences: [0.9], // length 1, expected 2
+  };
+  const snap = buildXraySnapshot({
+    query: "q",
+    results: [result],
+    now: fixedNow,
+    snapshotIdGenerator: idGen(),
+  });
+  assert.equal(snap.results[0]?.graphEdgeConfidences, undefined);
+});
+
+test("buildXraySnapshot clamps graphEdgeConfidence values into [0, 1]", () => {
+  const result: RecallXrayResult = {
+    memoryId: "mem-x",
+    path: "/p.md",
+    servedBy: "graph",
+    admittedBy: [],
+    scoreDecomposition: { final: 0.5 },
+    graphPath: ["a", "b", "c"],
+    graphEdgeConfidences: [-0.3, 1.5],
+  };
+  const snap = buildXraySnapshot({
+    query: "q",
+    results: [result],
+    now: fixedNow,
+    snapshotIdGenerator: idGen(),
+  });
+  assert.deepEqual(snap.results[0]?.graphEdgeConfidences, [0, 1]);
+});
+
 test("buildXraySnapshot rejects results with an unknown servedBy tier", () => {
   assert.throws(
     () =>

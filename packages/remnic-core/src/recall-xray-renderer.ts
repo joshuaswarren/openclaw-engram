@@ -160,6 +160,20 @@ function renderResultTextLines(
   }
   if (result.graphPath && result.graphPath.length > 0) {
     lines.push(`    graph-path: ${result.graphPath.join(" -> ")}`);
+    // Issue #681 PR 3/3 — surface per-edge confidence inline so
+    // operators can attribute floor-pruning / PageRank ranking
+    // decisions to specific edges. Skipped when no confidences were
+    // recorded (legacy snapshot or single-node path).
+    if (
+      result.graphEdgeConfidences &&
+      result.graphEdgeConfidences.length > 0
+    ) {
+      lines.push(
+        `    edge-confidences: ${result.graphEdgeConfidences
+          .map((c) => c.toFixed(2))
+          .join(", ")}`,
+      );
+    }
   }
   if (result.auditEntryId) {
     lines.push(`    audit-entry: ${result.auditEntryId}`);
@@ -325,6 +339,19 @@ function renderResultMarkdownLines(
         .map(mdInlineCode)
         .join(" → ")}`,
     );
+    // Issue #681 PR 3/3 — render per-edge confidences as a parallel
+    // markdown line so operators can correlate them with the path
+    // arrows above. Skipped when no confidences were recorded.
+    if (
+      result.graphEdgeConfidences &&
+      result.graphEdgeConfidences.length > 0
+    ) {
+      lines.push(
+        `- **Edge confidences:** ${result.graphEdgeConfidences
+          .map((c) => mdInlineCode(c.toFixed(2)))
+          .join(", ")}`,
+      );
+    }
   }
   if (result.auditEntryId) {
     lines.push(`- **Audit entry:** \`${result.auditEntryId}\``);
