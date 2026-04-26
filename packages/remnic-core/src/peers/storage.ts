@@ -607,11 +607,15 @@ export async function listPeers(memoryDir: string): Promise<Peer[]> {
   // operates on the original inode regardless of subsequent path-
   // based mutations.
   const root = peersRoot(memoryDir);
-  // Cursor M round 14: use the held directory handle's readdir so
-  // we read entries from the original-inode directory we opened
-  // with O_NOFOLLOW. A path-based fs.readdir(root) would re-resolve
-  // the path and could traverse a swapped-in symlink. dh.readdir()
-  // operates on the open file descriptor and is immune to that race.
+  // Cursor M round 14: Node's FileHandle has no `readdir` method
+  // (only `fs.readdir(path)` is exposed), so we can't read directly
+  // from the handle. Instead anchor the original-inode by opening
+  // the dir with O_NOFOLLOW, fstat it, then do path-based readdir
+  // and confirm the path's lstat AFTER matches the held inode. If
+  // it diverges, a swap happened — abort. This is a fence around
+  // the readdir, not the kernel-level guarantee a true `fdreaddir`
+  // would give, but it closes the path-traversal race without
+  // requiring native bindings.
   let entries: string[];
   let dh: import("node:fs/promises").FileHandle | null = null;
   try {
@@ -619,7 +623,16 @@ export async function listPeers(memoryDir: string): Promise<Peer[]> {
       root,
       fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
     );
-    entries = await dh.readdir();
+    const fstatBefore = await dh.stat();
+    entries = await fs.readdir(root);
+    const lstatAfter = await fs.lstat(root);
+    if (
+      fstatBefore.ino !== lstatAfter.ino ||
+      fstatBefore.dev !== lstatAfter.dev ||
+      lstatAfter.isSymbolicLink()
+    ) {
+      throw new Error(`peers root "${root}" was swapped during readdir`);
+    }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return [];
