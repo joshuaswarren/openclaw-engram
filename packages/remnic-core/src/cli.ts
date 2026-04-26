@@ -4003,12 +4003,6 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                 .filter(Boolean)
             : undefined;
           const includeTranscripts = options.includeTranscripts === true;
-          const allKinds =
-            includeTranscripts && includeKinds
-              ? [...includeKinds, "transcripts"]
-              : includeTranscripts
-                ? ["facts", "entities", "corrections", "questions", "state", "transcripts"]
-                : includeKinds;
 
           const pluginVersion = await getPluginVersion();
           const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace, {
@@ -4020,7 +4014,14 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             name,
             root: memoryDir,
             since,
-            includeKinds: allKinds,
+            // Pass `includeKinds` only when the user explicitly provided it.
+            // Do NOT merge transcripts into an explicit list here: doing so would
+            // produce a hard-coded allow-list that silently drops other valid
+            // memory dirs (peers/, forks/, etc.). Instead, use `includeTranscripts`
+            // so the exporter adds transcripts while keeping the default "all dirs"
+            // walk. (Cursor / #747)
+            includeKinds,
+            includeTranscripts,
             peerIds,
             outDir,
             pluginVersion,

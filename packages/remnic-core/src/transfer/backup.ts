@@ -49,7 +49,10 @@ export async function backupMemoryDir(opts: BackupOptions): Promise<string> {
     for (const abs of filesAbs) {
       const relPosix = toPosixRelPath(abs, memoryDirAbs);
       const parts = relPosix.split("/");
-      if (parts.some((p) => p === "node_modules" || p === ".git")) continue;
+      // Skip VCS dirs, the secure-store dir (contains KDF params + verifier —
+      // sensitive and machine-specific, must not leave the local machine), and
+      // the .capsules dir (self-recursive inclusion). (Cursor / #690 PR 4/4)
+      if (parts.some((p) => p === "node_modules" || p === ".git" || p === ".secure-store" || p === ".capsules")) continue;
       if (!includeTranscripts && parts[0] === "transcripts") continue;
       const content = await readFile(abs, "utf-8");
       records.push({ path: relPosix, content });
@@ -102,18 +105,38 @@ async function enforceRetention(outDirAbs: string, retentionDays: number): Promi
   const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
 
   for (const ent of entries) {
-    if (!ent.isDirectory()) continue;
     const name = ent.name;
+
+    // --- Plaintext backup directories ---
     // Directory names are ISO8601 with [: .] replaced by "-" to be filesystem-friendly.
     // Example: 2026-02-11T05-06-07-123Z => 2026-02-11T05:06:07.123Z
-    const m = name.match(
-      /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/,
-    );
-    const iso = m ? `${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z` : null;
-    const tsMs = iso ? Date.parse(iso) : NaN;
-    if (!Number.isFinite(tsMs)) continue;
-    if (tsMs < cutoffMs) {
-      await rm(path.join(outDirAbs, name), { recursive: true, force: true });
+    if (ent.isDirectory()) {
+      const m = name.match(
+        /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/,
+      );
+      const iso = m ? `${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z` : null;
+      const tsMs = iso ? Date.parse(iso) : NaN;
+      if (!Number.isFinite(tsMs)) continue;
+      if (tsMs < cutoffMs) {
+        await rm(path.join(outDirAbs, name), { recursive: true, force: true });
+      }
+      continue;
+    }
+
+    // --- Encrypted backup files (.backup.json.gz.enc) ---
+    // Same timestamp pattern in the filename prefix. (Codex P2 / Cursor — the
+    // original sweep skipped non-directory entries, leaving encrypted backups
+    // to accumulate indefinitely when retention is enabled.)
+    if (ent.isFile() && name.endsWith(".backup.json.gz.enc")) {
+      const m = name.match(
+        /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z/,
+      );
+      const iso = m ? `${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z` : null;
+      const tsMs = iso ? Date.parse(iso) : NaN;
+      if (!Number.isFinite(tsMs)) continue;
+      if (tsMs < cutoffMs) {
+        await rm(path.join(outDirAbs, name), { force: true });
+      }
     }
   }
 }

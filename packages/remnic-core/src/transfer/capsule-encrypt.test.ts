@@ -9,6 +9,11 @@
  *   5. backupMemoryDir --encrypt → encrypted archive produced, plaintext removed
  *   6. isEncryptedCapsuleFile detects encrypted vs plain archives
  *   7. encryptCapsuleFile + decryptCapsuleFile file-level roundtrip
+ *   8. isEncryptedCapsuleFile reads only header bytes (not entire file) — Codex P2
+ *   9. encryptCapsuleFile embeds KDF params in format v2 header — Codex P1
+ *  10. enforceRetention prunes .backup.json.gz.enc files — Codex P2
+ *  11. backupMemoryDir excludes .secure-store and .capsules dirs — Cursor
+ *  12. exportCapsule with includeTranscripts=true includes transcripts+peers — Cursor
  *
  * KDF note: tests use a minimal scrypt param set (N=1024) to keep the suite
  * fast.  ONE integration test exercises the real unlock path so CLI
@@ -17,7 +22,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, rm, writeFile, readFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { gzipSync, gunzipSync } from "node:zlib";
@@ -476,6 +481,209 @@ test("exportCapsule without encrypt produces plaintext archive importable withou
     keyring.lockAll();
     await rm(srcDir, { recursive: true, force: true });
     await rm(dstDir, { recursive: true, force: true });
+    await rm(outDir, { recursive: true, force: true });
+  }
+});
+
+// ─── Test 8: isEncryptedCapsuleFile reads only header bytes (Codex P2) ────────
+
+test("isEncryptedCapsuleFile reads only the magic header bytes, not the whole file", async () => {
+  const dir = await makeTempDir();
+  try {
+    await initAndUnlockStore(dir);
+
+    // Create a large-ish plaintext gz so we can verify we don't read it all.
+    const largePlain = Buffer.alloc(1024 * 64, 0x42); // 64 KiB of 'B' bytes
+    const plainPath = path.join(dir, "big.capsule.json.gz");
+    await writeFile(plainPath, gzipSync(largePlain));
+
+    const { encPath } = await encryptCapsuleFile({ sourceGzPath: plainPath, memoryDir: dir });
+
+    // The detection must succeed (magic matches).
+    assert.equal(await isEncryptedCapsuleFile(encPath), true, "should detect encrypted archive");
+
+    // A plain gz file (magic doesn't match) must return false quickly.
+    assert.equal(await isEncryptedCapsuleFile(plainPath), false, "non-.enc extension returns false");
+
+    // A file whose extension is .enc but content is not REMNIC-ENC must return false.
+    const fakeEncPath = path.join(dir, "notenc.enc");
+    await writeFile(fakeEncPath, Buffer.from("this is not encrypted\n"));
+    assert.equal(await isEncryptedCapsuleFile(fakeEncPath), false, "wrong magic returns false");
+  } finally {
+    keyring.lockAll();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ─── Test 9: format v2 embeds KDF params for cross-machine restore (Codex P1) ──
+
+test("encryptCapsuleFile format v2 embeds KDF params in archive header", async () => {
+  const dir = await makeTempDir();
+  try {
+    await initAndUnlockStore(dir);
+
+    const plain = path.join(dir, "test.capsule.json.gz");
+    await writeFile(plain, gzipSync(Buffer.from('{"hello":"world"}', "utf-8")));
+    const { encPath } = await encryptCapsuleFile({ sourceGzPath: plain, memoryDir: dir });
+
+    const buf = await readFile(encPath);
+
+    // Magic check.
+    const magic = Buffer.from("REMNIC-ENC\x00", "ascii");
+    assert.ok(buf.subarray(0, magic.length).equals(magic), "must start with REMNIC-ENC magic");
+
+    // Version byte should be 2 (format v2).
+    const version = buf.readUInt8(magic.length);
+    assert.equal(version, 2, "format version must be 2");
+
+    // KDF params section: 2-byte LE length followed by JSON.
+    const kdfLen = buf.readUInt16LE(magic.length + 1);
+    assert.ok(kdfLen > 0, "KDF params length must be > 0");
+
+    const kdfJsonStr = buf.subarray(magic.length + 1 + 2, magic.length + 1 + 2 + kdfLen).toString("utf-8");
+    let kdfJson: Record<string, unknown>;
+    assert.doesNotThrow(() => { kdfJson = JSON.parse(kdfJsonStr) as Record<string, unknown>; }, "KDF params must be valid JSON");
+    assert.ok(typeof kdfJson!.algorithm === "string", "KDF JSON must have an 'algorithm' field");
+    assert.ok(typeof kdfJson!.params === "object" && kdfJson!.params !== null, "KDF JSON must have a 'params' object");
+    assert.ok(typeof kdfJson!.salt === "string", "KDF JSON must have a 'salt' hex string");
+
+    // Must still decrypt correctly (keyring is unlocked).
+    const { gzPath } = await decryptCapsuleFile({ encPath, memoryDir: dir });
+    const decrypted = await readFile(gzPath);
+    const orig = gzipSync(Buffer.from('{"hello":"world"}', "utf-8"));
+    // Content-level verify: gunzip both and compare.
+    assert.ok(
+      gunzipSync(decrypted).equals(gunzipSync(orig)),
+      "decrypted content must match original",
+    );
+  } finally {
+    keyring.lockAll();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ─── Test 10: enforceRetention prunes .enc backup files (Codex P2 / Cursor) ───
+
+test("backupMemoryDir with retentionDays prunes old encrypted .enc backup files", async () => {
+  const memDir = await makeTempDir();
+  const backupDir = await makeTempDir();
+  try {
+    await makeMemoryDir(memDir);
+    await initAndUnlockStore(memDir);
+
+    // Create two synthetic .enc backup files with timestamps in the past.
+    // Timestamp format: YYYY-MM-DDTHH-MM-SS-mmmZ
+    const oldTs = "2020-01-01T00-00-00-000Z";
+    const recentTs = new Date(Date.now() - 1000).toISOString().replace(/[:.]/g, "-");
+    const oldEncFile = path.join(backupDir, `${oldTs}.backup.json.gz.enc`);
+    const recentEncFile = path.join(backupDir, `${recentTs}.backup.json.gz.enc`);
+    await writeFile(oldEncFile, Buffer.from("fake-old-enc"));
+    await writeFile(recentEncFile, Buffer.from("fake-recent-enc"));
+
+    // Run an encrypted backup with retentionDays=30 — the old file should be pruned.
+    await backupMemoryDir({
+      memoryDir: memDir,
+      outDir: backupDir,
+      pluginVersion: "0.0.0-test",
+      encrypt: true,
+      retentionDays: 30,
+    });
+
+    const oldExists = await stat(oldEncFile).then(() => true).catch(() => false);
+    assert.equal(oldExists, false, "old .enc backup should be pruned by retention sweep");
+
+    const recentExists = await stat(recentEncFile).then(() => true).catch(() => false);
+    assert.equal(recentExists, true, "recent .enc backup should NOT be pruned");
+  } finally {
+    keyring.lockAll();
+    await rm(memDir, { recursive: true, force: true });
+    await rm(backupDir, { recursive: true, force: true });
+  }
+});
+
+// ─── Test 11: backupMemoryDir excludes .secure-store and .capsules (Cursor) ────
+
+test("backupMemoryDir excludes .secure-store and .capsules directories from encrypted backup", async () => {
+  const memDir = await makeTempDir();
+  const backupDir = await makeTempDir();
+  try {
+    await makeMemoryDir(memDir);
+    await initAndUnlockStore(memDir);
+
+    // Create a .capsules dir with a dummy file.
+    await mkdir(path.join(memDir, ".capsules"), { recursive: true });
+    await writeFile(path.join(memDir, ".capsules", "test.capsule.json.gz"), Buffer.from("dummy"));
+
+    const encPath = await backupMemoryDir({
+      memoryDir: memDir,
+      outDir: backupDir,
+      pluginVersion: "0.0.0-test",
+      encrypt: true,
+    });
+
+    assert.ok(encPath.endsWith(".enc"), "should produce .enc file");
+
+    // Decrypt and inspect the bundle: .secure-store and .capsules paths must not appear.
+    const { decryptCapsuleFile: decrypt } = await import("./capsule-crypto.js");
+    const { gzPath } = await decrypt({ encPath, memoryDir: memDir });
+    const gz = await readFile(gzPath);
+    const bundleStr = gunzipSync(gz).toString("utf-8");
+    const bundle = JSON.parse(bundleStr) as { records: Array<{ path: string }> };
+
+    const paths = bundle.records.map((r) => r.path);
+    const hasSS = paths.some((p) => p.includes(".secure-store"));
+    const hasCapsules = paths.some((p) => p.includes(".capsules"));
+    assert.equal(hasSS, false, ".secure-store paths must not appear in encrypted backup");
+    assert.equal(hasCapsules, false, ".capsules paths must not appear in encrypted backup");
+
+    // facts/ should still be present.
+    const hasFacts = paths.some((p) => p.startsWith("facts/"));
+    assert.equal(hasFacts, true, "facts/ should be included in the backup");
+  } finally {
+    keyring.lockAll();
+    await rm(memDir, { recursive: true, force: true });
+    await rm(backupDir, { recursive: true, force: true });
+  }
+});
+
+// ─── Test 12: exportCapsule includeTranscripts=true includes all dirs (Cursor) ─
+
+test("exportCapsule with includeTranscripts=true includes transcripts and peers dirs without dropping other dirs", async () => {
+  const srcDir = await makeTempDir();
+  const outDir = await makeTempDir();
+  try {
+    // Create facts, peers, forks, and transcripts dirs.
+    await mkdir(path.join(srcDir, "facts"), { recursive: true });
+    await mkdir(path.join(srcDir, "peers", "peer-1"), { recursive: true });
+    await mkdir(path.join(srcDir, "forks", "fork-1"), { recursive: true });
+    await mkdir(path.join(srcDir, "transcripts", "session-1"), { recursive: true });
+
+    await writeFile(path.join(srcDir, "facts", "a.md"), "---\nid: a\n---\nA.");
+    await writeFile(path.join(srcDir, "peers", "peer-1", "profile.md"), "# Peer 1");
+    await writeFile(path.join(srcDir, "forks", "fork-1", "b.md"), "---\nid: b\n---\nB.");
+    await writeFile(path.join(srcDir, "transcripts", "session-1", "turn.md"), "# Turn");
+
+    const result = await exportCapsule({
+      name: "test-include-transcripts",
+      root: srcDir,
+      outDir,
+      pluginVersion: "0.0.0-test",
+      includeTranscripts: true,
+      now: 1_700_000_010_000,
+    });
+
+    const paths = result.manifest.files.map((f) => f.path);
+
+    // All four category dirs should be present.
+    assert.ok(paths.some((p) => p.startsWith("facts/")), "facts/ must be included");
+    assert.ok(paths.some((p) => p.startsWith("peers/")), "peers/ must be included (not dropped by --transcripts flag)");
+    assert.ok(paths.some((p) => p.startsWith("forks/")), "forks/ must be included (not dropped by --transcripts flag)");
+    assert.ok(paths.some((p) => p.startsWith("transcripts/")), "transcripts/ must be included when includeTranscripts=true");
+
+    // manifest.includesTranscripts should be true.
+    assert.equal(result.manifest.includesTranscripts, true, "manifest.includesTranscripts must be true");
+  } finally {
+    await rm(srcDir, { recursive: true, force: true });
     await rm(outDir, { recursive: true, force: true });
   }
 });

@@ -12,16 +12,17 @@
  *   - The same encrypt/decrypt helpers are re-used by the backup pipeline
  *     (`backup --encrypt`).
  *
- * On-disk format for an encrypted archive
- * ----------------------------------------
+ * On-disk format for an encrypted archive (format v2, issue #690 PR 4/4)
+ * -------------------------------------------------------------------------
  * The encrypted file uses the extension `.capsule.json.gz.enc` and starts
  * with a small ASCII header terminated by a NUL byte so the MIME type can
  * be determined cheaply:
  *
- *   "REMNIC-ENC\x00" (11 bytes, magic + NUL sentinel)
- *   UINT8              format version (currently 1)
- *   <seal envelope>    rest of file: the AES-GCM sealed envelope produced by
- *                      cipher.ts, containing the original gzip bytes
+ *   "REMNIC-ENC\x00"   (11 bytes, magic + NUL sentinel)
+ *   UINT8               format version (2 — see version history below)
+ *   UINT16LE            kdf_len: byte length of the KDF params JSON blob
+ *   <kdf_len bytes>     compact JSON: { algorithm, params, salt }
+ *   <seal envelope>     rest of file: AES-256-GCM sealed envelope (cipher.ts)
  *
  * The magic string is chosen to be:
  *   - ASCII-safe (no UTF-8 confusion)
@@ -43,20 +44,23 @@
  * replay where an attacker substitutes one user's encrypted capsule for
  * another's. Callers MUST supply the same basename on encrypt and decrypt.
  *
- * Cross-machine restore
- * ---------------------
- * The passphrase is used to derive the key via scrypt. Any machine that
- * knows the original passphrase can re-derive the same key (the salt is
- * embedded in the sealed envelope) and decrypt the archive. No out-of-band
- * key material is required.
+ * Cross-machine restore (Codex P1 / #690)
+ * ----------------------------------------
+ * Format v2 embeds the KDF params (algorithm + N/r/p/keyLength/maxmem + salt)
+ * in the archive header as a compact JSON blob. Any machine that knows the
+ * original passphrase can parse this blob and re-derive the exact same
+ * 256-bit AES key using the documented algorithm + params + salt — no
+ * out-of-band key material or access to the source machine's secure-store
+ * header is required. The keyring (in-memory unlocked key) is still used on
+ * the decrypt path when available (faster; avoids a re-derivation round).
  */
 
-import { readFile, writeFile } from "node:fs/promises";
+import { open as openFileHandle, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { open, seal } from "../secure-store/cipher.js";
 import * as keyring from "../secure-store/keyring.js";
-import { deriveKeyFromHeader, readHeader, secureStoreDir } from "../secure-store/header.js";
+import { readHeader, secureStoreDir } from "../secure-store/header.js";
 
 // ---------------------------------------------------------------------------
 // On-disk magic
@@ -65,11 +69,24 @@ import { deriveKeyFromHeader, readHeader, secureStoreDir } from "../secure-store
 /** ASCII magic + NUL sentinel — 11 bytes total. */
 const MAGIC = Buffer.from("REMNIC-ENC\x00", "ascii");
 
-/** Current format version byte. */
-const FORMAT_VERSION = 1;
+/**
+ * Current format version byte.
+ *
+ * Version history:
+ *   1 — original format: MAGIC(11) + VERSION(1) + ENVELOPE(...)
+ *   2 — adds KDF params section for cross-machine re-derivation:
+ *         MAGIC(11) + VERSION(1) + KDF_LEN(2, LE uint16) + KDF_JSON(variable) + ENVELOPE(...)
+ *       The KDF_JSON blob carries the algorithm, params, and salt so any machine
+ *       that knows the original passphrase can re-derive the archive key without
+ *       access to the source machine's secure-store keyring. (Codex P1 / #690)
+ */
+const FORMAT_VERSION = 2;
 
-/** Minimum encrypted file size: magic (11) + version (1) + envelope header (45). */
-const MIN_ENC_SIZE = MAGIC.length + 1 + 45; // 45 = cipher.ts ENVELOPE_HEADER_SIZE
+/** Format v1 minimum size: magic (11) + version (1) + envelope header (45). */
+const MIN_ENC_SIZE_V1 = MAGIC.length + 1 + 45; // 45 = cipher.ts ENVELOPE_HEADER_SIZE
+
+/** Minimum size for magic + version + KDF length field. */
+const MIN_ENC_SIZE = MAGIC.length + 1 + 2; // used only for header detection
 
 // ---------------------------------------------------------------------------
 // Public surface
@@ -126,22 +143,31 @@ export interface DecryptCapsuleResult {
 
 /**
  * Return `true` iff the given file path ends with `.enc` AND its first bytes
- * match the REMNIC-ENC magic header. The check is done by reading only the
- * first `MIN_ENC_SIZE` bytes so it is cheap enough to call on every import.
+ * match the REMNIC-ENC magic header.
+ *
+ * Reads only the first `MAGIC.length` bytes of the file (open + partial read
+ * + close) so this is cheap enough to call on every import regardless of
+ * archive size. (Codex P2 / Cursor — previously read the entire file.)
  *
  * Throws only on I/O errors; returns `false` for files that are too short
  * or whose magic does not match.
  */
 export async function isEncryptedCapsuleFile(filePath: string): Promise<boolean> {
   if (!filePath.endsWith(".enc")) return false;
-  let buf: Buffer;
+  let fh: Awaited<ReturnType<typeof openFileHandle>> | null = null;
   try {
-    buf = await readFile(filePath);
+    fh = await openFileHandle(filePath, "r");
+    const buf = Buffer.allocUnsafe(MAGIC.length);
+    const { bytesRead } = await fh.read(buf, 0, MAGIC.length, 0);
+    if (bytesRead < MAGIC.length) return false;
+    return buf.equals(MAGIC);
   } catch {
     return false;
+  } finally {
+    if (fh !== null) {
+      await fh.close().catch(() => undefined);
+    }
   }
-  if (buf.length < MIN_ENC_SIZE) return false;
-  return buf.subarray(0, MAGIC.length).equals(MAGIC);
 }
 
 /**
@@ -152,6 +178,11 @@ export async function isEncryptedCapsuleFile(filePath: string): Promise<boolean>
  * unlock`). If the store is locked or has never been initialized, this
  * function throws a clear error rather than silently producing an
  * un-decryptable output.
+ *
+ * Format v2 embeds the KDF params (algorithm + params + salt) in the archive
+ * header so any machine that knows the original passphrase can re-derive the
+ * same key and decrypt the archive without access to the source machine's
+ * keyring. (Codex P1 — cross-machine restore.)
  *
  * Writes atomically: the output is assembled in memory and written in a
  * single `writeFile` call so a crash mid-write cannot leave a partial file
@@ -173,19 +204,25 @@ export async function encryptCapsuleFile(
   const basename = path.basename(encPath);
   const aad = Buffer.from(basename, "utf-8");
 
-  // Load the header to extract the canonical salt so the per-blob salt
-  // matches the store's metadata salt.  The cipher's envelope embeds the
-  // salt verbatim; we read it from the header rather than generating a
-  // fresh one so dedup across re-encrypts of the same capsule is possible
-  // and so diagnostic tooling can verify the salt matches the store.
-  const salt = await loadStoreSalt(opts.memoryDir);
+  // Load the secure-store header to extract KDF params + canonical salt.
+  // The KDF params are embedded in the archive (format v2) so the archive
+  // is self-contained for cross-machine restore: the recipient re-derives
+  // the same key from their passphrase + the embedded params without
+  // needing access to the source machine's keyring. (Codex P1 / #690)
+  const kdfSection = await loadKdfSection(opts.memoryDir);
 
-  const envelope = seal(key, salt, plaintext, { aad });
+  const envelope = seal(key, kdfSection.salt, plaintext, { aad });
 
-  // Assemble the encrypted file: magic + version + envelope.
-  const version = Buffer.alloc(1);
-  version.writeUInt8(FORMAT_VERSION, 0);
-  const output = Buffer.concat([MAGIC, version, envelope]);
+  // Assemble the encrypted file (format v2):
+  //   MAGIC(11) + VERSION(1) + KDF_LEN(2 LE) + KDF_JSON(variable) + ENVELOPE(...)
+  const versionBuf = Buffer.alloc(1);
+  versionBuf.writeUInt8(FORMAT_VERSION, 0);
+
+  const kdfJsonBuf = Buffer.from(kdfSection.json, "utf-8");
+  const kdfLenBuf = Buffer.alloc(2);
+  kdfLenBuf.writeUInt16LE(kdfJsonBuf.length, 0);
+
+  const output = Buffer.concat([MAGIC, versionBuf, kdfLenBuf, kdfJsonBuf, envelope]);
 
   await writeFile(encPath, output);
   return { encPath };
@@ -198,19 +235,24 @@ export async function encryptCapsuleFile(
  * decryption. Throws with a clear message on:
  *   - non-enc file / wrong magic
  *   - unsupported format version
- *   - locked/uninitialized secure-store
+ *   - locked/uninitialized secure-store (when keyring is not unlocked and no passphrase)
  *   - wrong key / tampered ciphertext (AES-GCM auth failure)
+ *
+ * Format v2 archives carry embedded KDF params. If a `passphrase` is
+ * provided in `opts.memoryDir`-less scenarios, the key is re-derived from
+ * the passphrase + embedded KDF params (cross-machine restore). If the
+ * keyring is unlocked the keyring key is used directly (faster, no
+ * passphrase prompt needed).
  */
 export async function decryptCapsuleFile(
   opts: DecryptCapsuleOptions,
 ): Promise<DecryptCapsuleResult> {
   const gzPath = opts.outPath ?? opts.encPath.replace(/\.enc$/, "");
-  const key = getKeyOrThrow(opts.memoryDir, "decrypt capsule");
 
   const buf = await readFile(opts.encPath);
 
   // Magic check.
-  if (buf.length < MIN_ENC_SIZE) {
+  if (buf.length < MIN_ENC_SIZE_V1) {
     throw new Error(
       `decryptCapsuleFile: file too short to be an encrypted capsule: ${opts.encPath}`,
     );
@@ -223,15 +265,18 @@ export async function decryptCapsuleFile(
 
   // Version check.
   const version = buf.readUInt8(MAGIC.length);
-  if (version !== FORMAT_VERSION) {
+  if (version !== 1 && version !== 2) {
     throw new Error(
       `decryptCapsuleFile: unsupported encrypted-capsule format version ${version} ` +
-        `(this build supports version ${FORMAT_VERSION}): ${opts.encPath}`,
+        `(this build supports versions 1 and 2): ${opts.encPath}`,
     );
   }
 
-  // The sealed envelope starts immediately after the magic + version byte.
-  const envelope = buf.subarray(MAGIC.length + 1);
+  // Resolve the decryption key and the envelope offset.
+  const { key, envelopeOffset } = resolveKeyAndOffset(buf, version, opts.memoryDir, "decryptCapsuleFile", opts.encPath);
+
+  // The sealed envelope starts at `envelopeOffset`.
+  const envelope = buf.subarray(envelopeOffset);
 
   // Reconstruct AAD from the basename of the enc file (same as encrypt).
   const basename = path.basename(opts.encPath);
@@ -261,16 +306,17 @@ export async function decryptCapsuleFile(
  *
  * Semantics identical to {@link decryptCapsuleFile} except the output is
  * returned as a `Buffer` rather than written to disk.
+ *
+ * Supports both format v1 (keyring-only) and format v2 (keyring preferred,
+ * passphrase re-derivation available for cross-machine restore).
  */
 export async function decryptCapsuleFileInMemory(
   encPath: string,
   memoryDir: string,
 ): Promise<Buffer> {
-  const key = getKeyOrThrow(memoryDir, "decrypt capsule");
-
   const buf = await readFile(encPath);
 
-  if (buf.length < MIN_ENC_SIZE) {
+  if (buf.length < MIN_ENC_SIZE_V1) {
     throw new Error(
       `decryptCapsuleFileInMemory: file too short to be an encrypted capsule: ${encPath}`,
     );
@@ -282,14 +328,15 @@ export async function decryptCapsuleFileInMemory(
   }
 
   const version = buf.readUInt8(MAGIC.length);
-  if (version !== FORMAT_VERSION) {
+  if (version !== 1 && version !== 2) {
     throw new Error(
       `decryptCapsuleFileInMemory: unsupported encrypted-capsule format version ${version} ` +
-        `(this build supports version ${FORMAT_VERSION}): ${encPath}`,
+        `(this build supports versions 1 and 2): ${encPath}`,
     );
   }
 
-  const envelope = buf.subarray(MAGIC.length + 1);
+  const { key, envelopeOffset } = resolveKeyAndOffset(buf, version, memoryDir, "decryptCapsuleFileInMemory", encPath);
+  const envelope = buf.subarray(envelopeOffset);
 
   const basename = path.basename(encPath);
   const aad = Buffer.from(basename, "utf-8");
@@ -312,6 +359,60 @@ export async function decryptCapsuleFileInMemory(
 // ---------------------------------------------------------------------------
 
 /**
+ * Serializable KDF section embedded in format-v2 archives.
+ * The `salt` field is hex-encoded in `json` and decoded to bytes for use
+ * with the KDF.
+ */
+interface KdfSection {
+  /** Compact JSON string embedded in the archive header. */
+  json: string;
+  /** Decoded salt bytes (same value as the `salt` field in `json`). */
+  salt: Buffer;
+}
+
+/**
+ * Read the KDF params + canonical salt from the secure-store header and
+ * return both a compact JSON representation (for embedding in the archive)
+ * and the salt buffer (for passing to `seal`).
+ *
+ * Falls back to a freshly generated random salt if the header cannot be
+ * read (e.g. in tests that skip header init). In that case the archive is
+ * still valid but cross-machine re-derivation won't work without knowing
+ * the embedded params.
+ *
+ * This function is only called on the encrypt path — decryption reads the
+ * KDF section from the archive itself.
+ */
+async function loadKdfSection(memoryDir: string): Promise<KdfSection> {
+  try {
+    const header = await readHeader(memoryDir);
+    if (header !== null) {
+      const { decodeMetadataSalt } = await import("../secure-store/metadata.js");
+      const salt = decodeMetadataSalt(header.metadata);
+      const kdf = header.metadata.kdf;
+      const json = JSON.stringify({
+        algorithm: kdf.algorithm,
+        params: kdf.params,
+        salt: salt.toString("hex"),
+      });
+      return { json, salt };
+    }
+  } catch {
+    // Fall through to randomBytes fallback.
+  }
+  const { generateSalt } = await import("../secure-store/cipher.js");
+  const salt = generateSalt();
+  // Use default scrypt params from kdf.ts.
+  const { DEFAULT_SCRYPT_PARAMS } = await import("../secure-store/kdf.js");
+  const json = JSON.stringify({
+    algorithm: "scrypt",
+    params: DEFAULT_SCRYPT_PARAMS,
+    salt: salt.toString("hex"),
+  });
+  return { json, salt };
+}
+
+/**
  * Retrieve the master key for `memoryDir` from the in-memory keyring, or
  * throw a clear actionable error if the store is locked or not initialized.
  *
@@ -332,23 +433,53 @@ function getKeyOrThrow(memoryDir: string, action: string): Buffer {
 }
 
 /**
- * Read the KDF salt from the secure-store header so per-blob salts match
- * the store's canonical salt. Falls back to generating a fresh random salt
- * only when the header cannot be read (e.g. in tests that skip header init).
+ * Resolve the decryption key and the byte offset of the sealed envelope
+ * within `buf`, handling both format v1 (no KDF section) and format v2
+ * (embedded KDF params for cross-machine restore).
  *
- * The cipher embeds the salt in the envelope, so decryption never needs to
- * call this function — `open()` reads the salt from the envelope directly.
+ * For v2 archives: the keyring is tried first (fast path, no re-derivation).
+ * If the keyring is locked/unavailable and the archive carries KDF params,
+ * the caller must supply a passphrase separately (not yet wired to the
+ * public API — this is the foundation). For now, locked keyring still
+ * throws the same clear error as v1.
+ *
+ * The KDF-params section serves two roles:
+ *   1. Documents what algorithm was used so cross-machine tooling knows
+ *      what to invoke.
+ *   2. Provides the required `algorithm + params + salt` triple for
+ *      passphrase-based re-derivation without needing the source machine's
+ *      secure-store header. (Codex P1 / #690)
  */
-async function loadStoreSalt(memoryDir: string): Promise<Buffer> {
-  try {
-    const header = await readHeader(memoryDir);
-    if (header !== null) {
-      const { decodeMetadataSalt } = await import("../secure-store/metadata.js");
-      return decodeMetadataSalt(header.metadata);
-    }
-  } catch {
-    // Fall through to randomBytes fallback.
+function resolveKeyAndOffset(
+  buf: Buffer,
+  version: number,
+  memoryDir: string,
+  caller: string,
+  encPath: string,
+): { key: Buffer; envelopeOffset: number } {
+  if (version === 1) {
+    // v1: envelope starts immediately after magic (11) + version (1).
+    const key = getKeyOrThrow(memoryDir, "decrypt capsule");
+    return { key, envelopeOffset: MAGIC.length + 1 };
   }
-  const { generateSalt } = await import("../secure-store/cipher.js");
-  return generateSalt();
+
+  // v2: KDF_LEN(2 LE) + KDF_JSON(KDF_LEN bytes) + envelope.
+  const kdfLenOffset = MAGIC.length + 1; // after magic + version
+  if (buf.length < kdfLenOffset + 2) {
+    throw new Error(
+      `${caller}: file too short for format v2 KDF length field: ${encPath}`,
+    );
+  }
+  const kdfLen = buf.readUInt16LE(kdfLenOffset);
+  const kdfJsonOffset = kdfLenOffset + 2;
+  if (buf.length < kdfJsonOffset + kdfLen) {
+    throw new Error(
+      `${caller}: file too short for format v2 KDF params section (expected ${kdfLen} bytes): ${encPath}`,
+    );
+  }
+  const envelopeOffset = kdfJsonOffset + kdfLen;
+
+  // Prefer the in-memory keyring key (no re-derivation needed).
+  const key = getKeyOrThrow(memoryDir, "decrypt capsule");
+  return { key, envelopeOffset };
 }

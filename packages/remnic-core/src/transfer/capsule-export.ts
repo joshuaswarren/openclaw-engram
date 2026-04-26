@@ -114,6 +114,16 @@ export interface ExportCapsuleOptions {
    * when `encrypt` is `true`; ignored otherwise.
    */
   memoryDir?: string;
+  /**
+   * When `true`, include the `transcripts/` directory in the export even
+   * though it is excluded by default. Using this flag avoids hard-coding an
+   * explicit `includeKinds` allow-list that would inadvertently drop other
+   * valid memory directories (`peers/`, `forks/`, etc.). (Cursor / #747)
+   *
+   * Ignored when `includeKinds` is provided and already contains
+   * `"transcripts"`.
+   */
+  includeTranscripts?: boolean;
 }
 
 export interface ExportCapsuleResult {
@@ -154,6 +164,11 @@ export async function exportCapsule(
   const sinceMs = parseSince(opts.since);
   const includeKinds = normalizeIncludeKinds(opts.includeKinds);
   const peerFilter = normalizePeerIds(opts.peerIds);
+  // `includeTranscripts: true` overrides the default transcripts exclusion
+  // without requiring an explicit `includeKinds` list — so callers that want
+  // all memory dirs + transcripts don't need to hard-code a list that would
+  // inadvertently drop new dirs like `peers/` or `forks/`. (Cursor / #747)
+  const transcriptsOverride = opts.includeTranscripts === true;
 
   const rootAbs = path.resolve(opts.root);
   await assertIsDirectory(rootAbs);
@@ -185,7 +200,7 @@ export async function exportCapsule(
 
   for (const abs of filesAbs) {
     const relPosix = toPosixRelPath(abs, rootAbs);
-    if (!shouldInclude(relPosix, includeKinds, peerFilter, outDirRelPosix)) continue;
+    if (!shouldInclude(relPosix, includeKinds, peerFilter, outDirRelPosix, transcriptsOverride)) continue;
 
     if (sinceMs !== null) {
       const st = await stat(abs);
@@ -202,7 +217,8 @@ export async function exportCapsule(
   manifestFiles.sort((a, b) => a.path.localeCompare(b.path));
 
   const capsule = buildCapsuleBlock(opts.name, opts.capsule);
-  const includesTranscripts = (includeKinds ?? new Set<string>()).has(TRANSCRIPTS_DIR);
+  const includesTranscripts =
+    transcriptsOverride || (includeKinds ?? new Set<string>()).has(TRANSCRIPTS_DIR);
 
   const createdAtMs = opts.now ?? Date.now();
   const manifest = ExportManifestV2Schema.parse({
@@ -443,6 +459,7 @@ function shouldInclude(
   includeKinds: ReadonlySet<string> | null,
   peerFilter: ReadonlySet<string> | null,
   outDirRelPosix: string | null,
+  transcriptsOverride = false,
 ): boolean {
   const parts = relPosix.split("/");
   if (parts.some((p) => DEFAULT_EXCLUDE_DIRS.has(p))) return false;
@@ -460,8 +477,14 @@ function shouldInclude(
   const top = parts[0];
 
   // Transcripts are opt-in: excluded unless caller explicitly listed them
-  // in includeKinds. This matches existing exporter behavior.
-  if (top === TRANSCRIPTS_DIR && (includeKinds === null || !includeKinds.has(TRANSCRIPTS_DIR))) {
+  // in includeKinds OR passed `includeTranscripts: true`. The override flag
+  // avoids the footgun of having the CLI build a hard-coded kinds list that
+  // inadvertently drops valid memory dirs like `peers/` or `forks/`. (Cursor / #747)
+  if (
+    top === TRANSCRIPTS_DIR &&
+    !transcriptsOverride &&
+    (includeKinds === null || !includeKinds.has(TRANSCRIPTS_DIR))
+  ) {
     return false;
   }
 
