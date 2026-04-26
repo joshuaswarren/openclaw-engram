@@ -264,6 +264,12 @@ function createOfficialPairedCoordinateDataset() {
               target_step_id: [0, null],
               target_step_coordinates: [[0, 0, 1]],
             },
+            {
+              question: "Which scalar coordinate should fail closed?",
+              choices: ["red pen", "blue mug", "black bag", "white lamp"],
+              answer: "B",
+              target_step_coordinate: "0",
+            },
           ],
         },
       ],
@@ -568,7 +574,7 @@ test("runBenchmark maps singular and paired MemBench coordinate tuples without c
     system: adapter,
   });
 
-  assert.equal(result.results.tasks.length, 8);
+  assert.equal(result.results.tasks.length, 9);
   assert.deepEqual(result.results.tasks[0]?.details?.targetStepCoordinates, [[0, 0, 1]]);
   assert.deepEqual(result.results.tasks[0]?.details?.targetStepIds, [1]);
   assert.equal(result.results.tasks[0]?.scores.membench_recall_at_10, 1);
@@ -588,6 +594,8 @@ test("runBenchmark maps singular and paired MemBench coordinate tuples without c
   assert.equal(result.results.tasks[6]?.scores.membench_recall_at_10, undefined);
   assert.deepEqual(result.results.tasks[7]?.details?.targetStepCoordinates, [[0, 0, 1]]);
   assert.deepEqual(result.results.tasks[7]?.details?.targetStepIds, [1]);
+  assert.equal(result.results.tasks[8]?.details?.targetStepCoordinates, undefined);
+  assert.equal(result.results.tasks[8]?.details?.targetStepIds, undefined);
 });
 
 test("runBenchmark accepts flat MCQ cases with choices and correctChoice only", async () => {

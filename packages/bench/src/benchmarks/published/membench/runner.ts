@@ -1220,6 +1220,10 @@ function parseTargetStepRefs(
   targetStepIds?: number[];
   targetStepCoordinates?: number[][];
 } {
+  if (options.treatSingleArrayAsCoordinate && value !== undefined && !Array.isArray(value)) {
+    return {};
+  }
+
   const rawValues = Array.isArray(value)
     ? options.treatSingleArrayAsCoordinate
       ? isCoordinateTuple(value) || !value.every(Array.isArray)
