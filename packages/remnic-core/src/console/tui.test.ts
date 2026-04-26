@@ -254,6 +254,55 @@ test("traceRecorder.append is invoked once per successful tick", async () => {
   );
 });
 
+test("slow trace writes do not block render ticks (Codex P2 #732)", async () => {
+  // Regression for Codex review on PR #732: the render tick must not
+  // `await` the trace write before painting. If it did, a slow disk
+  // (or network FS) would hold `inFlight = true` for the duration of
+  // the write, causing every subsequent tick to bail at
+  // `if (inFlight) return` and making `--record-trace` look frozen.
+  // This test wires a recorder whose `append` never resolves and
+  // asserts that frames keep painting anyway.
+  const stream = new CaptureStream();
+  const orchestrator = makeOrchestrator();
+  let appendCalls = 0;
+  // Pending promise — never resolves. If the tick awaits this, the
+  // loop freezes after a single paint.
+  const stalledAppend = new Promise<void>(() => {
+    /* never resolves */
+  });
+  const handle = runConsoleTui(orchestrator, {
+    refreshIntervalMs: 20,
+    output: stream,
+    installSigintHandler: false,
+    traceRecorder: {
+      append: async () => {
+        appendCalls += 1;
+        return stalledAppend;
+      },
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  handle.stop();
+  await handle.done;
+
+  // If the render path were still awaiting the stalled write, only
+  // the first tick would have called `append` (subsequent ticks
+  // would short-circuit on `inFlight`). With fire-and-forget, every
+  // tick calls `append` because each prior tick releases the latch
+  // immediately after painting.
+  assert.ok(
+    appendCalls >= 3,
+    `expected loop to keep ticking past stalled trace write, saw ${appendCalls} append calls`,
+  );
+  // And the rendered output should reflect multiple paints.
+  const text = stream.textPlain();
+  const headerCount = (text.match(/remnic console/g) ?? []).length;
+  assert.ok(
+    headerCount >= 3,
+    `expected >= 3 painted frames despite stalled trace, saw ${headerCount}`,
+  );
+});
+
 test("stop() clears the interval and resolves done", async () => {
   const stream = new CaptureStream();
   const orchestrator = makeOrchestrator();

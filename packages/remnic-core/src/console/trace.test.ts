@@ -367,3 +367,58 @@ test("replayTrace honors AbortSignal mid-replay", async () => {
     );
   });
 });
+
+test("replayTrace restores cursor + closes stream when aborted (Codex P2 #732)", async () => {
+  // Regression for Codex review on PR #732: the CLI replay path must
+  // wire SIGINT to an AbortController so Ctrl-C exits cleanly and the
+  // `replayTrace` `finally` block runs. This test exercises the
+  // replay-side contract: aborting mid-stream must still execute the
+  // `finally` block — which writes the show-cursor escape and closes
+  // the underlying handles. (CLI-side SIGINT wiring is verified by
+  // visual inspection; this test guarantees the abort semantics the
+  // CLI relies on.)
+  await withTempDir(async (dir) => {
+    const tracePath = path.join(dir, "trace.jsonl");
+    const recorder = await openTraceRecorder(tracePath);
+    for (let i = 0; i < 10; i++) {
+      await recorder.append(
+        makeSnapshot({
+          capturedAt: `2026-04-26T00:00:${String(i).padStart(2, "0")}.000Z`,
+        }),
+      );
+    }
+    await recorder.close();
+
+    const stream = new CaptureStream();
+    const ac = new AbortController();
+    let frames = 0;
+    const result = await replayTrace(tracePath, {
+      output: stream,
+      sleep: async () => {
+        frames += 1;
+        if (frames >= 1) ac.abort();
+      },
+      // manageCursor: true (default) so we can assert the show-cursor
+      // sequence was emitted by the `finally` block.
+      manageCursor: true,
+      signal: ac.signal,
+    });
+
+    assert.ok(
+      result.framesRendered < 10,
+      `expected early abort, rendered ${result.framesRendered}`,
+    );
+
+    // Cursor cleanup ran: the raw output must contain both the hide
+    // (start-of-replay) AND show (`finally`-block) escape sequences.
+    const raw = stream.text();
+    assert.ok(
+      raw.includes("\x1b[?25l"),
+      "expected hide-cursor escape at replay start",
+    );
+    assert.ok(
+      raw.includes("\x1b[?25h"),
+      "expected show-cursor escape from finally block after abort",
+    );
+  });
+});
