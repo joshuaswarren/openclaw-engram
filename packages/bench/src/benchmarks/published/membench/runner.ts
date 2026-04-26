@@ -37,6 +37,7 @@ interface MemBenchQuestionAnswer {
   correctChoice?: MemBenchChoice;
   questionTime?: string;
   targetStepIds?: number[];
+  targetStepCoordinates?: number[][];
 }
 
 const DATASET_FILENAMES = [
@@ -161,6 +162,7 @@ export async function runMemBenchBenchmark(
           predictedAnswer: actualAnswer,
           questionTime: testCase.questionTime,
           targetStepIds: testCase.targetStepIds,
+          targetStepCoordinates: testCase.targetStepCoordinates,
           recalledText,
           answeredText: answered.finalAnswer,
           responderModel: answered.model,
@@ -358,11 +360,12 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
     turns,
     question,
       answer,
-      choices,
-      correctChoice,
-      questionTime,
-      targetStepIds,
-    } = entry;
+    choices,
+    correctChoice,
+    questionTime,
+    targetStepIds,
+    targetStepCoordinates,
+  } = entry;
 
   if (typeof id !== "string" || id.length === 0) {
     throw new Error(`MemBench case ${location} must include a non-empty id string.`);
@@ -398,6 +401,7 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
 
   const parsedChoices = parseChoices(choices, location);
   const parsedCorrectChoice = parseCorrectChoice(correctChoice, answer, parsedChoices, location);
+  const targetRefs = parseTargetStepRefs(targetStepCoordinates ?? targetStepIds);
   const parsedAnswer = parsedChoices && parsedCorrectChoice
     ? parsedChoices[parsedCorrectChoice]
     : answer;
@@ -413,7 +417,8 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
     choices: parsedChoices,
     correctChoice: parsedCorrectChoice,
     questionTime: typeof questionTime === "string" ? questionTime : undefined,
-    targetStepIds: parseTargetStepIds(targetStepIds),
+    targetStepIds: targetRefs.targetStepIds,
+    targetStepCoordinates: targetRefs.targetStepCoordinates,
   };
 }
 
@@ -569,10 +574,11 @@ function normalizeTrajectoryQaRecord(
         turns,
         question: pair.question,
         answer: pair.answer,
-        choices: pair.choices,
-        correctChoice: pair.correctChoice,
-        questionTime: pair.questionTime,
-        targetStepIds: pair.targetStepIds,
+      choices: pair.choices,
+      correctChoice: pair.correctChoice,
+      questionTime: pair.questionTime,
+      targetStepIds: pair.targetStepIds,
+      targetStepCoordinates: pair.targetStepCoordinates,
       },
       `${location}.qa[${index}]`,
     ),
@@ -695,7 +701,7 @@ function normalizeQaPairs(
       choices: choices ?? undefined,
       correctChoice: correctChoice ?? undefined,
       questionTime: firstString(item.time, item.question_time, item.questionTime) ?? undefined,
-      targetStepIds: parseTargetStepIds(
+      ...parseTargetStepRefs(
         item.target_step_id ?? item.target_step_ids ?? item.targetStepIds,
       ),
     });
@@ -1015,15 +1021,42 @@ function normalizeComparable(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function parseTargetStepIds(value: unknown): number[] | undefined {
+function parseTargetStepRefs(value: unknown): {
+  targetStepIds?: number[];
+  targetStepCoordinates?: number[][];
+} {
   const rawValues = Array.isArray(value) ? value : value === undefined ? [] : [value];
-  const parsed = rawValues
-    .map((item) => Array.isArray(item) ? item[0] : item)
-    .map((item) => typeof item === "number" && Number.isInteger(item) && item >= 0
-      ? item
-      : undefined)
-    .filter((item): item is number => item !== undefined);
-  return parsed.length > 0 ? parsed : undefined;
+  const coordinates = rawValues
+    .filter(Array.isArray)
+    .map((items) => items.filter((item): item is number =>
+      typeof item === "number" && Number.isInteger(item) && item >= 0,
+    ))
+    .filter((items) => items.length > 0);
+  const candidates = new Set<number>();
+  for (const item of rawValues) {
+    if (typeof item === "number" && Number.isInteger(item) && item >= 0) {
+      candidates.add(item);
+    } else if (Array.isArray(item)) {
+      const numeric = item.filter((part): part is number =>
+        typeof part === "number" && Number.isInteger(part) && part >= 0,
+      );
+      for (const part of numeric) {
+        candidates.add(part);
+      }
+      if (numeric.length >= 2) {
+        const [first, second] = numeric;
+        candidates.add(first + second);
+        candidates.add(first * 2 + second);
+        candidates.add(second * 2 + first);
+      }
+    }
+  }
+
+  const ids = [...candidates].sort((left, right) => left - right);
+  return {
+    targetStepIds: ids.length > 0 ? ids : undefined,
+    targetStepCoordinates: coordinates.length > 0 ? coordinates : undefined,
+  };
 }
 
 function normalizeLimit(limit: number | undefined): number | undefined {

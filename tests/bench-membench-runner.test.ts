@@ -177,7 +177,7 @@ function createOfficialParticipantDataset() {
             question: "Which movie preference should the assistant remember?",
             choices: ["Toy Story", "Alien (1979)", "Heat", "Jaws"],
             answer: "Alien (1979)",
-            target_step_id: [[0, 0]],
+            target_step_id: [[1, 0]],
           },
         },
       ],
@@ -368,6 +368,8 @@ test("runBenchmark accepts official first-agent message_list and QA records", as
   assert.equal(task.details?.memoryType, "reflective");
   assert.equal(task.details?.scenario, "participant");
   assert.equal(task.details?.turnCount, 2);
+  assert.deepEqual(task.details?.targetStepCoordinates, [[1, 0]]);
+  assert.deepEqual(task.details?.targetStepIds, [0, 1, 2]);
   assert.equal(task.scores.membench_accuracy, 1);
   assert.equal(
     result.results.aggregates.membench_accuracy_reflective_participant?.mean,

@@ -12,6 +12,7 @@ export interface MemBenchCase {
   correctChoice?: "A" | "B" | "C" | "D";
   questionTime?: string;
   targetStepIds?: number[];
+  targetStepCoordinates?: number[][];
 }
 
 export const MEMBENCH_SMOKE_FIXTURE: MemBenchCase[] = [
