@@ -232,8 +232,13 @@ function emitPeerIdentity(peer: Peer): string {
   lines.push(`id: ${escapeYamlString(peer.id)}`);
   lines.push(`kind: ${peer.kind}`);
   lines.push(`displayName: ${escapeYamlString(peer.displayName)}`);
-  lines.push(`createdAt: ${peer.createdAt}`);
-  lines.push(`updatedAt: ${peer.updatedAt}`);
+  // Cursor M: emit timestamps as quoted YAML strings — bare emission
+  // would let a `createdAt` value containing a newline inject extra
+  // frontmatter fields when round-tripped through `parsePeerFrontmatter`.
+  // (`writePeer` validates these are non-empty strings, but the type
+  // doesn't constrain content.)
+  lines.push(`createdAt: ${escapeYamlString(peer.createdAt)}`);
+  lines.push(`updatedAt: ${escapeYamlString(peer.updatedAt)}`);
   lines.push("---");
   lines.push("");
   lines.push(peer.notes ?? "");
@@ -468,7 +473,7 @@ function emitPeerProfile(profile: PeerProfile): string {
   return [
     "---",
     `peerId: ${escapeYamlString(profile.peerId)}`,
-    `updatedAt: ${profile.updatedAt}`,
+    `updatedAt: ${escapeYamlString(profile.updatedAt)}`,
     "---",
     "",
     "<!-- peer profile — managed by the async reasoner. Manual edits will be overwritten. -->",

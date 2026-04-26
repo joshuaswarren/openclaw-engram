@@ -125,7 +125,14 @@ export interface PeerInteractionLogEntry {
  * final group ending on an alphanumeric. Negative lookahead-free so
  * it works in any JS engine.
  */
-export const PEER_ID_PATTERN = /^[A-Za-z0-9](?:[._-]?[A-Za-z0-9]+)*$/;
+// CodeQL alert #75: the previous form `^[A-Za-z0-9](?:[._-]?[A-Za-z0-9]+)*$`
+// was ambiguous on alphanumeric runs because `[._-]?` could match
+// empty, letting each iteration consume 1+ alphanumerics in many
+// overlapping ways — exponential backtracking on adversarial inputs.
+// Tighten so the optional group REQUIRES a separator before each
+// subsequent alphanumeric run; no overlapping match paths, linear
+// time on any input.
+export const PEER_ID_PATTERN = /^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$/;
 
 /** Maximum length for `Peer.id`. */
 export const PEER_ID_MAX_LENGTH = 64;
