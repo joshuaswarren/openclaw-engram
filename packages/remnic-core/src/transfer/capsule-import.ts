@@ -238,9 +238,25 @@ export async function importCapsule(
     // silently collapse, landing the file inside root but outside the fork
     // prefix — Cursor medium thread #741).  Rejecting `..` up-front is simpler
     // and more robust than normalising after the fact.
+    //
+    // Extended guard (Codex P1 #741 round 5): also reject paths containing
+    // backslash separators (`\`), which are Windows path separators. On Windows
+    // a path like `..\\escape.md` or `subdir\\..\\..\\escape.md` would resolve
+    // to a parent traversal but would bypass a purely posix-split check.
+    // Additionally, after posix-normalizing the path we re-check for a leading
+    // `..` or `/` — this catches edge-cases such as `subdir/../..` where the
+    // individual split segments are not `..` but the normalized result is.
+    if (rec.path.includes("\\")) {
+      throw new Error(
+        `importCapsule: record path contains backslash separators (Windows-style paths are not allowed): ${rec.path}`,
+      );
+    }
+    const posixNormalized = path.posix.normalize(rec.path);
     if (
       rec.path.startsWith("/") ||
-      rec.path.split("/").some((seg) => seg === "..")
+      rec.path.split("/").some((seg) => seg === "..") ||
+      posixNormalized.startsWith("..") ||
+      posixNormalized.startsWith("/")
     ) {
       throw new Error(
         `importCapsule: record path escapes target root: ${rec.path}`,
@@ -443,6 +459,18 @@ async function assertIsDirectory(absPath: string): Promise<void> {
   if (!st || !st.isDirectory()) {
     throw new Error(
       `importCapsule: 'root' must be an existing directory: ${absPath}`,
+    );
+  }
+  // Codex P1 #741 round 5: reject a root that is itself a symlink.
+  // `stat` follows symlinks so the isDirectory() check above passes even when
+  // `absPath` is a symlink → /etc or another sensitive directory.  We use
+  // `lstat` to inspect the path itself without following the link.  If it is a
+  // symlink we reject up-front rather than silently writing to the resolved
+  // target (which could be a sensitive location supplied by an attacker).
+  const lst = await lstat(absPath).catch(() => null);
+  if (lst && lst.isSymbolicLink()) {
+    throw new Error(
+      `importCapsule: 'root' must not be a symlink — resolve it to its real path first: ${absPath}`,
     );
   }
 }

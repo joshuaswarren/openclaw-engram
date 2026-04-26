@@ -1033,3 +1033,150 @@ test("manifest with two entries that differ only in case is rejected before any 
   const written = await listMemoryFiles(dst);
   assert.deepEqual(written, [], "case-fold duplicate rejection must not leave partial writes");
 });
+
+// ---------------------------------------------------------------------------
+// Codex P1 round 5 (#741 line 244): Windows-style backslash path guard
+// ---------------------------------------------------------------------------
+
+async function makeWindowsPathBundle(recordPath: string): Promise<string> {
+  const { createHash } = await import("node:crypto");
+  const content = "evil\n";
+  const sha256 = createHash("sha256")
+    .update(Buffer.from(content, "utf-8"))
+    .digest("hex");
+  const bytes = Buffer.byteLength(content, "utf-8");
+
+  const bundle = {
+    manifest: {
+      format: "openclaw-engram-export" as const,
+      schemaVersion: 2 as const,
+      createdAt: "2026-04-26T00:00:00.000Z",
+      pluginVersion: "9.9.9",
+      includesTranscripts: false,
+      files: [{ path: recordPath, sha256, bytes }],
+      capsule: {
+        id: "win-path-cap",
+        version: "0.1.0",
+        schemaVersion: "taxonomy-v1",
+        parentCapsule: null,
+        description: "",
+        retrievalPolicy: { tierWeights: {}, directAnswerEnabled: false },
+        includes: {
+          taxonomy: false,
+          identityAnchors: false,
+          peerProfiles: false,
+          procedural: false,
+        },
+      },
+    },
+    records: [{ path: recordPath, content }],
+  };
+
+  const { gzipSync } = await import("node:zlib");
+  const tmp = await mkdtemp(path.join(tmpdir(), "capsule-win-path-"));
+  const archivePath = path.join(tmp, "win.capsule.json.gz");
+  await writeFile(
+    archivePath,
+    gzipSync(Buffer.from(JSON.stringify(bundle), "utf-8")),
+  );
+  return archivePath;
+}
+
+test("Windows-style backslash path is rejected — simple backslash traversal", async () => {
+  // `..\\escape.md` contains a backslash and must be rejected before any
+  // write (Codex P1 #741 round 5, line 244).
+  const archivePath = await makeWindowsPathBundle("..\\escape.md");
+  const dst = await makeEmptyMemoryDir();
+  await assert.rejects(
+    importCapsule({ archivePath, root: dst }),
+    /backslash separators|escapes target root/i,
+  );
+  const written = await listMemoryFiles(dst);
+  assert.deepEqual(written, [], "backslash-path rejection must not leave partial writes");
+});
+
+test("Windows-style backslash path is rejected — compound backslash traversal", async () => {
+  // `subdir\\..\\..\\escape.md` is another form of parent traversal using
+  // Windows separators; must also be caught (Codex P1 #741 round 5, line 244).
+  const archivePath = await makeWindowsPathBundle("subdir\\..\\..\\escape.md");
+  const dst = await makeEmptyMemoryDir();
+  await assert.rejects(
+    importCapsule({ archivePath, root: dst }),
+    /backslash separators|escapes target root/i,
+  );
+  const written = await listMemoryFiles(dst);
+  assert.deepEqual(written, [], "compound backslash-path rejection must not leave partial writes");
+});
+
+test("posix-normalized path starting with '..' is rejected", async () => {
+  // `subdir/../../escape.md` — no single segment equals `..` when the
+  // normalised result starts with `..`, so the posix.normalize check must catch
+  // it (Codex P1 #741 round 5, line 244).  Note that the existing segment-level
+  // check already catches this because `..` IS a segment here; this test
+  // confirms the posixNormalized guard works as a belt-and-suspenders check.
+  const archivePath = await makeWindowsPathBundle("subdir/../../escape.md");
+  const dst = await makeEmptyMemoryDir();
+  await assert.rejects(
+    importCapsule({ archivePath, root: dst }),
+    /escapes target root/i,
+  );
+  const written = await listMemoryFiles(dst);
+  assert.deepEqual(written, [], "normalized traversal rejection must not leave partial writes");
+});
+
+// ---------------------------------------------------------------------------
+// Codex P1 round 5 (#741 line 443): symlinked root is rejected up-front
+// ---------------------------------------------------------------------------
+
+test("symlinked root is rejected — importCapsule must refuse a root that is a symlink", async () => {
+  // Create a real directory as the eventual target of the symlink.
+  const realDir = await mkdtemp(path.join(tmpdir(), "capsule-real-root-"));
+  // Create a symlink that points to the real directory.
+  const symlinkRoot = path.join(
+    await mkdtemp(path.join(tmpdir(), "capsule-symlink-holder-")),
+    "symlinked-root",
+  );
+  await symlink(realDir, symlinkRoot, "dir");
+
+  const { archivePath } = await exportTo(
+    [{ rel: "facts/a.md", content: "should not land\n" }],
+    "symlink-root-cap",
+  );
+
+  // importCapsule must reject the symlinked root before any write.
+  await assert.rejects(
+    importCapsule({ archivePath, root: symlinkRoot }),
+    /must not be a symlink/i,
+  );
+
+  // The real directory must be empty (no files were written through the symlink).
+  const files = await listMemoryFiles(realDir);
+  assert.deepEqual(files, [], "symlinked root rejection must not write to the resolved target");
+});
+
+test("symlinked root pointing to a sensitive path is rejected", async () => {
+  // Simulate an attacker supplying /tmp/import-target → /etc (or any real dir
+  // on this machine).  We use a tmpdir rather than /etc to keep the test
+  // portable, but the security property is the same: the root being a symlink
+  // must be rejected regardless of where it points.
+  const sensitiveDir = await mkdtemp(path.join(tmpdir(), "capsule-sensitive-"));
+  const symlinkRoot = path.join(
+    await mkdtemp(path.join(tmpdir(), "capsule-symlink-holder2-")),
+    "symlinked-sensitive",
+  );
+  await symlink(sensitiveDir, symlinkRoot, "dir");
+
+  const { archivePath } = await exportTo(
+    [{ rel: "facts/a.md", content: "should not land\n" }],
+    "symlink-root-sensitive-cap",
+  );
+
+  await assert.rejects(
+    importCapsule({ archivePath, root: symlinkRoot }),
+    /must not be a symlink/i,
+  );
+
+  // sensitiveDir must remain empty.
+  const files = await listMemoryFiles(sensitiveDir);
+  assert.deepEqual(files, [], "writes must not reach the symlink target");
+});
