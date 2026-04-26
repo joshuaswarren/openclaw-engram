@@ -756,14 +756,20 @@ function resolveHighlights(nodes, results) {
   for (const node of nodes) {
     const nid = node.id;
     if (!nid) continue;
+    // Normalize the node ID once for all comparisons.
+    const nidN = normalizeSep(nid);
     for (const result of results) {
       const rid = result.id;
       const rpath = result.path || "";
       // Path-based matching (handles the typical production case where graph
-      // node IDs are relative paths and recall results carry absolute paths).
-      // Uses pathEndsWith() to respect path-segment boundaries.
+      // node IDs are relative paths and recall results carry absolute or
+      // relative paths).  Both sides are separator-normalized so
+      // Windows backslash paths compare correctly against forward-slash
+      // graph node IDs.  Uses pathEndsWith() to respect path-segment
+      // boundaries.
       if (rpath) {
-        if (nid === rpath || pathEndsWith(rpath, nid) || pathEndsWith(nid, rpath)) {
+        const rpathN = normalizeSep(rpath);
+        if (nidN === rpathN || pathEndsWith(rpathN, nidN) || pathEndsWith(nidN, rpathN)) {
           matched.set(nid, rid);
           break;
         }
@@ -1246,6 +1252,17 @@ async function loadMemoryGraph() {
     edge._tgtNode = nodeIndex.get(edge.target) ?? null;
   }
 
+  // Pre-bind each node's frontmatter memory ID from snapshot metadata so
+  // drill-through works for every node, not just those matched by a search.
+  // `node.metadata.memoryId` is the field the graph-snapshot endpoint sets
+  // when it can resolve the node back to a stored memory record.
+  // Any later runGraphSearch() result will overwrite this with the recall-
+  // result ID (which may be more precise), but this ensures non-searched
+  // nodes also open with a valid memory-detail fetch.
+  for (const n of nodes) {
+    n._memoryId = n.metadata?.memoryId || null;
+  }
+
   graphData = { nodes, edges };
   // Reset view on fresh load.
   graphView.tx = 0;
@@ -1310,8 +1327,15 @@ async function runGraphSearch() {
       [];
     // Guard again: graphData may have been cleared during the fetch.
     if (!graphData) return;
+    // Second token check immediately before mutating shared highlight state.
+    // A graph reload that ran between the first guard and here will have bumped
+    // graphSearchToken, so stale responses from a superseded search are dropped
+    // even if graphData was coincidentally re-populated in the interim.
+    if (myToken !== graphSearchToken) return;
     graphHighlightIds = resolveHighlights(graphData.nodes, rawResults);
     // Store frontmatter IDs on matched nodes for drill-through.
+    // Preserve any snapshot-bound _memoryId for nodes that weren't in results
+    // by only overwriting nodes that are actually in the highlight set.
     for (const [nodeId, memId] of graphHighlightIds.entries()) {
       const node = graphData.nodes.find((n) => n.id === nodeId);
       if (node) node._memoryId = memId;
@@ -1336,6 +1360,14 @@ function clearGraphSearch() {
   // Invalidate any in-flight search so its response is discarded.
   graphSearchToken += 1;
   graphHighlightIds = new Map();
+  // Clear search-assigned _memoryId from all nodes so subsequent drill-through
+  // fetches fall back to the snapshot-bound metadata ID rather than using a
+  // stale frontmatter ID from a previous search query.
+  if (graphData) {
+    for (const n of graphData.nodes) {
+      n._memoryId = n.metadata?.memoryId || null;
+    }
+  }
   const input = $("graphSearchQuery");
   if (input) input.value = "";
   if (graphData) drawGraph();
@@ -1399,15 +1431,16 @@ async function openGraphNodePanel(node) {
     edgesEl.appendChild(strong);
   }
 
-  // Use the frontmatter memory ID for the endpoint when available (attached
-  // by runGraphSearch via resolveHighlights).  Graph node IDs are relative
-  // paths; the memory-detail endpoint resolves by frontmatter ID, not path.
-  //
-  // When no frontmatter ID is available (node not yet matched by a search),
-  // we attempt the lookup with node.id and gracefully fall back to showing
-  // the snapshot metadata if the endpoint returns 404 — so the panel is still
-  // informative for every node, not just searched ones.
-  const lookupId = node._memoryId || node.id;
+  // Resolve the frontmatter memory ID to use for GET /engram/v1/memories/:id.
+  // Priority order:
+  //   1. node._memoryId  — set by runGraphSearch() from recall result.id, or
+  //                        pre-bound from snapshot metadata in loadMemoryGraph()
+  //   2. node.metadata?.memoryId — snapshot field (direct access, in case
+  //                        _memoryId was not pre-bound for some reason)
+  //   3. node.id         — last resort; the endpoint will 404 for path IDs but
+  //                        the caller handles 404 gracefully by showing snapshot
+  //                        data, so the panel is still informative.
+  const lookupId = node._memoryId || node.metadata?.memoryId || node.id;
 
   let response = null;
   try {
