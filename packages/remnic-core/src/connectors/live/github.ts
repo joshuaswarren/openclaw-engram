@@ -923,20 +923,23 @@ async function fetchAndFilterComments(
 
       const comment = item as GitHubComment;
 
-      // Skip items at or before the watermark (server returns inclusive).
-      // These are cursor artifacts — do NOT count them against the budget.
-      if (since && comment.updated_at <= since) {
+      // Skip items strictly before the watermark. Items whose `updated_at`
+      // equals the watermark second must pass through so the seenIds check
+      // below can distinguish already-ingested comments from new ones at the
+      // same timestamp. Using `<` (strict) here is intentional — `<=` would
+      // make seenIds unreachable for boundary items, permanently dropping any
+      // comment that arrives in the same second as the current watermark.
+      if (since && comment.updated_at < since) {
         continue;
       }
 
-      // P1 fix (same-timestamp dedup): skip comments already processed in the
-      // same second as the watermark. GitHub's `since=` filter is inclusive at
-      // second granularity, so on the next poll it re-returns any comment whose
-      // `updated_at` ISO second matches the watermark second exactly. We use
-      // the seenIds map (keyed by `{repo}/{kind}/{commentId}`) to detect and
-      // skip these without re-importing or consuming budget.
+      // Same-second dedup: skip only if this exact (id, updated_at) pair was
+      // already ingested on a prior pass. A later edit of the same comment
+      // produces a newer `updated_at`, so we must NOT gate on id alone — we
+      // must also confirm the timestamp matches before skipping. This prevents
+      // silent data loss when a comment is edited after its first ingestion.
       const seenKey = `${repo}/${kind}/${comment.id}`;
-      if (seenIds[seenKey] !== undefined) {
+      if (seenIds[seenKey] === comment.updated_at) {
         continue;
       }
 

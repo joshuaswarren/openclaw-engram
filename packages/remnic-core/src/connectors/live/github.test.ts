@@ -486,15 +486,24 @@ test("incremental sync advances watermark after importing comments", async () =>
   assert.equal(payload.watermarks[`${REPO_A}/issue-comment`], "2026-04-26T10:00:00.000Z");
 });
 
-test("incremental sync skips items at or before the watermark", async () => {
-  // Comment with updated_at equal to the watermark should be skipped.
-  const staleComment = makeComment(1, SYNTHETIC_LOGIN, "old", "2026-04-25T00:00:00.000Z");
-  const newComment = makeComment(2, SYNTHETIC_LOGIN, "new", "2026-04-26T09:00:00.000Z");
+test("incremental sync skips items strictly before the watermark", async () => {
+  // Only comments whose updated_at is STRICTLY before the watermark are
+  // dropped by the filter. A comment AT the watermark second passes through
+  // to the seenIds check (and, if not in seenIds, is ingested). A comment
+  // one second after the watermark is always ingested.
+  //
+  // "beforeComment" has a timestamp 1 second before the watermark → skipped.
+  // "atComment" is AT the watermark second and NOT in seenIds → ingested.
+  // "afterComment" is after the watermark → ingested.
+  const watermark = "2026-04-25T00:00:01.000Z";
+  const beforeComment = makeComment(1, SYNTHETIC_LOGIN, "before", "2026-04-25T00:00:00.000Z");
+  const atComment = makeComment(2, SYNTHETIC_LOGIN, "at watermark", watermark);
+  const afterComment = makeComment(3, SYNTHETIC_LOGIN, "after", "2026-04-25T00:00:02.000Z");
 
   const fetchFn = makeFetch([
     {
       match: (url) => url.includes("/issues/comments"),
-      respond: () => ({ status: 200, data: [staleComment, newComment] }),
+      respond: () => ({ status: 200, data: [beforeComment, atComment, afterComment] }),
     },
     {
       match: (url) => url.includes("/pulls/comments"),
@@ -504,13 +513,24 @@ test("incremental sync skips items at or before the watermark", async () => {
 
   const connector = createGitHubConnector({ fetchFn });
   const config = connector.validateConfig({ ...SYNTHETIC_CONFIG });
-  const cursor = makeGitHubCursor({
-    [`${REPO_A}/issue-comment`]: "2026-04-25T00:00:00.000Z",
-  });
+  // Cursor watermark at exactly the "at" second; seenIds is empty.
+  const cursor: import("./framework.js").ConnectorCursor = {
+    kind: GITHUB_CURSOR_KIND,
+    value: JSON.stringify({
+      watermarks: { [`${REPO_A}/issue-comment`]: watermark },
+      seenIds: {},
+    }),
+    updatedAt: watermark,
+  };
 
   const result = (await connector.syncIncremental({ cursor, config })) as GitHubSyncResult;
-  assert.equal(result.newDocs.length, 1);
-  assert.equal(result.newDocs[0].source.externalId, `${REPO_A}/issue-comment/2`);
+  // beforeComment is strictly before the watermark → skipped.
+  // atComment is AT the watermark and not in seenIds → ingested.
+  // afterComment is after the watermark → ingested.
+  assert.equal(result.newDocs.length, 2);
+  const ids = result.newDocs.map((d) => d.source.externalId);
+  assert.ok(ids.includes(`${REPO_A}/issue-comment/2`), "atComment must be ingested");
+  assert.ok(ids.includes(`${REPO_A}/issue-comment/3`), "afterComment must be ingested");
 });
 
 // ---------------------------------------------------------------------------
@@ -1096,4 +1116,103 @@ test("skipped (empty-body) records do not consume the per-pass budget", async ()
 
   assert.equal(result.newDocs.length, 3, "all 3 valid comments must be imported");
   assert.equal(result.skippedEmpty, 5);
+});
+
+// ---------------------------------------------------------------------------
+// Regression: strict watermark filter (<, not <=) + timestamp-gated seenIds
+// Fixes: Cursor High finding (watermark boundary), Codex P1 finding (seenIds).
+// ---------------------------------------------------------------------------
+
+test("watermark uses strict < so boundary-second comments pass through to seenIds", async () => {
+  // Scenario: The cursor watermark is set to T. On the next poll GitHub's
+  // `since=T` filter re-returns any comment whose updated_at equals T
+  // (GitHub's `since` parameter is inclusive). With the old `<=` filter these
+  // were silently dropped before seenIds could distinguish them. This test
+  // verifies the `<` fix: a comment AT exactly the watermark second that is
+  // NOT in seenIds must be ingested.
+  const ts = "2026-04-26T12:00:00.000Z";
+  // commentAtTs is at the exact watermark second but was NOT ingested before.
+  const commentAtTs = makeComment(42, SYNTHETIC_LOGIN, "exactly at watermark", ts);
+
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes("/issues/comments"),
+      respond: () => ({ status: 200, data: [commentAtTs] }),
+    },
+    {
+      match: (url) => url.includes("/pulls/comments"),
+      respond: () => ({ status: 200, data: [] }),
+    },
+  ]);
+
+  const connector = createGitHubConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CONFIG });
+  // Cursor watermark is AT ts; seenIds is empty (comment was NOT previously seen).
+  const cursor: import("./framework.js").ConnectorCursor = {
+    kind: GITHUB_CURSOR_KIND,
+    value: JSON.stringify({
+      watermarks: { [`${REPO_A}/issue-comment`]: ts },
+      seenIds: {},
+    }),
+    updatedAt: ts,
+  };
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GitHubSyncResult;
+  // With `<` fix: commentAtTs is NOT before the watermark, NOT in seenIds →
+  // must be ingested. With old `<=` it would have been silently dropped.
+  assert.equal(
+    result.newDocs.length,
+    1,
+    "comment exactly at watermark second must be ingested when not in seenIds",
+  );
+  assert.equal(result.newDocs[0].source.externalId, `${REPO_A}/issue-comment/42`);
+});
+
+test("seenIds check gates on (id + timestamp), not id alone", async () => {
+  // Scenario: A comment was previously imported at ts1. It is then edited and
+  // re-fetched at ts2 (same id, newer updated_at). With the old `!== undefined`
+  // check the edited version would be silently dropped. With the new
+  // `=== comment.updated_at` check only the exact (id, ts) pair is suppressed.
+  const ts1 = "2026-04-26T13:00:00.000Z";
+  const ts2 = "2026-04-26T13:00:01.000Z";
+  // Same id as the previously-ingested comment, but updated_at has advanced.
+  const editedComment = makeComment(77, SYNTHETIC_LOGIN, "edited body", ts2);
+
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes("/issues/comments"),
+      respond: () => ({ status: 200, data: [editedComment] }),
+    },
+    {
+      match: (url) => url.includes("/pulls/comments"),
+      respond: () => ({ status: 200, data: [] }),
+    },
+  ]);
+
+  const connector = createGitHubConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CONFIG });
+  // Cursor records id 77 with ts1 in seenIds (the old ingested version).
+  // Watermark is at ts1 so the edited comment (ts2 > ts1) is above it.
+  const cursor: import("./framework.js").ConnectorCursor = {
+    kind: GITHUB_CURSOR_KIND,
+    value: JSON.stringify({
+      watermarks: { [`${REPO_A}/issue-comment`]: ts1 },
+      seenIds: { [`${REPO_A}/issue-comment/77`]: ts1 },
+    }),
+    updatedAt: ts1,
+  };
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GitHubSyncResult;
+  // The edited comment (same id, newer ts) must be ingested — seenIds only
+  // suppresses the (id, ts1) pair, not (id, ts2).
+  assert.equal(
+    result.newDocs.length,
+    1,
+    "edited comment with newer updated_at must not be suppressed by seenIds",
+  );
+  assert.equal(result.newDocs[0].source.externalId, `${REPO_A}/issue-comment/77`);
+  assert.ok(
+    result.newDocs[0].content.includes("edited body"),
+    "imported document must contain the new body",
+  );
 });
