@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
@@ -72,8 +72,17 @@ export interface ImportCapsuleOptions {
 export interface ImportCapsuleSkippedRecord {
   /** Original record path (capsule-relative, posix). */
   path: string;
-  /** Why this record was not written. */
-  reason: "exists" | "checksum_mismatch";
+  /**
+   * Why this record was not written.
+   *
+   * `"exists"` — the target path already existed and the mode was `"skip"`,
+   * OR the computed fork path already existed in fork mode.
+   *
+   * `"checksum_mismatch"` is intentionally absent: a checksum failure aborts
+   * the import entirely (fail-closed) rather than skipping the offending
+   * record, so no `ImportCapsuleSkippedRecord` is ever produced for it.
+   */
+  reason: "exists";
 }
 
 export interface ImportCapsuleImportedRecord {
@@ -125,6 +134,14 @@ export async function importCapsule(
   await assertIsDirectory(rootAbs);
 
   const mode: ImportCapsuleMode = opts.mode ?? "skip";
+  // Reject unknown mode values up-front (rule 51). TypeScript callers get a
+  // compile-time check via the union type; JS/CLI callers get a runtime error
+  // here before any write begins — not a silent destructive fallback.
+  if (mode !== "skip" && mode !== "overwrite" && mode !== "fork") {
+    throw new Error(
+      `importCapsule: unknown mode ${JSON.stringify(mode)}; expected "skip", "overwrite", or "fork"`,
+    );
+  }
 
   const raw = await readFile(archiveAbs);
   const json = gunzipSync(raw).toString("utf-8");
@@ -174,12 +191,20 @@ export async function importCapsule(
     recordPaths.add(rec.path);
   }
 
-  // Phase 1: verify every record matches its manifest entry. We compute a
-  // sha256 over the in-memory record content and compare to the manifest's
-  // declared sha256. Any mismatch — including a missing manifest entry —
-  // aborts the import. We do this BEFORE any filesystem mutation so a
-  // corrupted archive cannot leave the memory dir partially written.
+  // Phase 1: verify every record matches its manifest entry AND validate all
+  // target paths before any filesystem mutation.  We do both in a single pass
+  // so a corrupted or malicious archive cannot leave the memory dir partially
+  // written (fail-closed per gotcha #25).
+  //
+  // The real root is resolved once via realpath so the subsequent per-record
+  // inside-root checks are symlink-aware: a record path like `facts/a.md`
+  // cannot write outside the intended sandbox via a symlinked subdirectory
+  // (Codex P1 feedback).  If realpath fails (root does not exist) the earlier
+  // assertIsDirectory call already threw, so this should always succeed.
+  const rootReal = await realpath(rootAbs).catch(() => rootAbs);
+
   for (const rec of bundle.records) {
+    // Checksum validation.
     const entry = manifestIndex.get(rec.path);
     if (!entry) {
       throw new Error(
@@ -194,6 +219,22 @@ export async function importCapsule(
           `got sha256=${sha256} bytes=${bytes}`,
       );
     }
+
+    // Path-traversal validation (moved here from phase 2 per Cursor feedback:
+    // the traversal check must run before ANY write so a malicious archive
+    // with an escaping path that sorts last cannot land partial writes).
+    //
+    // We build targetAbs relative to the real-resolved root (rootReal) so
+    // that the inside-root check is symlink-aware: if `rootReal !== rootAbs`
+    // (the import root is itself behind a symlink), we still compare against
+    // the canonical path (Codex P1).
+    const targetRel = computeTargetPath(rec.path, mode, capsule.id);
+    const targetAbs = path.join(rootReal, fromPosixRelPath(targetRel));
+    if (!isPathInsideRoot(rootReal, targetAbs)) {
+      throw new Error(
+        `importCapsule: record path escapes target root: ${rec.path}`,
+      );
+    }
   }
   // Detect manifest-only entries (missing record). Treat as corruption.
   for (const f of manifest.files) {
@@ -204,9 +245,9 @@ export async function importCapsule(
     }
   }
 
-  // Phase 2: apply the mode. Records were validated above; we now write to
-  // disk. Per-record errors propagate; the import is best-effort across
-  // records but each individual write is atomic (mkdir + writeFile pair).
+  // Phase 2: apply the mode. All records were validated in phase 1; we now
+  // write to disk. Per-record errors propagate; each individual write is
+  // atomic (mkdir + writeFile pair).
   const imported: ImportCapsuleImportedRecord[] = [];
   const skipped: ImportCapsuleSkippedRecord[] = [];
 
@@ -219,20 +260,18 @@ export async function importCapsule(
 
   for (const rec of sortedRecords) {
     const targetRel = computeTargetPath(rec.path, mode, capsule.id);
-    const targetAbs = path.join(rootAbs, fromPosixRelPath(targetRel));
-
-    if (!isPathInsideRoot(rootAbs, targetAbs)) {
-      // Record path traversal protection. `exportCapsule` only ever produces
-      // posix-relative paths under root, but a hand-built archive could ship
-      // `../../etc/passwd`. Reject before any FS access.
-      throw new Error(
-        `importCapsule: record path escapes target root: ${rec.path}`,
-      );
-    }
+    // Use rootReal (realpath-resolved) to stay consistent with phase 1's
+    // traversal validation and avoid writing through stale symlinks.
+    const targetAbs = path.join(rootReal, fromPosixRelPath(targetRel));
 
     const exists = await fileExistsAt(targetAbs);
 
-    if (mode === "skip" && exists) {
+    // Skip logic applies to both `skip` mode (explicit) and `fork` mode
+    // (Cursor medium: fork mode must also be skip-on-exist for the computed
+    // fork path, because production imports generate non-deterministic IDs —
+    // so re-importing the same capsule should not overwrite user edits in the
+    // fork tree or silently change file identities by generating new IDs).
+    if ((mode === "skip" || mode === "fork") && exists) {
       skipped.push({ path: rec.path, reason: "exists" });
       continue;
     }
@@ -252,7 +291,7 @@ export async function importCapsule(
           opts.versioning,
           opts.log,
           `capsule-import: ${capsule.id}`,
-          rootAbs,
+          rootReal,
         );
         snapshotted = true;
       }
@@ -304,14 +343,21 @@ function computeTargetPath(
 }
 
 /**
- * Return true when {@link absPath} is the same as {@link rootAbs} or a
- * descendant. Defensive symlink-aware checks (`realpath`) are not necessary
- * here because `exportCapsule` only produces posix-relative paths and we
- * validate `rootAbs` is a directory; this guard exists purely to reject
- * hand-edited archives that ship `..`-traversal paths.
+ * Return true when {@link absPath} is the same as {@link rootReal} or a
+ * descendant.
+ *
+ * {@link rootReal} should be the value returned by `realpath(rootAbs)` so
+ * that symlinked subdirectories are detected: a record path like `facts/a.md`
+ * computes an `absPath` under the un-resolved `rootAbs`, but the final write
+ * follows any symlink. We compare against the resolved root to catch the case
+ * where `rootAbs/facts/` is a symlink pointing outside the sandbox (Codex P1).
+ *
+ * For the `..`-traversal case (hand-edited archives): the `path.relative`
+ * lexical check is sufficient because `absPath` is constructed by joining
+ * `rootAbs` with a posix-relative path, so no resolved path needed there.
  */
-function isPathInsideRoot(rootAbs: string, absPath: string): boolean {
-  const rel = path.relative(rootAbs, absPath);
+function isPathInsideRoot(rootReal: string, absPath: string): boolean {
+  const rel = path.relative(rootReal, absPath);
   if (rel === "") return true;
   if (rel === "..") return false;
   if (rel.startsWith(`..${path.sep}`)) return false;
@@ -412,14 +458,6 @@ function mintForkId(capsuleId: string, originalId: string, now: number | undefin
   const suffix = createHash("sha256").update(payload, "utf-8").digest("hex").slice(0, 8);
   return `${base}-fork-${capsuleId}-${suffix}`;
 }
-
-/**
- * Re-export for tests that want to construct a fork id without going through
- * the full import pipeline. Not part of the stable public API.
- *
- * @internal
- */
-export const __test = { mintForkId, rewriteFrontmatterIdForFork };
 
 // Note: `CapsuleBlock` is re-exported here purely so callers that want to
 // inspect the manifest block don't have to deep-import from `./types.js`.

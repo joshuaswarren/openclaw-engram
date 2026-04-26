@@ -588,3 +588,50 @@ test("imported records are returned sorted by sourcePath regardless of bundle or
 // Type-only sanity: ImportCapsuleMode covers exactly the documented values.
 const _allModes: ImportCapsuleMode[] = ["skip", "overwrite", "fork"];
 void _allModes;
+
+// ---------------------------------------------------------------------------
+// Additional coverage for reviewer feedback
+// ---------------------------------------------------------------------------
+
+test("fork mode skips files that already exist at the computed fork path", async () => {
+  const { archivePath } = await exportTo(
+    [{ rel: "facts/a.md", content: "---\nid: orig\n---\nbody\n" }],
+    "fork-skip",
+  );
+  const dst = await makeEmptyMemoryDir();
+
+  // First import: lands at forks/fork-skip/facts/a.md
+  const r1 = await importCapsule({ archivePath, root: dst, mode: "fork", now: 1 });
+  assert.equal(r1.imported.length, 1);
+  assert.equal(r1.skipped.length, 0);
+
+  // Read what was written so we can assert it's unchanged on the second import.
+  const forkPath = path.join(dst, "forks", "fork-skip", "facts", "a.md");
+  const afterFirst = await readFile(forkPath, "utf-8");
+
+  // Second import of the same archive: the fork path already exists.
+  const r2 = await importCapsule({ archivePath, root: dst, mode: "fork", now: 2 });
+  assert.equal(r2.imported.length, 0);
+  assert.equal(r2.skipped.length, 1);
+  assert.deepEqual(r2.skipped[0], { path: "facts/a.md", reason: "exists" });
+
+  // The file on disk must be byte-identical to what the first import wrote.
+  const afterSecond = await readFile(forkPath, "utf-8");
+  assert.equal(afterSecond, afterFirst, "fork skip-on-exist must not modify the existing file");
+});
+
+test("unknown mode string is rejected before any file is written", async () => {
+  const { archivePath } = await exportTo(
+    [{ rel: "facts/a.md", content: "a\n" }],
+    "bad-mode",
+  );
+  const dst = await makeEmptyMemoryDir();
+  await assert.rejects(
+    // @ts-expect-error — intentionally passing invalid mode to test runtime guard
+    importCapsule({ archivePath, root: dst, mode: "invalid-mode" }),
+    /unknown mode/i,
+  );
+  // No files should have been written.
+  const files = await listMemoryFiles(dst);
+  assert.deepEqual(files, []);
+});
