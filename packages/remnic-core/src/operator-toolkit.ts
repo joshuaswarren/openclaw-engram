@@ -1206,6 +1206,11 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // false-missing warnings.
   checks.push(await summarizeConsolidationProvenance(new StorageManager(config.memoryDir), config));
 
+  // Graph-edge decay maintenance status (issue #681 PR 2/3).
+  // Reports whether the periodic decay job has run and surfaces last-run
+  // counts. Disabled is "ok" with a note; enabled-but-never-run is "warn".
+  checks.push(await summarizeGraphEdgeDecayStatus(config));
+
   // Security mitigation status (issue #565).
   // Reports whether the cross-namespace budget and anomaly detection
   // mitigations are enabled and surfaces config values for operator review.
@@ -1392,6 +1397,57 @@ export async function summarizeBufferSurpriseDistribution(
  * Exported so unit tests can exercise the summarization without booting a
  * full orchestrator.
  */
+
+async function summarizeGraphEdgeDecayStatus(
+  config: Pick<
+    PluginConfig,
+    "memoryDir" | "graphEdgeDecayEnabled" | "graphEdgeDecayCadenceMs"
+  >,
+): Promise<OperatorDoctorCheck> {
+  // Lazy import to keep the doctor fast when the feature is disabled.
+  const { readGraphEdgeDecayStatus } = await import("./maintenance/graph-edge-decay.js");
+  const enabled = config.graphEdgeDecayEnabled === true;
+  if (!enabled) {
+    return {
+      key: "graph_edge_decay",
+      status: "ok",
+      summary: "Graph-edge decay maintenance is disabled (graphEdgeDecayEnabled = false).",
+      remediation: "Set graphEdgeDecayEnabled = true to opt into the periodic decay job (issue #681).",
+      details: { enabled: false },
+    };
+  }
+
+  const status = await readGraphEdgeDecayStatus(config.memoryDir);
+  if (!status) {
+    return {
+      key: "graph_edge_decay",
+      status: "warn",
+      summary: "Graph-edge decay is enabled but has not run yet (no status file present).",
+      remediation:
+        "Trigger the cron, run `engram.graph_edge_decay_run` via MCP, or wait for the scheduled cadence to fire.",
+      details: { enabled: true, lastRun: null, cadenceMs: config.graphEdgeDecayCadenceMs },
+    };
+  }
+
+  return {
+    key: "graph_edge_decay",
+    status: "ok",
+    summary:
+      `Graph-edge decay last ran at ${status.ranAt} ` +
+      `(${status.edgesDecayed}/${status.edgesTotal} edges decayed, ` +
+      `${status.edgesBelowVisibilityThreshold} below visibility threshold).`,
+    details: {
+      enabled: true,
+      lastRun: status.ranAt,
+      durationMs: status.durationMs,
+      edgesTotal: status.edgesTotal,
+      edgesDecayed: status.edgesDecayed,
+      edgesBelowVisibilityThreshold: status.edgesBelowVisibilityThreshold,
+      topDecayedEntities: status.topDecayedEntities,
+      cadenceMs: config.graphEdgeDecayCadenceMs,
+    },
+  };
+}
 
 function summarizeSecurityMitigations(
   config: Pick<

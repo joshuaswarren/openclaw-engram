@@ -77,6 +77,8 @@ import {
   ensureNightlyGovernanceCron,
   ensureProceduralMiningCron,
   ensureContradictionScanCron,
+  ensureGraphEdgeDecayCron,
+  graphEdgeDecayCadenceToCronExpr,
 } from "./maintenance/memory-governance-cron.js";
 import { ModelRegistry } from "./model-registry.js";
 import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
@@ -2399,6 +2401,15 @@ export class Orchestrator {
       }
     }
 
+    // Auto-register graph-edge decay cron (gated by config — issue #681 PR 2/3).
+    if (this.config.graphEdgeDecayEnabled) {
+      try {
+        await this.autoRegisterGraphEdgeDecayCron();
+      } catch (err) {
+        log.debug(`graph edge decay cron auto-register failed (non-fatal): ${err}`);
+      }
+    }
+
     log.info("orchestrator initialized (full — deferred steps complete)");
   }
 
@@ -2632,6 +2643,29 @@ export class Orchestrator {
       }
     } catch (err) {
       log.debug(`contradiction scan cron auto-register error: ${err}`);
+    }
+  }
+
+  private async autoRegisterGraphEdgeDecayCron(): Promise<void> {
+    const home = resolveHomeDir();
+    const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
+    try {
+      if (!existsSync(jobsPath)) {
+        log.debug("graph edge decay cron: jobs.json not found, skipping auto-register");
+        return;
+      }
+      const scheduleExpr = graphEdgeDecayCadenceToCronExpr(this.config.graphEdgeDecayCadenceMs);
+      const created = await ensureGraphEdgeDecayCron(jobsPath, {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        scheduleExpr,
+      });
+      if (created.created) {
+        log.info(`graph edge decay cron auto-registered (${created.jobId}, ${scheduleExpr})`);
+      } else {
+        log.debug("graph edge decay cron already exists, skipping auto-register");
+      }
+    } catch (err) {
+      log.debug(`graph edge decay cron auto-register error: ${err}`);
     }
   }
 

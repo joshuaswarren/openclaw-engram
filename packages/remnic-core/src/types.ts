@@ -1279,6 +1279,21 @@ export interface PluginConfig {
   graphLateralInhibitionBeta: number;
   /** Number of top competing nodes considered for inhibition (default 7). */
   graphLateralInhibitionTopM: number;
+
+  // Issue #681 PR 2/3 — graph-edge confidence decay maintenance.
+  /** Enable the periodic graph-edge confidence decay job. Default false (opt-in). */
+  graphEdgeDecayEnabled: boolean;
+  /** Cadence in milliseconds at which the cron triggers the decay job. Default 7d. */
+  graphEdgeDecayCadenceMs: number;
+  /** Decay window passed through to `decayEdgeConfidence`. Default 90 days. */
+  graphEdgeDecayWindowMs: number;
+  /** Per-window confidence drop. Default 0.1. */
+  graphEdgeDecayPerWindow: number;
+  /** Floor confidence will not decay below. Default 0.1. */
+  graphEdgeDecayFloor: number;
+  /** Confidence threshold for the "below visibility" telemetry counter. Default 0.2. */
+  graphEdgeDecayVisibilityThreshold: number;
+
   // v8.2: Temporal Memory Tree
   temporalMemoryTreeEnabled: boolean;
   tmtHourlyMinMemories: number;
