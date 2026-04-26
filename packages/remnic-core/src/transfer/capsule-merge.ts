@@ -1,0 +1,444 @@
+import { lstat, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { gunzipSync } from "node:zlib";
+import {
+  createVersion,
+  type VersioningConfig,
+  type VersioningLogger,
+} from "../page-versioning.js";
+import { fromPosixRelPath, sha256String } from "./fs-utils.js";
+import {
+  parseExportBundle,
+  type CapsuleBlock,
+  type ExportManifestV2,
+  type ExportMemoryRecordV1,
+} from "./types.js";
+
+/**
+ * Three-way conflict-resolution mode for {@link mergeCapsule}.
+ *
+ * A "conflict" is defined as: the same memory-file path exists in both the
+ * source archive and the target directory AND the content hash of the local
+ * file differs from the archive's manifest entry for that path.
+ *
+ * Files that exist only in the archive (no local counterpart) are always
+ * written regardless of mode — there is no conflict to resolve.
+ *
+ * Files that are byte-identical (same content hash in both locations) are
+ * recorded as {@link MergeCapsuleResult.skipped} with reason `"identical"` and
+ * are never re-written regardless of mode; this is a no-op optimisation rather
+ * than a conflict.
+ *
+ *  - `"skip-conflicts"` (default) — log the conflict, skip the conflicting
+ *    archive entries, but continue importing non-conflicting entries. The
+ *    resulting merge is the union of:
+ *      - all non-conflicting archive files (written to target)
+ *      - all pre-existing local files (left unchanged)
+ *
+ *  - `"prefer-source"` — for conflicting files, snapshot the local content via
+ *    page-versioning (gotcha #54: snapshot before overwrite) then overwrite
+ *    with the archive content.
+ *
+ *  - `"prefer-local"` — for conflicting files, keep the local content; the
+ *    archive entry is skipped.
+ */
+export type MergeCapsuleConflictMode =
+  | "skip-conflicts"
+  | "prefer-source"
+  | "prefer-local";
+
+/**
+ * Options accepted by {@link mergeCapsule}.
+ *
+ * `sourceArchive` — absolute or cwd-relative path to a `.capsule.json.gz`
+ * archive produced by `exportCapsule`. Must be a V2 bundle.
+ *
+ * `targetRoot` — absolute or cwd-relative path to the memory directory that
+ * receives the merged records. Must be an existing, non-symlink directory.
+ *
+ * `conflictMode` — see {@link MergeCapsuleConflictMode}. Defaults to
+ * `"skip-conflicts"`.
+ *
+ * `versioning` — optional page-versioning config forwarded to
+ * {@link createVersion} in `"prefer-source"` mode. When omitted or disabled,
+ * overwrites proceed without snapshotting (not recommended for production).
+ *
+ * `log` — optional logger forwarded to {@link createVersion}.
+ *
+ * `now` — optional clock override (ms epoch) used in tests to produce
+ * deterministic version timestamps.
+ */
+export interface MergeCapsuleOptions {
+  sourceArchive: string;
+  targetRoot: string;
+  conflictMode?: MergeCapsuleConflictMode;
+  versioning?: VersioningConfig;
+  log?: VersioningLogger;
+  now?: number;
+}
+
+export interface MergeCapsuleWrittenRecord {
+  /** Capsule-relative posix path. */
+  sourcePath: string;
+  /** Memory-dir-relative posix path written on disk. */
+  targetPath: string;
+  /** Whether a page-versioning snapshot was taken before overwriting. */
+  snapshotted: boolean;
+}
+
+export interface MergeCapsuleSkippedRecord {
+  /** Capsule-relative posix path. */
+  path: string;
+  /**
+   * Why the archive entry was not written.
+   *
+   * `"conflict"` — the entry existed locally with different content and the
+   * active mode did not resolve the conflict with a write (`"skip-conflicts"` /
+   * `"prefer-local"`).
+   *
+   * `"identical"` — the entry's content hash matches what is already on disk;
+   * no write is needed.
+   */
+  reason: "conflict" | "identical";
+}
+
+export interface MergeCapsuleConflictRecord {
+  /** Capsule-relative posix path of the conflicting entry. */
+  path: string;
+  /** SHA-256 of the archive's copy. */
+  archiveSha256: string;
+  /** SHA-256 of the local copy. */
+  localSha256: string;
+}
+
+export interface MergeCapsuleResult {
+  /** Records that were written to the target directory. */
+  merged: MergeCapsuleWrittenRecord[];
+  /**
+   * Records that were NOT written (conflict skipped, or byte-identical).
+   * Includes conflicts that were resolved by `"prefer-local"`.
+   */
+  skipped: MergeCapsuleSkippedRecord[];
+  /**
+   * Metadata about every detected conflict, regardless of which mode resolved
+   * it. Callers can use this to report "N conflicts encountered; M overwritten".
+   */
+  conflicts: MergeCapsuleConflictRecord[];
+  /** The manifest decoded from the archive. */
+  manifest: ExportManifestV2;
+}
+
+// ---------------------------------------------------------------------------
+// Main entry point
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge a V2 capsule archive into an existing memory directory using
+ * three-way conflict semantics.
+ *
+ * Sequence:
+ *   1. Read + gunzip + JSON.parse the archive.
+ *   2. Validate through `parseExportBundle` (V1 rejected).
+ *   3. Verify every record's content sha256 against the manifest.
+ *      Any mismatch aborts BEFORE any file is written (gotcha #25).
+ *   4. Classify each record as: new (no local copy), identical (same hash),
+ *      or conflicting (different hash).
+ *   5. Apply the selected {@link MergeCapsuleConflictMode} to conflicting
+ *      entries; always write new entries; always skip identical entries.
+ *
+ * Determinism: `merged`, `skipped`, and `conflicts` are all returned sorted
+ * by `path`/`sourcePath` so callers get stable output regardless of bundle
+ * order.
+ */
+export async function mergeCapsule(
+  opts: MergeCapsuleOptions,
+): Promise<MergeCapsuleResult> {
+  const archiveAbs = path.resolve(opts.sourceArchive);
+  const rootAbs = path.resolve(opts.targetRoot);
+
+  await assertIsDirectory(rootAbs);
+
+  const conflictMode: MergeCapsuleConflictMode =
+    opts.conflictMode ?? "skip-conflicts";
+
+  // Rule 51: reject invalid conflictMode values up-front before any I/O.
+  if (
+    conflictMode !== "skip-conflicts" &&
+    conflictMode !== "prefer-source" &&
+    conflictMode !== "prefer-local"
+  ) {
+    throw new Error(
+      `mergeCapsule: unknown conflictMode ${JSON.stringify(conflictMode)}; ` +
+        `expected "skip-conflicts", "prefer-source", or "prefer-local"`,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Parse + validate archive
+  // ---------------------------------------------------------------------------
+
+  const raw = await readFile(archiveAbs);
+  let json: string;
+  try {
+    json = gunzipSync(raw).toString("utf-8");
+  } catch (cause) {
+    throw new Error(
+      `mergeCapsule: archive is not a valid gzip file: ${archiveAbs}`,
+      { cause: cause as Error },
+    );
+  }
+
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(json);
+  } catch (cause) {
+    throw new Error(
+      `mergeCapsule: archive is not valid JSON after gunzip: ${archiveAbs}`,
+      { cause: cause as Error },
+    );
+  }
+
+  const parsed = parseExportBundle(parsedJson);
+  if (parsed.capsuleVersion !== 2) {
+    throw new Error(
+      "mergeCapsule: archive is V1; only V2 capsule archives are supported",
+    );
+  }
+
+  const bundle = parsed.bundle as {
+    manifest: ExportManifestV2;
+    records: ExportMemoryRecordV1[];
+  };
+  const manifest = bundle.manifest;
+  const capsule = manifest.capsule;
+
+  // Build path → manifest entry index for O(1) checksum lookup.
+  const manifestIndex = new Map<string, ExportManifestV2["files"][number]>();
+  for (const f of manifest.files) {
+    manifestIndex.set(f.path, f);
+  }
+  if (manifestIndex.size !== manifest.files.length) {
+    throw new Error("mergeCapsule: manifest contains duplicate file paths");
+  }
+
+  const recordPaths = new Set<string>();
+  for (const rec of bundle.records) {
+    if (recordPaths.has(rec.path)) {
+      throw new Error(
+        `mergeCapsule: bundle contains duplicate record path: ${rec.path}`,
+      );
+    }
+    recordPaths.add(rec.path);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 1: verify checksums + validate paths before ANY filesystem mutation.
+  // (gotcha #25: don't destroy old state before confirming new state succeeds)
+  // ---------------------------------------------------------------------------
+
+  const rootReal = await realpath(rootAbs).catch(() => rootAbs);
+
+  for (const rec of bundle.records) {
+    // Checksum validation.
+    const entry = manifestIndex.get(rec.path);
+    if (!entry) {
+      throw new Error(
+        `mergeCapsule: archive checksum mismatch (record without manifest entry: ${rec.path})`,
+      );
+    }
+    const { sha256, bytes } = sha256String(rec.content);
+    if (sha256 !== entry.sha256 || bytes !== entry.bytes) {
+      throw new Error(
+        `mergeCapsule: archive checksum mismatch for ${rec.path}: ` +
+          `expected sha256=${entry.sha256} bytes=${entry.bytes}, ` +
+          `got sha256=${sha256} bytes=${bytes}`,
+      );
+    }
+
+    // Path-traversal validation (mirrors capsule-import.ts).
+    if (rec.path.includes("\\")) {
+      throw new Error(
+        `mergeCapsule: record path contains backslash separators (Windows-style paths are not allowed): ${rec.path}`,
+      );
+    }
+    const posixNormalized = path.posix.normalize(rec.path);
+    if (
+      rec.path.startsWith("/") ||
+      rec.path.split("/").some((seg) => seg === "..") ||
+      posixNormalized.startsWith("..") ||
+      posixNormalized.startsWith("/")
+    ) {
+      throw new Error(
+        `mergeCapsule: record path escapes target root: ${rec.path}`,
+      );
+    }
+
+    // Lexical root containment check.
+    const targetAbs = path.join(rootReal, fromPosixRelPath(rec.path));
+    if (!isPathInsideRoot(rootReal, targetAbs)) {
+      throw new Error(
+        `mergeCapsule: record path escapes target root: ${rec.path}`,
+      );
+    }
+
+    // Symlink-aware containment check (mirrors capsule-import.ts).
+    await assertRealpathInsideRoot(rootReal, targetAbs, rec.path);
+
+    // Target-file symlink guard: if the target already exists as a symlink,
+    // reject — writes through symlinks can redirect to unexpected locations.
+    const targetLstat = await lstat(targetAbs).catch(() => null);
+    if (targetLstat !== null && targetLstat.isSymbolicLink()) {
+      throw new Error(
+        `mergeCapsule: record target is a symlink and cannot be written to safely: ${rec.path}`,
+      );
+    }
+  }
+
+  // Detect manifest-only entries (missing record). Treat as corruption.
+  for (const f of manifest.files) {
+    if (!recordPaths.has(f.path)) {
+      throw new Error(
+        `mergeCapsule: archive checksum mismatch (manifest entry without record: ${f.path})`,
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 2: classify records and apply conflict mode.
+  // ---------------------------------------------------------------------------
+
+  const merged: MergeCapsuleWrittenRecord[] = [];
+  const skipped: MergeCapsuleSkippedRecord[] = [];
+  const conflicts: MergeCapsuleConflictRecord[] = [];
+
+  // Sort by source path for deterministic output (mirrors capsule-import.ts).
+  const sortedRecords = [...bundle.records].sort((a, b) =>
+    a.path.localeCompare(b.path),
+  );
+
+  for (const rec of sortedRecords) {
+    const targetAbs = path.join(rootReal, fromPosixRelPath(rec.path));
+    const entry = manifestIndex.get(rec.path)!; // validated above
+
+    const localContent = await readLocalFile(targetAbs);
+
+    if (localContent === null) {
+      // No local copy — always write regardless of mode.
+      await mkdir(path.dirname(targetAbs), { recursive: true });
+      await writeFile(targetAbs, rec.content, "utf-8");
+      merged.push({ sourcePath: rec.path, targetPath: rec.path, snapshotted: false });
+      continue;
+    }
+
+    // Local file exists. Check if it is byte-identical to the archive entry.
+    const { sha256: localSha256 } = sha256String(localContent);
+
+    if (localSha256 === entry.sha256) {
+      // Byte-identical — no write needed.
+      skipped.push({ path: rec.path, reason: "identical" });
+      continue;
+    }
+
+    // Content differs → conflict.
+    const { sha256: archiveSha256 } = sha256String(rec.content);
+    conflicts.push({
+      path: rec.path,
+      archiveSha256,
+      localSha256,
+    });
+
+    if (conflictMode === "skip-conflicts" || conflictMode === "prefer-local") {
+      // Keep local copy, skip archive entry.
+      skipped.push({ path: rec.path, reason: "conflict" });
+      continue;
+    }
+
+    // conflictMode === "prefer-source": snapshot local then overwrite.
+    let snapshotted = false;
+    if (opts.versioning && opts.versioning.enabled) {
+      // Gotcha #54: snapshot BEFORE overwriting.
+      await createVersion(
+        targetAbs,
+        localContent,
+        "manual",
+        opts.versioning,
+        opts.log,
+        `capsule-merge: ${capsule.id}`,
+        rootReal,
+      );
+      snapshotted = true;
+    }
+
+    await writeFile(targetAbs, rec.content, "utf-8");
+    merged.push({ sourcePath: rec.path, targetPath: rec.path, snapshotted });
+  }
+
+  // Sort output lists for determinism.
+  merged.sort((a, b) => a.sourcePath.localeCompare(b.sourcePath));
+  skipped.sort((a, b) => a.path.localeCompare(b.path));
+  conflicts.sort((a, b) => a.path.localeCompare(b.path));
+
+  return { merged, skipped, conflicts, manifest };
+}
+
+// ---------------------------------------------------------------------------
+// Private helpers (mirrors capsule-import.ts)
+// ---------------------------------------------------------------------------
+
+function isPathInsideRoot(rootReal: string, absPath: string): boolean {
+  const rel = path.relative(rootReal, absPath);
+  if (rel === "") return true;
+  if (rel === "..") return false;
+  if (rel.startsWith(`..${path.sep}`)) return false;
+  if (path.isAbsolute(rel)) return false;
+  return true;
+}
+
+async function assertIsDirectory(absPath: string): Promise<void> {
+  // Gotcha #24: existsSync returns true for files; use stat().isDirectory().
+  const st = await stat(absPath).catch(() => null);
+  if (!st || !st.isDirectory()) {
+    throw new Error(
+      `mergeCapsule: 'targetRoot' must be an existing directory: ${absPath}`,
+    );
+  }
+  // Reject symlinked roots (mirrors capsule-import.ts gotcha P1 round 5).
+  const lst = await lstat(absPath).catch(() => null);
+  if (lst && lst.isSymbolicLink()) {
+    throw new Error(
+      `mergeCapsule: 'targetRoot' must not be a symlink — resolve it to its real path first: ${absPath}`,
+    );
+  }
+}
+
+async function assertRealpathInsideRoot(
+  rootReal: string,
+  targetAbs: string,
+  sourcePath: string,
+): Promise<void> {
+  let existing = targetAbs;
+  const suffix: string[] = [];
+  while (existing !== path.dirname(existing)) {
+    const st = await lstat(existing).catch(() => null);
+    if (st !== null) break;
+    suffix.unshift(path.basename(existing));
+    existing = path.dirname(existing);
+  }
+  const existingReal = await realpath(existing).catch(() => existing);
+  const targetReal =
+    suffix.length > 0 ? path.join(existingReal, ...suffix) : existingReal;
+  if (!isPathInsideRoot(rootReal, targetReal)) {
+    throw new Error(
+      `mergeCapsule: record path escapes target root via symlink: ${sourcePath}`,
+    );
+  }
+}
+
+async function readLocalFile(absPath: string): Promise<string | null> {
+  const st = await stat(absPath).catch(() => null);
+  if (!st || !st.isFile()) return null;
+  return readFile(absPath, "utf-8");
+}
+
+// Re-export CapsuleBlock so callers don't need a deep import from types.ts.
+export type { CapsuleBlock };
