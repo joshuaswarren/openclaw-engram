@@ -621,7 +621,7 @@ function normalizeTrajectoryTurns(
         if (!appendTrajectoryTurn(
           turn[nestedIndex],
           `${location}[${index}][${nestedIndex}]`,
-          [nestedIndex, index],
+          [index, nestedIndex],
           turns,
           coordinateIndex,
           speakerRoles,
@@ -789,28 +789,34 @@ function normalizeQaPairs(
 function resolveTargetRefSource(
   item: Record<string, unknown>,
 ): { value: unknown; kind: "ids" | "coordinates" } | undefined {
-  if (item.target_step_id !== undefined) {
+  if (hasUsableTargetRef(item.target_step_id)) {
     return { value: item.target_step_id, kind: "ids" };
   }
-  if (item.target_step_ids !== undefined) {
+  if (hasUsableTargetRef(item.target_step_ids)) {
     return { value: item.target_step_ids, kind: "ids" };
   }
-  if (item.targetStepIds !== undefined) {
+  if (hasUsableTargetRef(item.targetStepIds)) {
     return { value: item.targetStepIds, kind: "ids" };
   }
-  if (item.target_step_coordinates !== undefined) {
+  if (hasUsableTargetRef(item.target_step_coordinates)) {
     return { value: item.target_step_coordinates, kind: "coordinates" };
   }
-  if (item.targetStepCoordinates !== undefined) {
+  if (hasUsableTargetRef(item.targetStepCoordinates)) {
     return { value: item.targetStepCoordinates, kind: "coordinates" };
   }
-  if (item.target_step_coordinate !== undefined) {
+  if (hasUsableTargetRef(item.target_step_coordinate)) {
     return { value: item.target_step_coordinate, kind: "coordinates" };
   }
-  if (item.targetStepCoordinate !== undefined) {
+  if (hasUsableTargetRef(item.targetStepCoordinate)) {
     return { value: item.targetStepCoordinate, kind: "coordinates" };
   }
   return undefined;
+}
+
+function hasUsableTargetRef(value: unknown): boolean {
+  return value !== undefined
+    && value !== null
+    && (!Array.isArray(value) || value.length > 0);
 }
 
 function resolveCaseId(

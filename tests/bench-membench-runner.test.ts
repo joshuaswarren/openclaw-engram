@@ -186,7 +186,7 @@ function createOfficialParticipantDataset() {
             question: "Which movie preference should the assistant remember?",
             choices: ["Toy Story", "Alien (1979)", "Heat", "Jaws"],
             answer: "Alien (1979)",
-            target_step_coordinates: [[0, 1], [0, 1, 1]],
+            target_step_coordinates: [[1, 0], [1, 0, 1]],
           },
         },
       ],
@@ -216,13 +216,14 @@ function createOfficialPairedCoordinateDataset() {
               question: "Which item did the assistant acknowledge first?",
               choices: ["red pen", "blue mug", "black bag", "white lamp"],
               answer: "B",
+              target_step_id: [],
               target_step_coordinate: [0, 0, 1],
             },
             {
               question: "Which item did I choose second?",
               choices: ["blue mug", "green notebook", "yellow folder", "silver watch"],
               answer: "B",
-              target_step_coordinates: [[0, 0, 1], [1, 0]],
+              target_step_coordinates: [[0, 0, 1], [0, 1]],
             },
           ],
         },
@@ -415,7 +416,7 @@ test("runBenchmark accepts official first-agent message_list and QA records", as
   assert.equal(task.details?.memoryType, "reflective");
   assert.equal(task.details?.scenario, "participant");
   assert.equal(task.details?.turnCount, 4);
-  assert.deepEqual(task.details?.targetStepCoordinates, [[0, 1], [0, 1, 1]]);
+  assert.deepEqual(task.details?.targetStepCoordinates, [[1, 0], [1, 0, 1]]);
   assert.deepEqual(task.details?.targetStepIds, [2, 3]);
   assert.equal(task.scores.membench_accuracy, 1);
   assert.equal(
@@ -454,7 +455,7 @@ test("runBenchmark maps singular and paired MemBench coordinate tuples without c
   assert.equal(result.results.tasks.length, 2);
   assert.deepEqual(result.results.tasks[0]?.details?.targetStepCoordinates, [[0, 0, 1]]);
   assert.deepEqual(result.results.tasks[0]?.details?.targetStepIds, [1]);
-  assert.deepEqual(result.results.tasks[1]?.details?.targetStepCoordinates, [[0, 0, 1], [1, 0]]);
+  assert.deepEqual(result.results.tasks[1]?.details?.targetStepCoordinates, [[0, 0, 1], [0, 1]]);
   assert.deepEqual(result.results.tasks[1]?.details?.targetStepIds, [1, 2]);
 });
 
