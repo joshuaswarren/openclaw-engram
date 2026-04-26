@@ -237,7 +237,54 @@ function parseSince(since: string | undefined): number | null {
       `exportCapsule: 'since' is not a valid ISO-8601 timestamp: ${since}`,
     );
   }
+  // Reject calendar overflow: `Date.parse("2026-02-31")` returns a finite ms
+  // for March 3 because the JS Date constructor silently normalizes invalid
+  // calendar values. Round-trip through `Date` and compare the year/month/day
+  // components against the input prefix to catch this. Rule 51: silent
+  // coercion of an exact time boundary is a Rule 51 violation that breaks
+  // incremental exports.
+  assertCalendarRoundTrip(since, ms);
   return ms;
+}
+
+/**
+ * Verify that parsing {@link since} did not silently normalize an invalid
+ * calendar date (e.g. `2026-02-31` → `2026-03-03`). We extract the
+ * year/month/day from the input string (regex-validated above) and compare
+ * against the parsed Date's UTC components. Both date-only forms and forms
+ * with an explicit Z/offset are normalized to UTC by `Date.parse`; for the
+ * non-Z case where the offset shifts the calendar day across midnight, we
+ * re-derive the input's intended UTC instant by accounting for the offset
+ * before the comparison.
+ */
+function assertCalendarRoundTrip(since: string, ms: number): void {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(since);
+  if (!m) return;
+  const wantY = Number(m[1]);
+  const wantMo = Number(m[2]);
+  const wantD = Number(m[3]);
+
+  // For inputs with an explicit non-zero offset, compare against the
+  // wall-clock components of that offset instead of UTC. Date.parse maps to
+  // UTC, so 2026-02-31T00:00:00-05:00 and 2026-02-31T00:00:00Z both fail the
+  // calendar check; the wall-clock comparison via `m[1..3]` is still the
+  // right reference because the input's stated calendar day must exist.
+  const offsetMatch = /([+-])(\d{2}):?(\d{2})$/.exec(since);
+  let displayMs = ms;
+  if (offsetMatch) {
+    const sign = offsetMatch[1] === "-" ? -1 : 1;
+    const offsetMin = sign * (Number(offsetMatch[2]) * 60 + Number(offsetMatch[3]));
+    displayMs = ms + offsetMin * 60_000;
+  }
+  const dd = new Date(displayMs);
+  const gotY = dd.getUTCFullYear();
+  const gotMo = dd.getUTCMonth() + 1;
+  const gotD = dd.getUTCDate();
+  if (gotY !== wantY || gotMo !== wantMo || gotD !== wantD) {
+    throw new Error(
+      `exportCapsule: 'since' is not a valid ISO-8601 timestamp: ${since}`,
+    );
+  }
 }
 
 function normalizeIncludeKinds(

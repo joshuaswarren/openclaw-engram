@@ -244,6 +244,55 @@ test("invalid 'since' is rejected", async () => {
   );
 });
 
+test("'since' rejects calendar-overflow dates (e.g. Feb 31)", async () => {
+  const root = await makeFixture([{ rel: "a.md", content: "a\n" }]);
+  // Each of these passes the regex but `Date.parse` silently normalizes to a
+  // different calendar day. We must reject them rather than shifting the
+  // user's intended cutoff window.
+  for (const bad of [
+    "2026-02-31",
+    "2026-02-30",
+    "2026-04-31",
+    "2026-13-01",
+    "2026-00-15",
+    "2026-02-31T00:00:00Z",
+    "2026-02-31T00:00:00-05:00",
+  ]) {
+    await assert.rejects(
+      exportCapsule({ name: "bad-cal", root, since: bad }),
+      /not a valid ISO/i,
+      `expected ${bad} to be rejected`,
+    );
+  }
+});
+
+test("'since' accepts well-formed timestamps with offsets", async () => {
+  const root = await makeFixture([
+    {
+      rel: "facts/a.md",
+      content: "a\n",
+      mtime: new Date("2026-04-01T00:00:00Z"),
+    },
+  ]);
+  for (const good of [
+    "2026-02-28",
+    "2026-02-28T00:00:00Z",
+    "2026-02-28T00:00:00.500Z",
+    "2026-02-28T19:00:00-05:00",
+    "2024-02-29", // leap year
+  ]) {
+    const result = await exportCapsule({
+      name: "good-since",
+      root,
+      since: good,
+    });
+    // The "since" cutoff (Feb 28 2026, etc.) should not exclude an April 1 mtime.
+    if (good.startsWith("2026-")) {
+      assert.equal(result.manifest.files.length, 1, `expected file kept for ${good}`);
+    }
+  }
+});
+
 test("non-directory root is rejected", async () => {
   const tmp = await mkdtemp(path.join(tmpdir(), "capsule-root-file-"));
   const filePath = path.join(tmp, "not-a-dir");
