@@ -857,7 +857,17 @@ export async function writePeerProfile(
   if (typeof profile.fields !== "object" || profile.fields === null || Array.isArray(profile.fields)) {
     throw new Error("profile.fields must be a plain object");
   }
+  // Codex P2 round 11: parsePeerProfile drops "__proto__" /
+  // "constructor" / "prototype" keys on read. Without symmetric
+  // rejection on write, those keys silently disappear during
+  // round-trip — failing the contract that what writes succeeds
+  // also reads back. Reject at the boundary so JS callers learn
+  // immediately that those keys aren't allowed.
+  const RESERVED_KEYS: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
   for (const [key, value] of Object.entries(profile.fields)) {
+    if (RESERVED_KEYS.has(key)) {
+      throw new Error(`profile.fields key "${key}" is reserved and cannot be persisted`);
+    }
     if (typeof value !== "string") {
       throw new Error(`profile.fields["${key}"] must be a string`);
     }
@@ -870,6 +880,9 @@ export async function writePeerProfile(
     throw new Error("profile.provenance must be a plain object");
   }
   for (const [key, list] of Object.entries(profile.provenance)) {
+    if (RESERVED_KEYS.has(key)) {
+      throw new Error(`profile.provenance key "${key}" is reserved and cannot be persisted`);
+    }
     if (!Array.isArray(list)) {
       throw new Error(`profile.provenance["${key}"] must be an array`);
     }
