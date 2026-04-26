@@ -688,6 +688,21 @@ let graphHighlightIds = new Map();
 let graphPulsePhase = 0;
 
 /**
+ * Return true if `str` ends with `suffix` at a path-segment boundary.
+ * Prevents "ammemory.md" matching against suffix "memory.md".
+ * Accepts an exact match or a match preceded by "/".
+ *
+ * @param {string} str
+ * @param {string} suffix
+ * @returns {boolean}
+ */
+function pathEndsWith(str, suffix) {
+  if (!str || !suffix) return false;
+  if (str === suffix) return true;
+  return str.endsWith("/" + suffix);
+}
+
+/**
  * Pure function — given a snapshot node list and a recall result list, return a
  * Map from matched node ID → recall result frontmatter ID.
  *
@@ -702,11 +717,14 @@ let graphPulsePhase = 0;
  *
  * Matching rules (applied in order, first match wins per node):
  *   1. `node.id` === `result.path` (exact absolute path — rare)
- *   2. `result.path` ends with `node.id` (absolute path has node's relative tail)
- *   3. `node.id` ends with `result.path` (inverse, node has absolute prefix)
+ *   2. `result.path` ends with "/" + `node.id` (absolute path has node's relative tail)
+ *   3. `node.id` ends with "/" + `result.path` (inverse, node has absolute prefix)
  *   4. `node.id` === `result.id` (frontmatter ID match — only for non-path IDs)
- *   5. `node.id` ends with `result.id` (relative path ends with frontmatter ID)
- *   6. `result.id` ends with `node.id` (inverse suffix)
+ *   5. `node.id` ends with "/" + `result.id` (relative path ends with frontmatter ID)
+ *   6. `result.id` ends with "/" + `node.id` (inverse suffix)
+ *
+ * All suffix comparisons use path-segment boundary checks (pathEndsWith) so that
+ * e.g. "ammemory.md" does NOT match a suffix of "memory.md".
  *
  * Returns a Map so callers can retrieve the frontmatter ID for the memory-detail
  * endpoint without a separate lookup.
@@ -729,15 +747,16 @@ function resolveHighlights(nodes, results) {
       const rpath = result.path || "";
       // Path-based matching (handles the typical production case where graph
       // node IDs are relative paths and recall results carry absolute paths).
+      // Uses pathEndsWith() to respect path-segment boundaries.
       if (rpath) {
-        if (nid === rpath || rpath.endsWith(nid) || nid.endsWith(rpath)) {
+        if (nid === rpath || pathEndsWith(rpath, nid) || pathEndsWith(nid, rpath)) {
           matched.set(nid, rid);
           break;
         }
       }
       // Frontmatter-ID matching as fallback (e.g. custom deployments where
       // node IDs are not file paths).
-      if (rid && (nid === rid || nid.endsWith(rid) || rid.endsWith(nid))) {
+      if (rid && (nid === rid || pathEndsWith(nid, rid) || pathEndsWith(rid, nid))) {
         matched.set(nid, rid);
         break;
       }
@@ -1034,28 +1053,38 @@ function attachGraphInteractions(canvas) {
   let viewStart = { tx: 0, ty: 0 };
   /** Track whether the mousedown moved before mouseup (drag vs click). */
   let didDrag = false;
+  /**
+   * mousedownOnCanvas: set to true only when the mousedown that began the
+   * gesture originated on this canvas.  Prevents a mouseup from a pan that
+   * started outside the canvas (e.g. drag from a sidebar) from spuriously
+   * opening the node panel.
+   */
+  let mousedownOnCanvas = false;
 
   canvas.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     dragging = true;
     didDrag = false;
+    mousedownOnCanvas = true;
     dragStart = { x: e.clientX, y: e.clientY };
     viewStart = { tx: graphView.tx, ty: graphView.ty };
   });
 
   canvas.addEventListener("mouseup", (e) => {
     if (e.button !== 0) { dragging = false; return; }
-    // If the cursor didn't move more than 4px it's a click, not a drag.
+    // Only open a node panel if this mouseup has a matching mousedown on the
+    // same canvas and no drag movement occurred (click vs drag-pan).
     const rect = canvas.getBoundingClientRect();
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
-    if (!didDrag) {
+    if (mousedownOnCanvas && !didDrag) {
       const node = hitTestNode(cx, cy);
       if (node) {
         void openGraphNodePanel(node);
       }
     }
     dragging = false;
+    mousedownOnCanvas = false;
   });
 
   canvas.addEventListener("mousemove", (e) => {
@@ -1095,7 +1124,7 @@ function attachGraphInteractions(canvas) {
     hideGraphTooltip();
   });
 
-  canvas.addEventListener("mouseleave", () => { dragging = false; didDrag = false; hideGraphTooltip(); });
+  canvas.addEventListener("mouseleave", () => { dragging = false; didDrag = false; mousedownOnCanvas = false; hideGraphTooltip(); });
 
   // Zoom via scroll wheel.
   canvas.addEventListener("wheel", (e) => {
@@ -1161,6 +1190,11 @@ async function loadMemoryGraph() {
   const nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
   const edges = Array.isArray(snapshot.edges) ? snapshot.edges : [];
 
+  // Always reset highlights and close panel at the start of every reload,
+  // before branching on empty vs non-empty — so stale state never persists.
+  graphHighlightIds = new Map();
+  closeGraphNodePanel();
+
   if (nodes.length === 0) {
     graphData = null;
     const ctx = canvas.getContext("2d");
@@ -1183,11 +1217,9 @@ async function loadMemoryGraph() {
     return;
   }
 
-  // Reset colours and highlights on each fresh fetch so legend is consistent.
+  // Reset colours on each fresh fetch so legend is consistent.
   graphCategoryColors.clear();
   graphCategoryColorIndex = 0;
-  graphHighlightIds = new Map();
-  closeGraphNodePanel();
 
   // Pre-warm category colours in node order.
   for (const n of nodes) graphColorForCategory(n.kind);
@@ -1285,15 +1317,30 @@ function closeGraphNodePanel() {
 }
 
 /**
+ * Monotonically incrementing token for in-flight node-panel requests.
+ * Incremented on every openGraphNodePanel call; the async continuation
+ * compares against the token at the time the fetch resolved to discard
+ * stale responses when the user clicks multiple nodes in quick succession.
+ */
+let graphNodePanelToken = 0;
+
+/**
  * Fetch `GET /engram/v1/memories/:id` and render the result into the
  * node detail side panel.  Builds a frontmatter table, renders raw content,
  * and lists related edges from the in-memory snapshot.
+ *
+ * Uses a monotonic token to discard stale responses when the user clicks
+ * a second node before the first fetch resolves (race-free panel updates).
  *
  * @param {object} node - graph node object (has `.id`, `.kind`, `.score`, etc.)
  */
 async function openGraphNodePanel(node) {
   const panel = $("graphNodePanel");
   if (!panel) return;
+
+  // Claim this request's token before any await so concurrent calls get a
+  // different value and their responses are discarded when they resolve.
+  const myToken = ++graphNodePanelToken;
 
   // Show panel immediately with loading state.
   panel.classList.add("visible");
@@ -1305,9 +1352,19 @@ async function openGraphNodePanel(node) {
 
   if (title) title.textContent = node.id;
   if (status) { status.textContent = `Loading ${node.id}…`; status.className = "status"; }
-  if (frontmatterEl) frontmatterEl.innerHTML = "<em>Loading…</em>";
+  if (frontmatterEl) {
+    clearChildren(frontmatterEl);
+    const em = document.createElement("em");
+    em.textContent = "Loading…";
+    frontmatterEl.appendChild(em);
+  }
   if (contentEl) contentEl.textContent = "Loading…";
-  if (edgesEl) edgesEl.innerHTML = "<strong>Loading edges…</strong>";
+  if (edgesEl) {
+    clearChildren(edgesEl);
+    const strong = document.createElement("strong");
+    strong.textContent = "Loading edges…";
+    edgesEl.appendChild(strong);
+  }
 
   // Use the frontmatter memory ID for the endpoint when available (attached
   // by runGraphSearch via resolveHighlights).  Graph node IDs are relative
@@ -1318,6 +1375,10 @@ async function openGraphNodePanel(node) {
 
   try {
     const response = await fetchJson(`/engram/v1/memories/${encodeURIComponent(lookupId)}`);
+
+    // Discard if a newer openGraphNodePanel call was made while we awaited.
+    if (myToken !== graphNodePanelToken) return;
+
     const mem = response.memory || {};
 
     // Build frontmatter table from top-level scalar fields.
@@ -1351,6 +1412,7 @@ async function openGraphNodePanel(node) {
     }
 
     // Render related edges from the snapshot already in memory.
+    // Uses DOM methods exclusively — no innerHTML — to avoid XSS.
     if (edgesEl && graphData) {
       const related = graphData.edges.filter(
         (e) => e._srcNode?.id === node.id || e._tgtNode?.id === node.id,
@@ -1365,7 +1427,12 @@ async function openGraphNodePanel(node) {
           const isSource = e._srcNode?.id === node.id;
           const peerId = isSource ? e._tgtNode?.id : e._srcNode?.id;
           const direction = isSource ? "→" : "←";
-          li.innerHTML = `<strong>${direction} ${e.kind}</strong> ${peerId || "?"} (confidence ${e.confidence?.toFixed(2) ?? "?"})`;
+          const strong = document.createElement("strong");
+          strong.textContent = `${direction} ${e.kind ?? ""}`;
+          li.appendChild(strong);
+          li.appendChild(document.createTextNode(
+            ` ${peerId || "?"} (confidence ${e.confidence?.toFixed(2) ?? "?"})`,
+          ));
           ul.appendChild(li);
         });
         edgesEl.appendChild(ul);
@@ -1374,6 +1441,8 @@ async function openGraphNodePanel(node) {
 
     if (status) { status.textContent = `Loaded ${lookupId}.`; status.className = "status ok"; }
   } catch (err) {
+    // Discard stale error responses too.
+    if (myToken !== graphNodePanelToken) return;
     if (status) { status.textContent = err.message || String(err); status.className = "status error"; }
     if (contentEl) contentEl.textContent = "Failed to load memory content.";
   }
