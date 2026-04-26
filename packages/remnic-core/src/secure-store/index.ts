@@ -115,6 +115,7 @@ export {
   ENCRYPTED_FILE_MAGIC_LENGTH,
   ENCRYPTED_FILE_RESERVED_LENGTH,
   ENCRYPTED_FILE_VERSION,
+  SecureStoreDecryptError,
   SecureStoreLockedError,
   decryptFileBody,
   encryptFileBody,

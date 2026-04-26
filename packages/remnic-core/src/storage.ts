@@ -8,6 +8,7 @@ import { rotateMarkdownFileToArchive } from "./hygiene.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import { createVersion as createPageVersion, type VersioningConfig, type VersionTrigger } from "./page-versioning.js";
 import {
+  SecureStoreDecryptError,
   SecureStoreLockedError,
   readMaybeEncryptedFile,
   writeMaybeEncryptedFile,
@@ -2863,8 +2864,14 @@ export class StorageManager {
     try {
       const existing = await readMaybeEncryptedFile(filePath, { key: this._secureStoreKey });
       entity = parseEntityFile(existing, this.entitySchemas);
-    } catch {
-      // File doesn't exist yet
+    } catch (err) {
+      // Re-throw secure-store errors: a locked store or decryption failure
+      // must surface clearly rather than silently proceeding with an empty
+      // entity and overwriting encrypted data (Cursor review, CLAUDE.md
+      // gotcha #34).
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (err instanceof SecureStoreDecryptError) throw err;
+      // File doesn't exist yet — fall through to empty entity default.
     }
 
     const timestamp = options.timestamp?.trim() || new Date().toISOString();
@@ -3178,9 +3185,16 @@ export class StorageManager {
           } catch (err) {
             // Re-throw SecureStoreLockedError: a locked store must surface
             // clearly rather than silently collapsing memory scan results to
-            // empty. Only suppress non-fatal I/O errors (ENOENT, parse
-            // failures, etc.) — Codex P1.
+            // empty.
             if (err instanceof SecureStoreLockedError) throw err;
+            // Re-throw decryption failures with a telemetry signal — wrong
+            // key or tampered ciphertext must not be silently dropped (Codex
+            // P1, CLAUDE.md gotcha #34). The caller (orchestrator) decides
+            // whether to abort the recall or degrade gracefully.
+            if (err instanceof SecureStoreDecryptError) {
+              log.warn(`secure-store: decryption failure for ${fullPath} — ${err.message}`);
+              throw err;
+            }
             return null;
           }
         }),
@@ -3455,13 +3469,23 @@ export class StorageManager {
                   content: parsed.content,
                 });
               }
-            } catch {
-              // Skip unreadable files
+            } catch (err) {
+              // Re-throw decryption failures with a telemetry signal — wrong
+              // key or tampered ciphertext must not be silently dropped (Codex
+              // P1, CLAUDE.md gotcha #34).
+              if (err instanceof SecureStoreLockedError) throw err;
+              if (err instanceof SecureStoreDecryptError) {
+                log.warn(`secure-store: decryption failure for archived file ${fullPath} — ${err.message}`);
+                throw err;
+              }
+              // Silently skip other I/O errors (ENOENT, EPERM, parse failures).
             }
           }
         }
-      } catch {
-        // Directory doesn't exist yet
+      } catch (err) {
+        // Re-throw secure-store errors; swallow only "directory doesn't exist".
+        if (err instanceof SecureStoreLockedError || err instanceof SecureStoreDecryptError) throw err;
+        // Directory doesn't exist yet (or other benign readdir error).
       }
     };
 
@@ -3520,7 +3544,15 @@ export class StorageManager {
       }
 
       return null;
-    } catch {
+    } catch (err) {
+      // Re-throw secure-store errors — decryption failures and locked-store
+      // states must surface to the caller rather than being silently dropped
+      // as `null` (Codex P1, CLAUDE.md gotcha #34).
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (err instanceof SecureStoreDecryptError) {
+        log.warn(`secure-store: decryption failure for ${filePath} — ${err.message}`);
+        throw err;
+      }
       return null;
     }
   }

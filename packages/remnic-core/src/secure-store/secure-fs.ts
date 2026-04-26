@@ -233,6 +233,30 @@ export class SecureStoreLockedError extends Error {
 }
 
 /**
+ * Error raised when an encrypted file fails to decrypt — wrong key,
+ * tampered ciphertext, corrupted header, or unsupported format version.
+ * Distinct from `SecureStoreLockedError` (no key available) and from
+ * generic I/O errors (ENOENT, EPERM) so callers can choose between
+ * re-throwing (fail-fast) and log+skip (resilient scan) while always
+ * producing an operator-visible signal (CLAUDE.md gotcha #34).
+ */
+export class SecureStoreDecryptError extends Error {
+  override readonly name = "SecureStoreDecryptError";
+  readonly filePath: string;
+  readonly cause: unknown;
+  constructor(filePath: string, cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(
+      `secure store: failed to decrypt memory file ${filePath}: ${detail}. ` +
+        "The file may be corrupted or was encrypted with a different key. " +
+        "Run 'remnic secure-store status' to diagnose.",
+    );
+    this.filePath = filePath;
+    this.cause = cause;
+  }
+}
+
+/**
  * Read a memory file and return its UTF-8 plaintext, transparently
  * decrypting if the file is encrypted.
  *
@@ -241,7 +265,7 @@ export class SecureStoreLockedError extends Error {
  *   - file is plaintext (no magic) → returned as-is (back-compat)
  *   - file is encrypted + key present → decrypted, returned as UTF-8
  *   - file is encrypted + no key → throws `SecureStoreLockedError`
- *   - file is encrypted + wrong key / tampered → throws (auth failure)
+ *   - file is encrypted + wrong key / tampered → throws `SecureStoreDecryptError`
  */
 export async function readMaybeEncryptedFile(
   filePath: string,
@@ -255,8 +279,16 @@ export async function readMaybeEncryptedFile(
     throw new SecureStoreLockedError(filePath);
   }
   const decryptOpts = options.aad !== undefined ? { aad: options.aad } : {};
-  const plaintext = decryptFileBody(options.key, raw, decryptOpts);
-  return plaintext.toString("utf8");
+  try {
+    const plaintext = decryptFileBody(options.key, raw, decryptOpts);
+    return plaintext.toString("utf8");
+  } catch (err) {
+    // Wrap cipher failures in a typed error so callers can distinguish
+    // decryption failures from ordinary I/O errors (wrong key, tampered
+    // ciphertext, bad version, truncated envelope). This is the only place
+    // the wrap happens — callers should NOT wrap again.
+    throw new SecureStoreDecryptError(filePath, err);
+  }
 }
 
 /**
