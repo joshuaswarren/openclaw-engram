@@ -78,6 +78,8 @@ import {
   ensureProceduralMiningCron,
   ensureContradictionScanCron,
   ensurePatternReinforcementCron,
+  ensureGraphEdgeDecayCron,
+  graphEdgeDecayCadenceToCronExpr,
 } from "./maintenance/memory-governance-cron.js";
 import {
   runPatternReinforcement,
@@ -2423,6 +2425,15 @@ export class Orchestrator {
       }
     }
 
+    // Auto-register graph-edge decay cron (gated by config — issue #681 PR 2/3).
+    if (this.config.graphEdgeDecayEnabled) {
+      try {
+        await this.autoRegisterGraphEdgeDecayCron();
+      } catch (err) {
+        log.debug(`graph edge decay cron auto-register failed (non-fatal): ${err}`);
+      }
+    }
+
     log.info("orchestrator initialized (full — deferred steps complete)");
   }
 
@@ -2739,6 +2750,30 @@ export class Orchestrator {
     );
     return { ran: true, result, namespace: cadenceKey };
   }
+
+  private async autoRegisterGraphEdgeDecayCron(): Promise<void> {
+    const home = resolveHomeDir();
+    const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
+    try {
+      if (!existsSync(jobsPath)) {
+        log.debug("graph edge decay cron: jobs.json not found, skipping auto-register");
+        return;
+      }
+      const scheduleExpr = graphEdgeDecayCadenceToCronExpr(this.config.graphEdgeDecayCadenceMs);
+      const created = await ensureGraphEdgeDecayCron(jobsPath, {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        scheduleExpr,
+      });
+      if (created.created) {
+        log.info(`graph edge decay cron auto-registered (${created.jobId}, ${scheduleExpr})`);
+      } else {
+        log.debug("graph edge decay cron already exists, skipping auto-register");
+      }
+    } catch (err) {
+      log.debug(`graph edge decay cron auto-register error: ${err}`);
+    }
+  }
+
 
   async applyBehaviorRuntimePolicy(
     state: BehaviorLoopPolicyState,
@@ -3166,6 +3201,41 @@ export class Orchestrator {
           err instanceof Error ? err.message : String(err)
         }`,
       );
+    }
+
+    // Issue #679 PR 2/5 — async peer profile reasoner runs as part of
+    // the REM phase, immediately after semantic consolidation. Gated
+    // on `peerProfileReasonerEnabled` (default false, opt-in). Wrapped
+    // in a try/catch because reasoner I/O (LLM call, peer-profile
+    // writes) must never abort the consolidation result. The reasoner
+    // itself also defends against partial failure — see profile-reasoner.ts.
+    if (this.config.peerProfileReasonerEnabled) {
+      try {
+        const { runPeerProfileReasoner } = await import("./peers/index.js");
+        const llm = new FallbackLlmClient(this.config.gatewayConfig);
+        const peerResult = await runPeerProfileReasoner({
+          memoryDir: this.config.memoryDir,
+          enabled: true,
+          llm,
+          model: this.config.peerProfileReasonerModel,
+          minInteractions: this.config.peerProfileReasonerMinInteractions,
+          maxFieldsPerRun: this.config.peerProfileReasonerMaxFieldsPerRun,
+          log: {
+            debug: (msg) => log.debug(msg),
+            info: (msg) => log.info(msg),
+            warn: (msg) => log.warn(msg),
+          },
+        });
+        log.info(
+          `[peer-profile-reasoner] complete: peers=${peerResult.peersConsidered}, processed=${peerResult.peersProcessed}, fields=${peerResult.fieldsApplied}`,
+        );
+      } catch (err) {
+        log.warn(
+          `[peer-profile-reasoner] post-consolidation hook failed (non-fatal): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
 
     return result;
@@ -3872,10 +3942,17 @@ export class Orchestrator {
       `Seed paths (${snapshot.seedCount}):`,
       ...snapshot.seeds.map((p) => `- ${p}`),
       `Expanded paths (${snapshot.expandedCount}, showing ${expanded.length}):`,
-      ...expanded.map(
-        (e) =>
-          `- ${e.path} (score=${e.score.toFixed(3)}, ns=${e.namespace}, seed=${e.seed || "unknown"}, hop=${e.hopDepth}, w=${e.decayedWeight.toFixed(3)}, type=${e.graphType})`,
-      ),
+      ...expanded.map((e) => {
+        // Issue #681 PR 3/3 — surface per-edge confidence in the
+        // graph-explain document. Legacy snapshots without
+        // `edgeConfidence` render as `conf=n/a` so older payloads
+        // remain readable.
+        const confLabel =
+          typeof e.edgeConfidence === "number" && Number.isFinite(e.edgeConfidence)
+            ? e.edgeConfidence.toFixed(2)
+            : "n/a";
+        return `- ${e.path} (score=${e.score.toFixed(3)}, ns=${e.namespace}, seed=${e.seed || "unknown"}, hop=${e.hopDepth}, w=${e.decayedWeight.toFixed(3)}, type=${e.graphType}, conf=${confLabel})`;
+      }),
       `Final ranked results (${snapshot.finalResults?.length ?? 0}, showing ${finalResults.length}):`,
       ...finalResults.map(
         (entry) =>
@@ -5248,6 +5325,11 @@ export class Orchestrator {
           hopDepth: candidate.hopDepth,
           decayedWeight: candidate.decayedWeight,
           graphType: candidate.graphType,
+          // Issue #681 PR 3/3 — surface the per-edge confidence used for
+          // PageRank weighting / floor pruning so downstream observability
+          // (recall_xray, memory_graph_explain) can attribute ranking and
+          // pruning decisions to specific edges.
+          edgeConfidence: candidate.edgeConfidence,
         });
       }
     }

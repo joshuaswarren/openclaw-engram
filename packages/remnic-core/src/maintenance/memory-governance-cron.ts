@@ -6,6 +6,7 @@ const GOVERNANCE_CRON_ID = "engram-nightly-governance";
 const PROCEDURAL_MINING_CRON_ID = "engram-procedural-mining";
 const CONTRADICTION_SCAN_CRON_ID = "engram-contradiction-scan";
 const PATTERN_REINFORCEMENT_CRON_ID = "engram-pattern-reinforcement";
+const GRAPH_EDGE_DECAY_CRON_ID = "engram-graph-edge-decay";
 
 type CronJobsShape =
   | Array<Record<string, unknown>>
@@ -309,4 +310,88 @@ export async function ensurePatternReinforcementCron(
     },
     delivery: { mode: "none" },
   }));
+}
+
+/**
+ * Register a cron job that runs the graph-edge-decay maintenance pass
+ * (issue #681 PR 2/3). Default schedule is weekly on Sunday 04:13 — the
+ * cadence is configurable via `scheduleExpr`. Cadence is also expressible
+ * in milliseconds via `Config.graphEdgeDecayCadenceMs`; the orchestrator
+ * picks the right cron expression for sub-daily, daily, or weekly cadence.
+ */
+export async function ensureGraphEdgeDecayCron(
+  jobsPath: string,
+  options: {
+    timezone: string;
+    agentId?: string;
+    scheduleExpr?: string;
+  },
+): Promise<{ created: boolean; jobId: string }> {
+  const scheduleExpr =
+    typeof options.scheduleExpr === "string" && options.scheduleExpr.trim().length > 0
+      ? options.scheduleExpr.trim()
+      : "13 4 * * 0";
+  const agentId =
+    typeof options.agentId === "string" && options.agentId.trim().length > 0
+      ? options.agentId.trim()
+      : "main";
+
+  const scheduleLabel = graphEdgeDecayScheduleLabel(scheduleExpr);
+
+  return ensureCronJob(jobsPath, GRAPH_EDGE_DECAY_CRON_ID, () => ({
+    id: GRAPH_EDGE_DECAY_CRON_ID,
+    agentId,
+    // Schedule label reflects the actual cron expression (`daily` /
+    // `weekly` / `custom`) so cron dashboards do not show "weekly"
+    // when the schedule is in fact daily — Cursor review on PR #729.
+    name: `Remnic Graph Edge Decay (${scheduleLabel})`,
+    enabled: true,
+    schedule: {
+      kind: "cron",
+      expr: scheduleExpr,
+      tz: options.timezone,
+    },
+    sessionTarget: "isolated",
+    wakeMode: "now",
+    payload: {
+      kind: "agentTurn",
+      timeoutSeconds: 900,
+      thinking: "off",
+      message:
+        "You are OpenClaw automation. Call tool `engram.graph_edge_decay_run` with empty params. " +
+        "If successful output exactly NO_REPLY. On error output one concise line. Do NOT use message tool.",
+    },
+    delivery: { mode: "none" },
+  }));
+}
+
+/**
+ * Pick a cron expression that approximates a cadence in milliseconds.
+ *
+ * - cadence < 7 days → daily at 04:13 (sub-daily cadence is not natively
+ *   expressible in 5-field cron without `*\/N` patterns; daily is the
+ *   safe upper bound that won't trip the cron more often than requested).
+ * - cadence ≥ 7 days → weekly on Sunday 04:13.
+ *
+ * Operators who need finer-grained control should set `scheduleExpr`
+ * directly via `ensureGraphEdgeDecayCron`.
+ */
+export function graphEdgeDecayCadenceToCronExpr(cadenceMs: number): string {
+  if (!Number.isFinite(cadenceMs) || cadenceMs <= 0) {
+    return "13 4 * * 0";
+  }
+  const day = 24 * 60 * 60 * 1000;
+  if (cadenceMs < 7 * day) return "13 4 * * *";
+  return "13 4 * * 0";
+}
+
+/**
+ * Derive a human-friendly schedule label ("daily" / "weekly" / "custom")
+ * for the given cron expression. Used to keep the cron job name in
+ * sync with the actual schedule (Cursor review on PR #729).
+ */
+function graphEdgeDecayScheduleLabel(scheduleExpr: string): string {
+  if (scheduleExpr === "13 4 * * *") return "daily";
+  if (scheduleExpr === "13 4 * * 0") return "weekly";
+  return "custom";
 }

@@ -862,6 +862,32 @@ export interface PluginConfig {
    * the procedural mining pipeline.
    */
   patternReinforcementCategories: string[];
+  /**
+   * Async peer profile reasoner — issue #679 PR 2/5.
+   *
+   * Default `false` (opt-in). When enabled, the reasoner runs after
+   * `runSemanticConsolidation` (the REM phase of the dreams pipeline)
+   * and updates per-peer profile.md files with provenance-tagged
+   * field updates derived from the peer's interaction log.
+   */
+  peerProfileReasonerEnabled: boolean;
+  /**
+   * Model identifier used by the peer profile reasoner. Logged for
+   * telemetry only — actual dispatch is via the same FallbackLlmClient
+   * the orchestrator uses for semantic consolidation. Default `gpt-5.2`.
+   */
+  peerProfileReasonerModel: string;
+  /**
+   * Minimum new interaction-log entries a peer must accumulate since
+   * the previous reasoner run before being processed again. Default 5.
+   * Setting to 0 forces every run to consider every peer.
+   */
+  peerProfileReasonerMinInteractions: number;
+  /**
+   * Hard cap on the total number of profile fields the reasoner will
+   * apply across all peers in a single run. Default 8.
+   */
+  peerProfileReasonerMaxFieldsPerRun: number;
   // Creation-memory foundation
   creationMemoryEnabled: boolean;
   memoryUtilityLearningEnabled: boolean;
@@ -1310,6 +1336,36 @@ export interface PluginConfig {
   graphLateralInhibitionBeta: number;
   /** Number of top competing nodes considered for inhibition (default 7). */
   graphLateralInhibitionTopM: number;
+
+  // Issue #681 PR 2/3 — graph-edge confidence decay maintenance.
+  /** Enable the periodic graph-edge confidence decay job. Default false (opt-in). */
+  graphEdgeDecayEnabled: boolean;
+  /** Cadence in milliseconds at which the cron triggers the decay job. Default 7d. */
+  graphEdgeDecayCadenceMs: number;
+  /** Decay window passed through to `decayEdgeConfidence`. Default 90 days. */
+  graphEdgeDecayWindowMs: number;
+  /** Per-window confidence drop. Default 0.1. */
+  graphEdgeDecayPerWindow: number;
+  /** Floor confidence will not decay below. Default 0.1. */
+  graphEdgeDecayFloor: number;
+  /** Confidence threshold for the "below visibility" telemetry counter. Default 0.2. */
+  graphEdgeDecayVisibilityThreshold: number;
+
+  /**
+   * Issue #681 PR 3/3 — minimum edge confidence required for an edge to be
+   * traversed during spreading activation. Edges with `confidence` below this
+   * floor are pruned and contribute neither activation nor downstream
+   * neighbors. Legacy edges without `confidence` are treated as 1.0 so they
+   * always pass the floor. Range `[0, 1]`; default `0.2`.
+   */
+  graphTraversalConfidenceFloor: number;
+  /**
+   * Issue #681 PR 3/3 — number of PageRank-style refinement iterations applied
+   * on top of the BFS spreading-activation scores. Each iteration redistributes
+   * a node's confidence-weighted activation along its outgoing edges. Set to 0
+   * to disable refinement and use raw BFS scores. Default `8`.
+   */
+  graphTraversalPageRankIterations: number;
   // v8.2: Temporal Memory Tree
   temporalMemoryTreeEnabled: boolean;
   tmtHourlyMinMemories: number;
@@ -1338,6 +1394,11 @@ export interface PluginConfig {
 
   // Codex CLI connector settings (install-time)
   codex: CodexConnectorConfig;
+
+  // Live connectors (issue #683). Concrete implementations live under
+  // packages/remnic-core/src/connectors/live/. Each child block maps to one
+  // connector. All defaults are off — operators opt in.
+  connectors: LiveConnectorsConfig;
 
   // MECE Taxonomy (#366)
   /** Enable the MECE taxonomy knowledge directory. Default false. */
@@ -1540,6 +1601,49 @@ export interface CodexConnectorConfig {
    * this is useful for integration tests and non-default installs.
    */
   codexHome: string | null;
+}
+
+/**
+ * Container for live-connector config blocks (issue #683 PR 2/N).
+ *
+ * Lives at `connectors.*` rather than the top level so future connectors
+ * (Notion, Gmail, GitHub) can slot in without bloating `PluginConfig`.
+ *
+ * Every child block must default to `enabled: false` per CLAUDE.md gotcha
+ * #30 (escape hatch by default) and gotcha #48 (least-privileged enum
+ * defaults). Concrete connectors are also expected to short-circuit at
+ * registration time when their credentials are not populated.
+ */
+export interface LiveConnectorsConfig {
+  /** Google Drive live connector (issue #683 PR 2/N). */
+  googleDrive: GoogleDriveLiveConnectorConfig;
+}
+
+/**
+ * Operator-facing config for the Google Drive live connector. The connector
+ * module itself defines a separate, *validated* `GoogleDriveConnectorConfig`
+ * shape (frozen, post-validation). This interface is the pre-validation
+ * shape that `parseConfig` round-trips through.
+ *
+ * `clientId` / `clientSecret` / `refreshToken` are stored as strings here so
+ * the schema can ship in `openclaw.plugin.json` and operators can populate
+ * them from a secret store (e.g. an env-substituted plist or systemd
+ * EnvironmentFile). They MUST NEVER be committed to source. The repo-wide
+ * privacy policy in CLAUDE.md applies.
+ */
+export interface GoogleDriveLiveConnectorConfig {
+  /** Master gate. Default false — operators must opt in explicitly. */
+  enabled: boolean;
+  /** OAuth2 client id. Populate from a secret store; never commit. */
+  clientId: string;
+  /** OAuth2 client secret. Populate from a secret store; never commit. */
+  clientSecret: string;
+  /** OAuth2 refresh token. Populate from a secret store; never commit. */
+  refreshToken: string;
+  /** Poll interval in ms. Default 300000 (5 min); min 1000; max 86400000 (24h). */
+  pollIntervalMs: number;
+  /** Optional folder-id scope. Empty array = all accessible files. */
+  folderIds: string[];
 }
 
 export interface BootstrapOptions {

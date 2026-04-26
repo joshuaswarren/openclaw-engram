@@ -576,6 +576,12 @@ export {
   listConnectorStates,
   readConnectorState,
   writeConnectorState,
+  GOOGLE_DRIVE_CONNECTOR_ID,
+  GOOGLE_DRIVE_CURSOR_KIND,
+  GOOGLE_DRIVE_DEFAULT_POLL_INTERVAL_MS,
+  createGoogleDriveConnector,
+  defaultGoogleDriveClientFactory,
+  validateGoogleDriveConfig,
   type ConnectorConfig,
   type ConnectorCursor,
   type ConnectorDocument,
@@ -585,6 +591,13 @@ export {
   type LiveConnector,
   type SyncIncrementalArgs,
   type SyncIncrementalResult,
+  type DriveChange,
+  type DriveChangesPage,
+  type DriveFileMetadata,
+  type GoogleDriveClient,
+  type GoogleDriveClientFactory,
+  type GoogleDriveConnectorConfig,
+  type GoogleDriveSyncResult,
 } from "./connectors/live/index.js";
 
 // ---------------------------------------------------------------------------
@@ -937,3 +950,28 @@ export {
   RECALL_DISCLOSURE_LEVELS,
   isRecallDisclosure,
 } from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Peer registry (issue #679 PR 1/5)
+// ---------------------------------------------------------------------------
+
+export type {
+  Peer,
+  PeerKind,
+  PeerProfile,
+  PeerProfileFieldProvenance,
+  PeerInteractionLogEntry,
+} from "./peers/index.js";
+export {
+  PEER_ID_PATTERN,
+  PEER_ID_MAX_LENGTH,
+  PEERS_DIR_NAME,
+  assertValidPeerId,
+  readPeer,
+  writePeer,
+  listPeers,
+  appendInteractionLog,
+  readInteractionLogRaw,
+  readPeerProfile,
+  writePeerProfile,
+} from "./peers/index.js";

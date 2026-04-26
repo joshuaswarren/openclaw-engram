@@ -171,6 +171,121 @@ test("buildXraySnapshot preserves graphPath, auditEntryId, rejectedBy when prese
   assert.equal(emitted.rejectedBy, "mmr-diversity");
 });
 
+// ─── Issue #681 PR 3/3 — graphEdgeConfidences ─────────────────────────────
+
+test("buildXraySnapshot preserves graphEdgeConfidences when length matches graphPath - 1", () => {
+  const result: RecallXrayResult = {
+    memoryId: "mem-x",
+    path: "/p.md",
+    servedBy: "graph",
+    admittedBy: [],
+    scoreDecomposition: { final: 0.42 },
+    graphPath: ["a", "b", "c"],
+    graphEdgeConfidences: [0.9, 0.4],
+  };
+  const snap = buildXraySnapshot({
+    query: "q",
+    results: [result],
+    now: fixedNow,
+    snapshotIdGenerator: idGen(),
+  });
+  assert.deepEqual(snap.results[0]?.graphEdgeConfidences, [0.9, 0.4]);
+});
+
+test("buildXraySnapshot drops graphEdgeConfidences when length disagrees with graphPath", () => {
+  // Misaligned snapshots are rejected wholesale rather than rendering
+  // partial / shifted confidence pairings — that would invite reviewers
+  // to ask "which edge does index 2 refer to?" and the answer is "none".
+  const result: RecallXrayResult = {
+    memoryId: "mem-x",
+    path: "/p.md",
+    servedBy: "graph",
+    admittedBy: [],
+    scoreDecomposition: { final: 0.42 },
+    graphPath: ["a", "b", "c"],
+    graphEdgeConfidences: [0.9], // length 1, expected 2
+  };
+  const snap = buildXraySnapshot({
+    query: "q",
+    results: [result],
+    now: fixedNow,
+    snapshotIdGenerator: idGen(),
+  });
+  assert.equal(snap.results[0]?.graphEdgeConfidences, undefined);
+});
+
+test("buildXraySnapshot rejects graphEdgeConfidences with non-finite entries (cursor #735)", () => {
+  // Cursor review thread: filtering NaN/Infinity via `continue` and
+  // then length-checking the cleaned array would silently shift
+  // surviving values to earlier edge indices. We must reject the
+  // entire array on any non-finite member so misalignment is
+  // impossible — even when the cleaned count happens to match
+  // `graphPath.length - 1` by coincidence.
+  const result: RecallXrayResult = {
+    memoryId: "mem-x",
+    path: "/p.md",
+    servedBy: "graph",
+    admittedBy: [],
+    scoreDecomposition: { final: 0.5 },
+    graphPath: ["a", "b", "c"], // 2 edges expected
+    // Input length 2 (matches expected) but contains NaN: a permissive
+    // implementation would render `0.7` as if it were the only edge
+    // (length 1) — losing alignment with the second edge.
+    graphEdgeConfidences: [Number.NaN, 0.7],
+  };
+  const snap = buildXraySnapshot({
+    query: "q",
+    results: [result],
+    now: fixedNow,
+    snapshotIdGenerator: idGen(),
+  });
+  assert.equal(snap.results[0]?.graphEdgeConfidences, undefined);
+});
+
+test("buildXraySnapshot rejects graphEdgeConfidences with input length mismatch (cursor #735)", () => {
+  // Reproduces the exact misalignment vector cursor flagged: when
+  // input contains a NaN that would be stripped, the post-strip
+  // length might match `graphPath.length - 1` even though the
+  // *original* length did not. Reject on input length, not cleaned
+  // length, so a future "filter & continue" regression cannot creep
+  // back in.
+  const result: RecallXrayResult = {
+    memoryId: "mem-x",
+    path: "/p.md",
+    servedBy: "graph",
+    admittedBy: [],
+    scoreDecomposition: { final: 0.5 },
+    graphPath: ["a", "b", "c"], // 2 edges expected
+    graphEdgeConfidences: [0.5, Number.NaN, 0.7], // input length 3
+  };
+  const snap = buildXraySnapshot({
+    query: "q",
+    results: [result],
+    now: fixedNow,
+    snapshotIdGenerator: idGen(),
+  });
+  assert.equal(snap.results[0]?.graphEdgeConfidences, undefined);
+});
+
+test("buildXraySnapshot clamps graphEdgeConfidence values into [0, 1]", () => {
+  const result: RecallXrayResult = {
+    memoryId: "mem-x",
+    path: "/p.md",
+    servedBy: "graph",
+    admittedBy: [],
+    scoreDecomposition: { final: 0.5 },
+    graphPath: ["a", "b", "c"],
+    graphEdgeConfidences: [-0.3, 1.5],
+  };
+  const snap = buildXraySnapshot({
+    query: "q",
+    results: [result],
+    now: fixedNow,
+    snapshotIdGenerator: idGen(),
+  });
+  assert.deepEqual(snap.results[0]?.graphEdgeConfidences, [0, 1]);
+});
+
 test("buildXraySnapshot rejects results with an unknown servedBy tier", () => {
   assert.throws(
     () =>

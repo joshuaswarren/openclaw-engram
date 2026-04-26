@@ -848,6 +848,30 @@ export class EngramMcpServer {
         },
       },
       {
+        // Graph snapshot for the admin pane (issue #691 PR 2/5).  Returns
+        // a read-only `{ nodes, edges, generatedAt }` view of the
+        // multi-graph adjacency, with the same filter knobs as the HTTP
+        // surface so connectors / CLI clients can hit either endpoint
+        // interchangeably.
+        name: "engram.graph_snapshot",
+        description: "Return a read-only graph snapshot (nodes + edges) for the admin pane. Filters: limit (default 500, max 5000), since (ISO timestamp), focusNodeId (restricts to neighborhood), categories (allow-list of memory categories).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            namespace: { type: "string" },
+            limit: { type: "number", description: "Maximum number of edges to return (default 500, max 5000)." },
+            since: { type: "string", description: "Inclusive lower bound on edge timestamp (ISO-8601)." },
+            focusNodeId: { type: "string", description: "When set, restrict the snapshot to the focus node and its neighbors." },
+            categories: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional category allow-list (e.g. ['fact', 'decision']).",
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
         name: "engram.memory_feedback",
         description: "Record relevance feedback (thumbs up/down) for a specific memory.",
         inputSchema: {
@@ -962,6 +986,18 @@ export class EngramMcpServer {
           type: "object",
           properties: {
             namespace: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.graph_edge_decay_run",
+        description:
+          "Run the graph-edge-confidence decay maintenance pass (issue #681 PR 2/3). Respects graphEdgeDecayEnabled; writes a structured telemetry record to state/graph-edge-decay-status.json.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            dryRun: { type: "boolean" },
           },
           additionalProperties: false,
         },
@@ -1783,6 +1819,51 @@ export class EngramMcpServer {
         return this.service.graphExplainLastRecall(
           typeof args.namespace === "string" ? args.namespace : undefined,
         );
+      case "engram.graph_snapshot": {
+        // Validate the typed inputs at the boundary — silently coercing
+        // unknown shapes (e.g. `limit: "200"`) would defeat the access
+        // service's tighter parser (CLAUDE.md rule 28 + 51).
+        if (args.limit !== undefined && typeof args.limit !== "number") {
+          throw new Error("engram.graph_snapshot: limit must be a number");
+        }
+        if (args.since !== undefined && typeof args.since !== "string") {
+          throw new Error("engram.graph_snapshot: since must be a string");
+        }
+        if (
+          args.focusNodeId !== undefined
+          && typeof args.focusNodeId !== "string"
+        ) {
+          throw new Error("engram.graph_snapshot: focusNodeId must be a string");
+        }
+        let categories: string[] | undefined;
+        if (args.categories !== undefined) {
+          if (!Array.isArray(args.categories)) {
+            throw new Error(
+              "engram.graph_snapshot: categories must be an array of strings",
+            );
+          }
+          categories = args.categories.map((value, index) => {
+            if (typeof value !== "string") {
+              throw new Error(
+                `engram.graph_snapshot: categories[${index}] must be a string`,
+              );
+            }
+            return value;
+          });
+        }
+        return this.service.graphSnapshot(
+          {
+            namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+            limit: typeof args.limit === "number" ? args.limit : undefined,
+            since: typeof args.since === "string" ? args.since : undefined,
+            focusNodeId: typeof args.focusNodeId === "string"
+              ? args.focusNodeId
+              : undefined,
+            ...(categories !== undefined ? { categories } : {}),
+          },
+          effectivePrincipal,
+        );
+      }
       case "engram.memory_feedback":
         return this.service.memoryFeedback({
           memoryId: typeof args.memoryId === "string" ? args.memoryId : "",
@@ -1877,6 +1958,40 @@ export class EngramMcpServer {
           fallbackLlm: this.service.fallbackLlmRef,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
         });
+      }
+      case "engram.graph_edge_decay_run":
+      case "remnic.graph_edge_decay_run": {
+        // Issue #681 PR 2/3 — gated by config; tool always callable, but
+        // the job is a no-op when disabled (and the response indicates it).
+        const cfg = this.service.configRef;
+        if (!cfg.graphEdgeDecayEnabled) {
+          return {
+            ranAt: new Date().toISOString(),
+            disabled: true,
+            reason: "graphEdgeDecayEnabled is false",
+          };
+        }
+        const { runGraphEdgeDecayMaintenanceAcrossNamespaces } = await import(
+          "./maintenance/graph-edge-decay.js"
+        );
+        const dryRun = args.dryRun === true;
+        // Codex P2 / gotcha #42: enumerate every namespace storage root
+        // so non-default namespaces (memoryDir/namespaces/<ns>) also get
+        // confidence decay applied. Returns a list of per-namespace
+        // results — each with telemetry or an error string.
+        const results = await runGraphEdgeDecayMaintenanceAcrossNamespaces(
+          this.service.memoryDir,
+          {
+            windowMs: cfg.graphEdgeDecayWindowMs,
+            perWindow: cfg.graphEdgeDecayPerWindow,
+            floor: cfg.graphEdgeDecayFloor,
+            visibilityThreshold: cfg.graphEdgeDecayVisibilityThreshold,
+            dryRun,
+            namespacesEnabled: cfg.namespacesEnabled === true,
+            defaultNamespace: cfg.defaultNamespace,
+          },
+        );
+        return { results };
       }
       default:
         throw new Error(`unknown tool: ${name}`);

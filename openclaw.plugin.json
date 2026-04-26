@@ -696,6 +696,57 @@
           }
         }
       },
+      "connectors": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "description": "Live-connector configuration (issue #683). Each child object maps to one concrete LiveConnector. Defaults are off; operators must opt in.",
+        "properties": {
+          "googleDrive": {
+            "type": "object",
+            "additionalProperties": false,
+            "default": {},
+            "description": "Google Drive live connector (issue #683 PR 2/N). Imports text content from a user's Drive into Remnic on a poll schedule.",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": false,
+                "description": "Master gate. Default off — set to true to enable Drive imports. The connector additionally requires clientId, clientSecret, and refreshToken to be populated before it will run."
+              },
+              "clientId": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 client id. Populate from your secret store (e.g. ${GOOGLE_DRIVE_CLIENT_ID}). Never commit a real value to source."
+              },
+              "clientSecret": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 client secret. Populate from your secret store (e.g. ${GOOGLE_DRIVE_CLIENT_SECRET}). Never commit a real value to source."
+              },
+              "refreshToken": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 refresh token issued for the user's Drive scope. Populate from your secret store (e.g. ${GOOGLE_DRIVE_REFRESH_TOKEN}). Never commit a real value to source."
+              },
+              "pollIntervalMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 86400000,
+                "default": 300000,
+                "description": "How often the scheduler should call the connector's syncIncremental, in milliseconds. Defaults to 5 minutes; max 24 hours."
+              },
+              "folderIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "Optional array of Google Drive folder ids to scope the import. Empty = all accessible files. Folder ids are validated for shape; nested folders are NOT auto-included."
+              }
+            }
+          }
+        }
+      },
       "codexMaterializeMemories": {
         "type": "boolean",
         "default": true,
@@ -1739,6 +1790,19 @@
         "default": 0.7,
         "description": "Per-hop activation decay factor (0-1). Default 0.7."
       },
+      "graphTraversalConfidenceFloor": {
+        "type": "number",
+        "default": 0.2,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Issue #681 PR 3/3: minimum edge confidence required for traversal during spreading activation. Edges below this floor are pruned and contribute neither activation nor downstream neighbors. Legacy edges without a confidence field are treated as 1.0. Range 0-1. Default 0.2."
+      },
+      "graphTraversalPageRankIterations": {
+        "type": "number",
+        "default": 8,
+        "minimum": 0,
+        "description": "Issue #681 PR 3/3: number of PageRank-style refinement iterations applied on top of the BFS spreading-activation scores. Each iteration redistributes a node's confidence-weighted activation along its outgoing edges. Set to 0 to disable refinement and use raw BFS scores. Default 8."
+      },
       "graphExpansionActivationWeight": {
         "type": "number",
         "default": 0.65,
@@ -1803,6 +1867,44 @@
         "type": "number",
         "default": 7,
         "description": "Number of top competing nodes considered for lateral inhibition"
+      },
+      "graphEdgeDecayEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the periodic graph-edge confidence decay maintenance job (issue #681 PR 2/3). Opt-in."
+      },
+      "graphEdgeDecayCadenceMs": {
+        "type": "number",
+        "default": 604800000,
+        "minimum": 60000,
+        "description": "Cadence in milliseconds for the graph-edge decay cron. Default 7 days. Sub-day cadences map to a daily cron expression."
+      },
+      "graphEdgeDecayWindowMs": {
+        "type": "number",
+        "default": 7776000000,
+        "minimum": 60000,
+        "description": "Decay window in milliseconds passed to decayEdgeConfidence. Default 90 days."
+      },
+      "graphEdgeDecayPerWindow": {
+        "type": "number",
+        "default": 0.1,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Per-window confidence drop applied during decay. Default 0.1."
+      },
+      "graphEdgeDecayFloor": {
+        "type": "number",
+        "default": 0.1,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Floor confidence will not decay below. Default 0.1."
+      },
+      "graphEdgeDecayVisibilityThreshold": {
+        "type": "number",
+        "default": 0.2,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Confidence threshold used by the decay telemetry counter for low-visibility edges. Default 0.2."
       },
       "temporalMemoryTreeEnabled": {
         "type": "boolean",
@@ -2938,6 +3040,28 @@
         "type": "boolean",
         "default": false,
         "description": "Opt in to operator-aware consolidation prompts so the LLM returns structured {operator, output} JSON and SPLIT/MERGE/UPDATE is recorded on derived_via. When disabled (default), derived_via still populates via the cluster-shape heuristic."
+      },
+      "peerProfileReasonerEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the async peer profile reasoner (issue #679). Runs after semantic consolidation in the REM phase and updates per-peer profile.md files with provenance-tagged field updates derived from the peer's interaction log. Default off (opt-in)."
+      },
+      "peerProfileReasonerModel": {
+        "type": "string",
+        "default": "auto",
+        "description": "Model identifier used by the peer profile reasoner. 'auto' inherits the gateway's primary chain (recommended). Logged for telemetry only — actual dispatch routes through the same FallbackLlmClient used by semantic consolidation."
+      },
+      "peerProfileReasonerMinInteractions": {
+        "type": "number",
+        "default": 5,
+        "minimum": 0,
+        "description": "Minimum new interaction-log entries a peer must accumulate since the previous reasoner run before being processed again. Set to 0 to consider every peer on every run."
+      },
+      "peerProfileReasonerMaxFieldsPerRun": {
+        "type": "number",
+        "default": 8,
+        "minimum": 0,
+        "description": "Hard cap on the total number of profile fields the reasoner will apply across all peers in a single run. Set to 0 to disable applying any fields."
       },
       "creationMemoryEnabled": {
         "type": "boolean",
@@ -4750,6 +4874,26 @@
       "label": "Operator-Aware Consolidation Prompt",
       "advanced": true,
       "help": "Opt in to operator-aware consolidation prompts (default off). When enabled, the LLM returns structured {operator, output} JSON and we record SPLIT/MERGE/UPDATE on derived_via. When disabled (default), derived_via still populates via the cluster-shape heuristic."
+    },
+    "peerProfileReasonerEnabled": {
+      "label": "Peer Profile Reasoner",
+      "advanced": true,
+      "help": "Enable the async peer profile reasoner (issue #679). Runs in the REM phase after semantic consolidation and updates per-peer profile.md files with provenance-tagged field updates derived from each peer's interaction log. Default off (opt-in)."
+    },
+    "peerProfileReasonerModel": {
+      "label": "Peer Profile Reasoner Model",
+      "advanced": true,
+      "help": "Model identifier the peer profile reasoner records on telemetry. Dispatch still routes through the FallbackLlmClient used by semantic consolidation."
+    },
+    "peerProfileReasonerMinInteractions": {
+      "label": "Peer Profile Reasoner Min Interactions",
+      "advanced": true,
+      "help": "Minimum new interaction-log entries a peer must accumulate since the previous reasoner run before being processed again. Set to 0 to consider every peer on every run."
+    },
+    "peerProfileReasonerMaxFieldsPerRun": {
+      "label": "Peer Profile Reasoner Max Fields Per Run",
+      "advanced": true,
+      "help": "Hard cap on the total number of profile fields the reasoner will apply across all peers in a single run. Set to 0 to disable applying any fields."
     },
     "creationMemoryEnabled": {
       "label": "Creation Memory",

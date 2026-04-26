@@ -548,3 +548,106 @@ test("parseConfig: non-array patternReinforcementCategories falls back to defaul
     "decision",
   ]);
 });
+
+// ── #683 PR 2/N: connectors.googleDrive parsing.
+
+test("parseConfig connectors defaults: googleDrive disabled with empty creds", () => {
+  const result = parseConfig({ openaiApiKey: "sk-test" });
+  assert.equal(result.connectors.googleDrive.enabled, false);
+  assert.equal(result.connectors.googleDrive.clientId, "");
+  assert.equal(result.connectors.googleDrive.clientSecret, "");
+  assert.equal(result.connectors.googleDrive.refreshToken, "");
+  assert.equal(result.connectors.googleDrive.pollIntervalMs, 300_000);
+  assert.deepEqual(result.connectors.googleDrive.folderIds, []);
+});
+
+test("parseConfig connectors.googleDrive accepts valid overrides", () => {
+  const result = parseConfig({
+    openaiApiKey: "sk-test",
+    connectors: {
+      googleDrive: {
+        enabled: true,
+        clientId: "synthetic-client",
+        clientSecret: "synthetic-secret",
+        refreshToken: "synthetic-token",
+        pollIntervalMs: 60_000,
+        folderIds: [
+          "1AbCdEfGh_synthetic_folder_aaaaa",
+          "1AbCdEfGh_synthetic_folder_aaaaa", // dup — should dedupe
+          "1AbCdEfGh_synthetic_folder_bbbbb",
+          "   ", // empty after trim — should drop
+        ],
+      },
+    },
+  });
+  assert.equal(result.connectors.googleDrive.enabled, true);
+  assert.equal(result.connectors.googleDrive.pollIntervalMs, 60_000);
+  assert.deepEqual(result.connectors.googleDrive.folderIds, [
+    "1AbCdEfGh_synthetic_folder_aaaaa",
+    "1AbCdEfGh_synthetic_folder_bbbbb",
+  ]);
+});
+
+test("parseConfig rejects malformed connectors top-level", () => {
+  assert.throws(
+    () => parseConfig({ openaiApiKey: "sk-test", connectors: "nope" }),
+    /connectors must be an object/,
+  );
+  assert.throws(
+    () => parseConfig({ openaiApiKey: "sk-test", connectors: null }),
+    /connectors must be an object/,
+  );
+  assert.throws(
+    () => parseConfig({ openaiApiKey: "sk-test", connectors: [] }),
+    /connectors must be an object/,
+  );
+});
+
+test("parseConfig rejects malformed connectors.googleDrive shape", () => {
+  assert.throws(
+    () =>
+      parseConfig({
+        openaiApiKey: "sk-test",
+        connectors: { googleDrive: "nope" },
+      }),
+    /connectors\.googleDrive must be an object/,
+  );
+});
+
+test("parseConfig rejects out-of-range pollIntervalMs", () => {
+  assert.throws(
+    () =>
+      parseConfig({
+        openaiApiKey: "sk-test",
+        connectors: { googleDrive: { pollIntervalMs: 50 } },
+      }),
+    /pollIntervalMs must be an integer in/,
+  );
+  assert.throws(
+    () =>
+      parseConfig({
+        openaiApiKey: "sk-test",
+        connectors: { googleDrive: { pollIntervalMs: 9_999_999_999 } },
+      }),
+    /pollIntervalMs must be an integer in/,
+  );
+});
+
+test("parseConfig rejects malformed folderIds", () => {
+  assert.throws(
+    () =>
+      parseConfig({
+        openaiApiKey: "sk-test",
+        connectors: { googleDrive: { folderIds: "not-an-array" } },
+      }),
+    /folderIds must be an array/,
+  );
+  assert.throws(
+    () =>
+      parseConfig({
+        openaiApiKey: "sk-test",
+        connectors: { googleDrive: { folderIds: [42] } },
+      }),
+    /folderIds entries must be strings/,
+  );
+});

@@ -109,6 +109,17 @@ export interface RecallXrayResult {
   servedBy: RecallXrayServedBy;
   scoreDecomposition: RecallXrayScoreDecomposition;
   graphPath?: string[];
+  /**
+   * Issue #681 PR 3/3 — per-edge confidence values aligned with
+   * `graphPath`. When present, `graphEdgeConfidences[i]` is the
+   * confidence of the edge between `graphPath[i]` and `graphPath[i+1]`,
+   * so the array length is one less than `graphPath`. Legacy edges
+   * without a recorded confidence render as `1.0`. Operators use this
+   * to attribute floor-pruning and PageRank ranking decisions back to
+   * specific edges. The renderer drops the line when the array is
+   * empty or absent so legacy snapshots round-trip cleanly.
+   */
+  graphEdgeConfidences?: number[];
   auditEntryId?: string;
   /** Human-readable list of filters the candidate *passed*. */
   admittedBy: string[];
@@ -338,6 +349,41 @@ function cloneResult(result: RecallXrayResult): RecallXrayResult {
   const graphPath = Array.isArray(result.graphPath)
     ? result.graphPath.filter((x): x is string => typeof x === "string")
     : undefined;
+  // Issue #681 PR 3/3 — per-edge confidences alongside graph path.
+  // Each entry is clamped into [0, 1]; the array is rejected wholesale
+  // when alignment cannot be verified so downstream surfaces can rely
+  // on `graphEdgeConfidences[i]` describing the edge between
+  // `graphPath[i]` and `graphPath[i+1]`.
+  //
+  // Cursor review (#735): the input array length MUST match
+  // `graphPath.length - 1` *before* any per-element filtering. The
+  // earlier implementation skipped non-finite entries via `continue`
+  // and then length-checked the cleaned array — that would silently
+  // shift surviving values to earlier positions. Example: input
+  // `[0.5, NaN, 0.7]` for a 3-edge path would collapse to
+  // `[0.5, 0.7]`, length-check would pass against `expected = 2`, and
+  // the renderer would mis-attribute `0.7` to edge B→C when it really
+  // came from edge C→D. Reject on either size mismatch or any
+  // non-finite entry so misalignment is impossible.
+  let graphEdgeConfidences: number[] | undefined;
+  if (Array.isArray(result.graphEdgeConfidences) && graphPath && graphPath.length > 1) {
+    const expected = graphPath.length - 1;
+    const raw = result.graphEdgeConfidences;
+    if (raw.length === expected) {
+      const cleaned: number[] = [];
+      let allFinite = true;
+      for (const value of raw) {
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+          allFinite = false;
+          break;
+        }
+        cleaned.push(Math.min(1, Math.max(0, value)));
+      }
+      if (allFinite) {
+        graphEdgeConfidences = cleaned;
+      }
+    }
+  }
   const auditEntryId = nonEmptyString(result.auditEntryId);
   const rejectedBy = nonEmptyString(result.rejectedBy);
   const scoreDecomposition = cloneScoreDecomposition(result.scoreDecomposition);
@@ -349,6 +395,9 @@ function cloneResult(result: RecallXrayResult): RecallXrayResult {
     admittedBy,
   };
   if (graphPath !== undefined) out.graphPath = graphPath;
+  if (graphEdgeConfidences !== undefined) {
+    out.graphEdgeConfidences = graphEdgeConfidences;
+  }
   if (auditEntryId !== undefined) out.auditEntryId = auditEntryId;
   if (rejectedBy !== undefined) out.rejectedBy = rejectedBy;
   // Disclosure + token telemetry (issue #677 PR 3/4).  Only attach when

@@ -52,6 +52,13 @@ import type {
 } from "./orchestrator.js";
 import { parseEntityFile, StorageManager } from "./storage.js";
 import {
+  buildGraphSnapshot,
+  type GraphSnapshotRequest,
+  type GraphSnapshotResponse,
+  type GraphSnapshotNodeMetadata,
+} from "./graph-snapshot.js";
+import * as nodePath from "node:path";
+import {
   buildBriefing,
   FileCalendarSource,
   parseBriefingFocus,
@@ -3829,6 +3836,89 @@ export class EngramAccessService {
   async graphExplainLastRecall(namespace?: string): Promise<unknown> {
     const explanation = await this.orchestrator.explainLastGraphRecall({ namespace });
     return { explanation };
+  }
+
+  /**
+   * Read-only graph snapshot for the admin pane (issue #691 PR 2/5).
+   *
+   * Reads adjacency from the JSONL edge store written by `GraphIndex` and
+   * resolves node metadata via the namespaced storage manager.  Namespace
+   * resolution mirrors the read-side path used by `recall` /
+   * `procedureStats`, so multi-principal deployments can't leak edges from
+   * a peer namespace (CLAUDE.md rule 42).
+   */
+  async graphSnapshot(
+    request: GraphSnapshotRequest & { namespace?: string },
+    authenticatedPrincipal?: string,
+  ): Promise<GraphSnapshotResponse> {
+    const namespace = this.resolveReadableNamespace(
+      request.namespace,
+      authenticatedPrincipal,
+    );
+    const storage = await this.orchestrator.getStorage(namespace);
+    const cfg = this.orchestrator.config;
+    // Canonicalize the storage root once so the path-traversal guard below
+    // can compare resolved absolute paths.  This is required because
+    // `GraphEdge.from` / `to` are JSONL-parsed strings — a malformed edge
+    // with an absolute path or a `..` segment would otherwise read a
+    // memory file from outside the resolved namespace, leaking metadata
+    // across tenants (codex P1 on PR #734; CLAUDE.md rule 42).
+    const namespaceRoot = nodePath.resolve(storage.dir);
+    const namespaceRootWithSep = namespaceRoot.endsWith(nodePath.sep)
+      ? namespaceRoot
+      : namespaceRoot + nodePath.sep;
+    const loadNode = async (relPath: string): Promise<GraphSnapshotNodeMetadata | null> => {
+      // `GraphEdge.from` / `to` are storage-relative paths; resolve against
+      // the namespaced storage root so the metadata read honors namespace
+      // boundaries even when the same memory id exists in multiple
+      // namespaces.
+      //
+      // Reject absolute paths and `..` traversals up front rather than
+      // letting them silently escape the namespace root.  We compare the
+      // *canonicalized* absolute path against the namespace prefix so
+      // symlinks / mixed separators / `.` segments can't sneak past.
+      // Bad paths log a warning with a redacted form (length only — never
+      // echo the offending segments back into logs, which themselves cross
+      // namespace boundaries) and fall through to a `null` metadata result.
+      if (nodePath.isAbsolute(relPath)) {
+        log.warn(
+          `graphSnapshot: rejected absolute edge endpoint (len=${relPath.length}) `
+          + `outside namespace root`,
+        );
+        return null;
+      }
+      const candidate = nodePath.resolve(namespaceRoot, relPath);
+      if (candidate !== namespaceRoot && !candidate.startsWith(namespaceRootWithSep)) {
+        log.warn(
+          `graphSnapshot: rejected traversing edge endpoint (len=${relPath.length}) `
+          + `outside namespace root`,
+        );
+        return null;
+      }
+      const memory = await storage.readMemoryByPath(candidate);
+      if (!memory) return null;
+      const fm = memory.frontmatter;
+      return {
+        category: fm.category ?? "unknown",
+        label: fm.id ?? nodePath.basename(candidate, nodePath.extname(candidate)),
+        updated: fm.updated,
+      };
+    };
+    return buildGraphSnapshot({
+      memoryDir: storage.dir,
+      graphConfig: {
+        entityGraphEnabled: cfg.entityGraphEnabled === true,
+        timeGraphEnabled: cfg.timeGraphEnabled === true,
+        causalGraphEnabled: cfg.causalGraphEnabled === true,
+      },
+      request: {
+        limit: request.limit,
+        since: request.since,
+        focusNodeId: request.focusNodeId,
+        categories: request.categories,
+      },
+      loadNode,
+    });
   }
 
   async memoryFeedback(request: {

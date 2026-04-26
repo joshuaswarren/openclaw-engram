@@ -174,6 +174,16 @@ function parseSemanticChunkingConfig(
   return out;
 }
 
+// Cursor review on PR #736: the default reasoning model used by the
+// extraction pipeline (`config.model`) and the new peer profile
+// reasoner (`peerProfileReasonerModel`) was hardcoded as `"gpt-5.2"`
+// in two places. Centralize the default so both surfaces — and any
+// future LLM-backed surface — always agree on the same model id.
+// Sibling packages (briefing, active-recall) keep their own constants
+// because they're scoped to those subsystems; this one lives in the
+// config module because it spans extraction + peer-profile.
+export const DEFAULT_REASONING_MODEL = "gpt-5.2";
+
 const VALID_EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high"];
 const VALID_TRIGGERS: TriggerMode[] = ["smart", "every_n", "time_based"];
 const VALID_IDENTITY_INJECTION_MODES: IdentityInjectionMode[] = ["recovery_only", "minimal", "full"];
@@ -376,7 +386,7 @@ export function parseConfig(raw: unknown): PluginConfig {
   const model =
     typeof cfg.model === "string" && cfg.model.length > 0
       ? cfg.model
-      : "gpt-5.2";
+      : DEFAULT_REASONING_MODEL;
   const captureMode =
     cfg.captureMode === "explicit" || cfg.captureMode === "hybrid"
       ? cfg.captureMode
@@ -1581,6 +1591,42 @@ export function parseConfig(raw: unknown): PluginConfig {
           .map((v) => v.trim())
           .filter((v) => v.length > 0)
       : ["preference", "fact", "decision"],
+    // Async peer profile reasoner (issue #679 PR 2/5). Defaults to
+    // `false` (opt-in) per Gotchas #30/#48 — least-privileged default.
+    // `coerceBool` handles "true"/"1"/"yes"/"on" CLI strings (Gotcha
+    // #36). Numeric thresholds clamp at zero (Gotcha #28 + #45 — 0
+    // is a documented disable value for both, so the schema minimum
+    // matches and we do NOT silently bump to 1).
+    peerProfileReasonerEnabled:
+      coerceBool(cfg.peerProfileReasonerEnabled) ?? false,
+    // Cursor M on PR #736: use the routing alias `"auto"` rather than
+    // a hardcoded model identifier. Matches the convention established
+    // by sibling `semanticConsolidationModel`. Operators can still
+    // override via config; the value is logged for telemetry only.
+    peerProfileReasonerModel:
+      typeof cfg.peerProfileReasonerModel === "string" &&
+      cfg.peerProfileReasonerModel.trim().length > 0
+        ? cfg.peerProfileReasonerModel.trim()
+        : "auto",
+    // Cursor L on PR #736: numeric config keys must coerce string CLI
+    // values (Gotcha #28 — `--config peerProfileReasonerMaxFieldsPerRun=2`
+    // arrives as the string "2"). Pre-fix `typeof === "number"`
+    // rejected string inputs and silently fell back to defaults. The
+    // shared `coerceNonNegativeInt` helper accepts both forms, throws
+    // on invalid input (Gotcha #51 — reject rather than silently
+    // default), and falls back to the documented default when the
+    // key is absent. 0 is a valid documented disable value here, so
+    // the helper does NOT bump to 1.
+    peerProfileReasonerMinInteractions: coerceNonNegativeInt(
+      cfg.peerProfileReasonerMinInteractions,
+      5,
+      "peerProfileReasonerMinInteractions",
+    ),
+    peerProfileReasonerMaxFieldsPerRun: coerceNonNegativeInt(
+      cfg.peerProfileReasonerMaxFieldsPerRun,
+      8,
+      "peerProfileReasonerMaxFieldsPerRun",
+    ),
     creationMemoryEnabled: cfg.creationMemoryEnabled === true,
     memoryUtilityLearningEnabled: cfg.memoryUtilityLearningEnabled === true,
     promotionByOutcomeEnabled: cfg.promotionByOutcomeEnabled === true,
@@ -2359,6 +2405,45 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.graphLateralInhibitionTopM === "number"
         ? Math.max(0, Math.round(cfg.graphLateralInhibitionTopM))
         : 7,
+    // Issue #681 PR 2/3 — graph-edge confidence decay maintenance.
+    // Boolean coerced via shared helper (gotcha #36: string "false" is truthy).
+    graphEdgeDecayEnabled: coerceBooleanLike(cfg.graphEdgeDecayEnabled) ?? false,
+    graphEdgeDecayCadenceMs:
+      typeof cfg.graphEdgeDecayCadenceMs === "number" && Number.isFinite(cfg.graphEdgeDecayCadenceMs)
+        ? Math.max(60_000, Math.floor(cfg.graphEdgeDecayCadenceMs))
+        : 7 * 24 * 60 * 60 * 1000,
+    graphEdgeDecayWindowMs:
+      typeof cfg.graphEdgeDecayWindowMs === "number" && Number.isFinite(cfg.graphEdgeDecayWindowMs)
+        ? Math.max(60_000, Math.floor(cfg.graphEdgeDecayWindowMs))
+        : 90 * 24 * 60 * 60 * 1000,
+    graphEdgeDecayPerWindow:
+      typeof cfg.graphEdgeDecayPerWindow === "number" && Number.isFinite(cfg.graphEdgeDecayPerWindow)
+        ? Math.max(0, Math.min(1, cfg.graphEdgeDecayPerWindow))
+        : 0.1,
+    graphEdgeDecayFloor:
+      typeof cfg.graphEdgeDecayFloor === "number" && Number.isFinite(cfg.graphEdgeDecayFloor)
+        ? Math.max(0, Math.min(1, cfg.graphEdgeDecayFloor))
+        : 0.1,
+    graphEdgeDecayVisibilityThreshold:
+      typeof cfg.graphEdgeDecayVisibilityThreshold === "number" &&
+      Number.isFinite(cfg.graphEdgeDecayVisibilityThreshold)
+        ? Math.max(0, Math.min(1, cfg.graphEdgeDecayVisibilityThreshold))
+        : 0.2,
+    // Issue #681 PR 3/3 — confidence-aware traversal & PageRank refinement.
+    // Floor clamps to [0, 1] so misconfigured input cannot accept negative
+    // confidences or reject every edge. Iterations floors at 0 so a
+    // documented 0 disables PageRank refinement and BFS scores pass through.
+    graphTraversalConfidenceFloor:
+      typeof cfg.graphTraversalConfidenceFloor === "number" &&
+      Number.isFinite(cfg.graphTraversalConfidenceFloor)
+        ? Math.min(1, Math.max(0, cfg.graphTraversalConfidenceFloor))
+        : 0.2,
+    graphTraversalPageRankIterations:
+      typeof cfg.graphTraversalPageRankIterations === "number" &&
+      Number.isFinite(cfg.graphTraversalPageRankIterations) &&
+      cfg.graphTraversalPageRankIterations >= 0
+        ? Math.floor(cfg.graphTraversalPageRankIterations)
+        : 8,
     // v8.2: Temporal Memory Tree
     temporalMemoryTreeEnabled: cfg.temporalMemoryTreeEnabled === true,
     tmtHourlyMinMemories:
@@ -2421,6 +2506,106 @@ export function parseConfig(raw: unknown): PluginConfig {
           ? raw.codexHome.trim()
           : null;
       return { installExtension, codexHome };
+    })(),
+
+    // Live connectors (issue #683 PR 2/N).
+    //
+    // Per CLAUDE.md gotcha #30 and #48, every concrete connector ships
+    // disabled-by-default and the parser MUST reject malformed top-level
+    // shapes loudly (gotcha #51) rather than silently producing an empty
+    // object.
+    //
+    // We do NOT validate credential strings here — the connector module
+    // re-validates on every sync pass via `validateGoogleDriveConfig`.
+    // That keeps secret-store-driven values (which may legitimately be
+    // empty until the operator runs setup) round-trippable through the
+    // config layer without crashing the orchestrator at boot.
+    connectors: (() => {
+      if (
+        cfg.connectors !== undefined &&
+        (cfg.connectors === null ||
+          typeof cfg.connectors !== "object" ||
+          Array.isArray(cfg.connectors))
+      ) {
+        throw new Error(
+          `connectors must be an object (got ${JSON.stringify(cfg.connectors)}). ` +
+            `Use connectors: {} to opt out of every live connector.`,
+        );
+      }
+      const rawConnectors =
+        cfg.connectors && typeof cfg.connectors === "object" && !Array.isArray(cfg.connectors)
+          ? (cfg.connectors as Record<string, unknown>)
+          : {};
+      // googleDrive (#683 PR 2/N)
+      if (
+        rawConnectors.googleDrive !== undefined &&
+        (rawConnectors.googleDrive === null ||
+          typeof rawConnectors.googleDrive !== "object" ||
+          Array.isArray(rawConnectors.googleDrive))
+      ) {
+        throw new Error(
+          `connectors.googleDrive must be an object (got ${JSON.stringify(rawConnectors.googleDrive)}).`,
+        );
+      }
+      const rawDrive =
+        rawConnectors.googleDrive &&
+        typeof rawConnectors.googleDrive === "object" &&
+        !Array.isArray(rawConnectors.googleDrive)
+          ? (rawConnectors.googleDrive as Record<string, unknown>)
+          : {};
+      const driveEnabled = coerceBool(rawDrive.enabled) === true;
+      const driveClientId =
+        typeof rawDrive.clientId === "string" ? rawDrive.clientId : "";
+      const driveClientSecret =
+        typeof rawDrive.clientSecret === "string" ? rawDrive.clientSecret : "";
+      const driveRefreshToken =
+        typeof rawDrive.refreshToken === "string" ? rawDrive.refreshToken : "";
+      const drivePollCoerced = coerceNumber(rawDrive.pollIntervalMs);
+      let drivePollIntervalMs = 300_000;
+      if (drivePollCoerced !== undefined) {
+        if (
+          !Number.isFinite(drivePollCoerced) ||
+          !Number.isInteger(drivePollCoerced) ||
+          drivePollCoerced < 1_000 ||
+          drivePollCoerced > 86_400_000
+        ) {
+          throw new Error(
+            `connectors.googleDrive.pollIntervalMs must be an integer in [1000, 86400000] ms (got ${JSON.stringify(rawDrive.pollIntervalMs)})`,
+          );
+        }
+        drivePollIntervalMs = drivePollCoerced;
+      }
+      let driveFolderIds: string[] = [];
+      if (rawDrive.folderIds !== undefined) {
+        if (!Array.isArray(rawDrive.folderIds)) {
+          throw new Error(
+            `connectors.googleDrive.folderIds must be an array of strings (got ${typeof rawDrive.folderIds})`,
+          );
+        }
+        const seen = new Set<string>();
+        for (const value of rawDrive.folderIds) {
+          if (typeof value !== "string") {
+            throw new Error(
+              `connectors.googleDrive.folderIds entries must be strings; found ${typeof value}`,
+            );
+          }
+          const trimmed = value.trim();
+          if (trimmed.length === 0) continue;
+          if (seen.has(trimmed)) continue;
+          seen.add(trimmed);
+          driveFolderIds.push(trimmed);
+        }
+      }
+      return {
+        googleDrive: {
+          enabled: driveEnabled,
+          clientId: driveClientId,
+          clientSecret: driveClientSecret,
+          refreshToken: driveRefreshToken,
+          pollIntervalMs: drivePollIntervalMs,
+          folderIds: driveFolderIds,
+        },
+      };
     })(),
 
     // MECE Taxonomy (#366)
@@ -2536,6 +2721,40 @@ function parseBriefingConfig(raw: unknown): import("./types.js").BriefingConfig 
 function clampNonNegativeNumber(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return Math.max(0, Math.floor(value));
+}
+
+/**
+ * Cursor L on PR #736: numeric config keys must accept BOTH numbers
+ * and CLI-string forms (`--config peerProfileReasonerMinInteractions=10`
+ * arrives as the string `"10"` per CLAUDE.md Gotcha #28). Pre-fix
+ * `typeof === "number"` rejected strings and silently fell back to the
+ * default — operators thought their override applied.
+ *
+ * Behavior:
+ *   - `undefined` / `null` / missing → return `fallback`
+ *   - finite number ≥ 0           → return floor(value)
+ *   - string that parses to finite ≥ 0 → return floor(value)
+ *   - anything else (NaN, ±Infinity, negative, non-numeric string,
+ *     boolean, object) → throw an Error listing the offending key.
+ *
+ * Throwing matches Gotcha #51 — reject invalid input rather than
+ * silently defaulting — and is consistent with how the surprise
+ * knobs validate their inputs.
+ */
+function coerceNonNegativeInt(
+  value: unknown,
+  fallback: number,
+  keyName?: string,
+): number {
+  if (value === undefined || value === null) return fallback;
+  const coerced = coerceNumber(value);
+  if (coerced === undefined || coerced < 0) {
+    const label = keyName ? ` (${keyName})` : "";
+    throw new Error(
+      `config value${label} must be a non-negative finite number; got ${JSON.stringify(value)}`,
+    );
+  }
+  return Math.floor(coerced);
 }
 
 // -----------------------------------------------------------------------------

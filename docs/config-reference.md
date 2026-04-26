@@ -856,6 +856,8 @@ of truth for similarity logic across read-time and write-time code paths.
 | `causalGraphEnabled` | `true` | Enable causal phrase edges |
 | `maxGraphTraversalSteps` | `3` | Max spreading-activation BFS hops |
 | `graphActivationDecay` | `0.7` | Per-hop decay factor |
+| `graphTraversalConfidenceFloor` | `0.2` | Minimum edge confidence required for traversal (issue #681 PR 3/3). Edges below this floor are pruned. Legacy edges without `confidence` are treated as `1.0`. Range `[0, 1]`. |
+| `graphTraversalPageRankIterations` | `8` | PageRank-style refinement iterations applied on top of BFS spreading-activation scores (issue #681 PR 3/3). Set to `0` to disable refinement. |
 | `graphExpansionActivationWeight` | `0.65` | Blend weight for graph activation vs seed QMD score (0-1) |
 | `graphExpansionBlendMin` | `0.05` | Lower clamp bound for blended graph-expanded scores (0-1) |
 | `graphExpansionBlendMax` | `0.95` | Upper clamp bound for blended graph-expanded scores (0-1) |
