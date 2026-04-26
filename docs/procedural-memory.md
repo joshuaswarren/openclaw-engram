@@ -76,6 +76,37 @@ The report includes:
 
 All three surfaces are read-only and namespace-scoped (CLAUDE.md rule 42). The HTTP endpoint resolves the namespace through the same layer used by `/recall/explain` and `/trust-zones/status`; the MCP tool uses the authenticated principal. The CLI reads from whatever `memoryDir` the current config / active-space resolves to, or an explicit `--memory-dir` override.
 
+## Pattern reinforcement CLI (issue #687 PR 4/4)
+
+The `remnic patterns` command group exposes the pattern-reinforcement output written by the maintenance job (PR 2/4).  Both subcommands read from the active `memoryDir` and require no extra config.
+
+### `remnic patterns list`
+
+Lists memories whose `reinforcement_count > 0`, sorted by count descending.
+
+```bash
+remnic patterns list [--limit N] [--category cat1,cat2] [--since ISO] [--format text|markdown|json]
+```
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--limit N` | Maximum rows to show (positive integer) | 50 |
+| `--category list` | Comma-separated category filter | all categories |
+| `--since ISO` | Only include memories reinforced on or after this ISO 8601 timestamp | all time |
+| `--format fmt` | Output format: `text`, `markdown`, or `json` | `text` |
+
+### `remnic patterns explain <memoryId>`
+
+Shows the full reinforcement picture for a single canonical: reinforcement count, `last_reinforced_at`, `derived_from` provenance chain (page-version refs stamped by PR 2/4), canonical body, and cluster members (memories whose `supersededBy` points at this canonical).
+
+```bash
+remnic patterns explain <memoryId> [--format text|markdown|json]
+```
+
+Exits with code `1` and a descriptive error if `<memoryId>` is not found or has no `reinforcement_count > 0`.
+
+Invalid flag values (`--format xml`, `--limit 0`, `--since not-a-date`) throw a listed-options error rather than silently defaulting (CLAUDE.md rule 51).
+
 ## Benchmark
 
 The **`procedural-recall`** benchmark in `@remnic/bench` scores:
