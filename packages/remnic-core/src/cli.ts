@@ -7704,7 +7704,15 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
       peerCmd
         .command("set <id>")
         .description("Create or update a peer identity record")
-        .option("--kind <kind>", "Peer kind: self | human | agent | integration (only on first write)", "human")
+        // Cursor H (PR #756 round 2): no Commander default for --kind. A
+        // default would make `options.kind` always present, so the CLI
+        // would forward kind on every call — including updates where
+        // the user only set --display-name. peerSet treats kind as
+        // immutable on update, but forcing the default also overrides
+        // any future change to the service-layer create-time default.
+        // Let the service own the default; the CLI only forwards an
+        // explicit --kind flag.
+        .option("--kind <kind>", "Peer kind: self | human | agent | integration (only on first write)")
         .option("--display-name <name>", "Human-readable display name")
         .option("--notes <text>", "Optional free-form markdown notes")
         .option("--json", "Emit machine-readable JSON only")
