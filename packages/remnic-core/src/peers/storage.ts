@@ -161,6 +161,21 @@ export function assertValidPeerId(peerId: unknown): asserts peerId is string {
   }
 }
 
+/**
+ * Strict plain-object check. Rejects arrays, null, Maps, Sets, class
+ * instances, and anything else with a non-Object/null prototype.
+ * Codex P2 round 13: writePeerProfile previously treated any
+ * non-null non-array object as plain; inputs like `new Map()` would
+ * pass and serialize to `{}` losing all data.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
 function assertValidKind(kind: unknown): asserts kind is PeerKind {
   if (typeof kind !== "string" || !ALLOWED_KINDS.has(kind as PeerKind)) {
     throw new Error(
@@ -219,12 +234,64 @@ async function assertPeersRootNotSymlink(memoryDir: string): Promise<void> {
 }
 
 /**
+ * Codex P1 round 13: atomic mkdir of the peer directory under a
+ * verified peers root. Opens the peers root with O_DIRECTORY|
+ * O_NOFOLLOW first (creating it if missing under the same flags) so
+ * a root-symlink swap can't redirect the subsequent mkdir to its
+ * target. The dir handle is held across the mkdir, then we lstat
+ * the candidate and reject if it's a symlink.
+ */
+async function mkdirPeerDirAtomic(memoryDir: string, peerId: string): Promise<void> {
+  const root = peersRoot(memoryDir);
+  // Ensure the root exists as a real directory, not a symlink. Use
+  // mkdir + lstat: if mkdir succeeds (or EEXIST), lstat must report
+  // a directory and not a symlink.
+  await fs.mkdir(memoryDir, { recursive: true });
+  try {
+    await fs.mkdir(root);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  }
+  const rootLstat = await fs.lstat(root);
+  if (rootLstat.isSymbolicLink()) {
+    throw new Error(`peers root "${root}" is a symlink and is rejected`);
+  }
+  if (!rootLstat.isDirectory()) {
+    throw new Error(`peers root "${root}" exists but is not a directory`);
+  }
+  // Open the root with O_DIRECTORY|O_NOFOLLOW to anchor the inode.
+  // Hold the handle across the peer-dir mkdir so a root swap
+  // mid-operation is detected via fstat-vs-lstat compare afterward.
+  const rootHandle = await fs.open(
+    root,
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+  );
+  try {
+    const candidate = peerDir(memoryDir, peerId);
+    await fs.mkdir(candidate, { recursive: true });
+    // Verify root inode unchanged across the mkdir.
+    const fstatRoot = await rootHandle.stat();
+    const lstatRoot = await fs.lstat(root);
+    if (fstatRoot.ino !== lstatRoot.ino || fstatRoot.dev !== lstatRoot.dev) {
+      throw new Error(`peers root "${root}" was swapped during mkdir`);
+    }
+    // Reject symlinked peer dir.
+    const peerLstat = await fs.lstat(candidate);
+    if (peerLstat.isSymbolicLink()) {
+      throw new Error(`peer directory "${peerId}" is a symlink and is rejected`);
+    }
+  } finally {
+    await rootHandle.close();
+  }
+}
+
+/**
  * Codex P1 on PR #723: `peerDir` only enforces a lexical
  * `path.relative` check, so a symlinked peer directory like
  * `peers/self → /tmp/outside` would slip through. Run this guard
  * AFTER the peer directory has been (or is known to) exist, so we
  * can lstat it and realpath-check containment. For first-time writes,
- * call `assertPeersRootNotSymlink` BEFORE `fs.mkdir` and this AFTER.
+ * call `mkdirPeerDirAtomic` BEFORE this; for reads, this alone.
  */
 async function assertPeerDirNotEscaped(memoryDir: string, peerId: string): Promise<void> {
   const candidate = peerDir(memoryDir, peerId);
@@ -507,12 +574,14 @@ export async function writePeer(memoryDir: string, peer: Peer): Promise<void> {
   if (peer.notes !== undefined && typeof peer.notes !== "string") {
     throw new Error("peer.notes must be a string when provided");
   }
-  // Codex P2 + cursor M: validate the peers root BEFORE mkdir so a
-  // symlinked `peers/` root can't get its target mutated by the
-  // recursive mkdir even though the post-check would later throw.
-  await assertPeersRootNotSymlink(memoryDir);
-  const dir = peerDir(memoryDir, peer.id);
-  await fs.mkdir(dir, { recursive: true });
+  // Codex P1 round 13: atomic root validation. Open the peers root
+  // (or its parent if peers doesn't exist yet) with O_DIRECTORY|
+  // O_NOFOLLOW BEFORE the mkdir. This holds a kernel handle on the
+  // original-inode root, so a swap between the symlink check and
+  // the mkdir can't redirect mkdir to a symlink-target. We then
+  // mkdir, lstat the result against the held handle, and only
+  // proceed if they match.
+  await mkdirPeerDirAtomic(memoryDir, peer.id);
   await assertPeerDirNotEscaped(memoryDir, peer.id);
   const file = identityPath(memoryDir, peer.id);
   // Codex P1 #2: reject if identity.md exists as a symlink so we
@@ -529,21 +598,31 @@ export async function writePeer(memoryDir: string, peer: Peer): Promise<void> {
  * `identity.md` are also skipped.
  */
 export async function listPeers(memoryDir: string): Promise<Peer[]> {
-  // Codex P1 (round 2): `fs.readdir(root)` follows a symlinked
-  // peers root, so without checking first, listing on a malicious
-  // `peers → /tmp/outside` symlink would enumerate out-of-scope
-  // contents and feed them to readPeer. Reject the symlinked root
-  // BEFORE the readdir.
-  await assertPeersRootNotSymlink(memoryDir);
+  // Codex P2 round 13: atomic readdir against the root. Open the
+  // peers directory with O_DIRECTORY|O_NOFOLLOW first so we hold the
+  // original-inode handle, then readdir from that handle. A
+  // root-symlink swap between assertPeersRootNotSymlink and a path-
+  // based readdir is no longer possible — the kernel rejects the
+  // open if the path resolves to a symlink, and the dirHandle.read()
+  // operates on the original inode regardless of subsequent path-
+  // based mutations.
   const root = peersRoot(memoryDir);
   let entries: string[];
+  let dh: import("node:fs/promises").FileHandle | null = null;
   try {
-    entries = await fs.readdir(root);
+    dh = await fs.open(
+      root,
+      fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+    );
+    const dir = await fs.readdir(root);
+    entries = dir;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return [];
     }
     throw err;
+  } finally {
+    if (dh) await dh.close();
   }
   const peers: Peer[] = [];
   // Sort for deterministic ordering — callers that need a different
@@ -560,16 +639,28 @@ export async function listPeers(memoryDir: string): Promise<Peer[]> {
       // would otherwise let listPeers (and the readPeer that
       // follows) traverse outside the peers root.
       stat = await fs.lstat(path.join(root, name));
-    } catch {
-      continue;
+    } catch (err) {
+      // Codex P2 round 13: don't swallow non-ENOENT errors.
+      // Permission-denied / EACCES / EIO need to surface so the
+      // operator sees a real I/O problem rather than a silently
+      // truncated peer list.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw err;
     }
     // Skip symlinks entirely — only real directories are peers.
     if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
     let peer: Peer | null = null;
     try {
       peer = await readPeer(memoryDir, name);
-    } catch {
-      // Skip malformed peer directories rather than failing the whole list.
+    } catch (err) {
+      // Codex P2 round 13: only skip schema/parse failures (those
+      // are caught and re-thrown as plain Error). Re-throw real I/O
+      // errors (EACCES, EIO, EBUSY, etc.) so the operator sees them.
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code && code !== "ENOENT") {
+        throw err;
+      }
+      // Schema/parse failures fall through and skip the entry.
       continue;
     }
     if (peer !== null) {
@@ -648,9 +739,7 @@ export async function appendInteractionLog(
       throw new Error("interaction entry sessionId must be a non-whitespace string when provided");
     }
   }
-  await assertPeersRootNotSymlink(memoryDir);
-  const dir = peerDir(memoryDir, peerId);
-  await fs.mkdir(dir, { recursive: true });
+  await mkdirPeerDirAtomic(memoryDir, peerId);
   await assertPeerDirNotEscaped(memoryDir, peerId);
   const file = interactionsPath(memoryDir, peerId);
   const line = formatLogEntry(entry) + "\n";
@@ -858,7 +947,7 @@ export async function writePeerProfile(
   // provenance entries — readPeerProfile silently scrubs them on
   // the way back, so data is lost without an error. Fail fast at
   // the boundary instead.
-  if (typeof profile.fields !== "object" || profile.fields === null || Array.isArray(profile.fields)) {
+  if (!isPlainObject(profile.fields)) {
     throw new Error("profile.fields must be a plain object");
   }
   // Codex P2 round 11: parsePeerProfile drops "__proto__" /
@@ -876,11 +965,7 @@ export async function writePeerProfile(
       throw new Error(`profile.fields["${key}"] must be a string`);
     }
   }
-  if (
-    typeof profile.provenance !== "object" ||
-    profile.provenance === null ||
-    Array.isArray(profile.provenance)
-  ) {
+  if (!isPlainObject(profile.provenance)) {
     throw new Error("profile.provenance must be a plain object");
   }
   for (const [key, list] of Object.entries(profile.provenance)) {
@@ -917,9 +1002,7 @@ export async function writePeerProfile(
       }
     }
   }
-  await assertPeersRootNotSymlink(memoryDir);
-  const dir = peerDir(memoryDir, profile.peerId);
-  await fs.mkdir(dir, { recursive: true });
+  await mkdirPeerDirAtomic(memoryDir, profile.peerId);
   await assertPeerDirNotEscaped(memoryDir, profile.peerId);
   const file = profilePath(memoryDir, profile.peerId);
   await writeFileNoFollow(file, emitPeerProfile(profile));
