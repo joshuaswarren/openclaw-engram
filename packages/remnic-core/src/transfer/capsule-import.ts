@@ -14,6 +14,7 @@ import {
   type ExportManifestV2,
   type ExportMemoryRecordV1,
 } from "./types.js";
+import { isEncryptedCapsuleFile, decryptCapsuleFileInMemory } from "./capsule-crypto.js";
 
 /**
  * Conflict-resolution mode for {@link importCapsule}. Inverse of the
@@ -67,6 +68,16 @@ export interface ImportCapsuleOptions {
   versioning?: VersioningConfig;
   log?: VersioningLogger;
   now?: number;
+  /**
+   * Memory directory whose secure-store keyring is used when the archive is
+   * encrypted. Required when `archivePath` ends with `.enc` or when the file
+   * starts with the REMNIC-ENC magic header. If `memoryDir` is omitted and the
+   * archive turns out to be encrypted, `importCapsule` throws a clear error
+   * rather than silently failing.
+   *
+   * When provided and the archive is NOT encrypted, the value is ignored.
+   */
+  memoryDir?: string;
 }
 
 export interface ImportCapsuleSkippedRecord {
@@ -143,7 +154,24 @@ export async function importCapsule(
     );
   }
 
-  const raw = await readFile(archiveAbs);
+  // Auto-detect encrypted archives. If the file ends with `.enc` or starts
+  // with the REMNIC-ENC magic header, decrypt it first before gunzip+parse.
+  // Rule 48: default is "not encrypted"; we only attempt decryption when the
+  // header is definitively present, never on ambiguous content.
+  const encrypted = await isEncryptedCapsuleFile(archiveAbs);
+  let raw: Buffer;
+  if (encrypted) {
+    if (!opts.memoryDir) {
+      throw new Error(
+        `importCapsule: archive is encrypted but 'memoryDir' was not provided. ` +
+          `Pass the memory directory so the secure-store key can be retrieved, ` +
+          `or run \`remnic secure-store unlock\` before importing.`,
+      );
+    }
+    raw = await decryptCapsuleFileInMemory(archiveAbs, opts.memoryDir);
+  } else {
+    raw = await readFile(archiveAbs);
+  }
   const json = gunzipSync(raw).toString("utf-8");
   let parsedJson: unknown;
   try {

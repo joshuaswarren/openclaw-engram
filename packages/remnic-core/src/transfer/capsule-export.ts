@@ -18,6 +18,7 @@ import {
   type ExportManifestV2,
   type ExportMemoryRecordV1,
 } from "./types.js";
+import { encryptCapsuleFile } from "./capsule-crypto.js";
 
 /**
  * Default subdirectory excludes applied to every capsule export. These match
@@ -28,6 +29,14 @@ import {
 const DEFAULT_EXCLUDE_DIRS: ReadonlySet<string> = new Set([
   "node_modules",
   ".git",
+  // Never export the secure-store directory: it contains the encryption
+  // header (KDF params + verifier) which is security-sensitive and
+  // machine-specific. The passphrase is not stored here, but including
+  // the header in a capsule would let an attacker brute-force the
+  // passphrase offline if the capsule is intercepted.
+  ".secure-store",
+  // Exclude .capsules to avoid recursive self-inclusion.
+  ".capsules",
 ]);
 
 const TRANSCRIPTS_DIR = "transcripts" as const;
@@ -74,6 +83,15 @@ const PEERS_DIR = "peers" as const;
  *
  * `now` — optional clock override (ms epoch) used for `manifest.createdAt`.
  * Tests pass a fixed value for deterministic output.
+ *
+ * `encrypt` — when `true`, encrypt the output archive using the secure-store
+ * master key for `memoryDir`. The keyring must be unlocked before calling
+ * (`remnic secure-store unlock`). The plaintext `.capsule.json.gz` is written
+ * first, then encrypted to `<name>.capsule.json.gz.enc`; the plaintext is
+ * removed after successful encryption. Requires `memoryDir` to be provided.
+ *
+ * `memoryDir` — required when `encrypt` is `true`. The memory directory whose
+ * secure-store keyring holds the master key.
  */
 export interface ExportCapsuleOptions {
   name: string;
@@ -85,12 +103,25 @@ export interface ExportCapsuleOptions {
   pluginVersion?: string;
   capsule?: Partial<Omit<CapsuleBlock, "id">>;
   now?: number;
+  /**
+   * When `true`, encrypt the output archive. Requires the secure-store to be
+   * unlocked and `memoryDir` to be set. The plaintext `.capsule.json.gz` is
+   * replaced by `<name>.capsule.json.gz.enc` on success.
+   */
+  encrypt?: boolean;
+  /**
+   * Memory directory whose secure-store keyring holds the master key. Required
+   * when `encrypt` is `true`; ignored otherwise.
+   */
+  memoryDir?: string;
 }
 
 export interface ExportCapsuleResult {
   archivePath: string;
   manifestPath: string;
   manifest: ExportManifestV2;
+  /** When the export was encrypted, the `.enc` path. `null` when unencrypted. */
+  encryptedArchivePath: string | null;
 }
 
 /**
@@ -203,7 +234,28 @@ export async function exportCapsule(
   const gz = gzipSync(Buffer.from(json, "utf-8"));
   await writeFile(archivePath, gz);
 
-  return { archivePath, manifestPath, manifest };
+  // Optional encryption (PR 4/4). When opts.encrypt is true, wrap the
+  // plaintext gzip in a REMNIC-ENC sealed envelope and remove the plaintext.
+  // Per gotcha #54: write the encrypted file before removing the plaintext so
+  // a crash mid-encrypt does not destroy the only copy.
+  if (opts.encrypt === true) {
+    if (!opts.memoryDir) {
+      throw new Error(
+        "exportCapsule: 'memoryDir' is required when 'encrypt' is true so the " +
+          "secure-store key can be retrieved.",
+      );
+    }
+    const { encPath } = await encryptCapsuleFile({
+      sourceGzPath: archivePath,
+      memoryDir: opts.memoryDir,
+    });
+    // Remove the plaintext only after the encrypted file was written successfully.
+    const { unlink } = await import("node:fs/promises");
+    await unlink(archivePath);
+    return { archivePath: encPath, manifestPath, manifest, encryptedArchivePath: encPath };
+  }
+
+  return { archivePath, manifestPath, manifest, encryptedArchivePath: null };
 }
 
 // ---------------------------------------------------------------------------

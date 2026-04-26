@@ -3924,12 +3924,14 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .option("--retention-days <n>", "Delete backups older than N days", "0")
         .option("--include-transcripts", "Include transcripts (default false)")
         .option("--namespace <ns>", "Namespace to back up (v3.0+, default: config defaultNamespace)", "")
+        .option("--encrypt", "Encrypt the backup archive with the secure-store master key (must be unlocked)")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
           const outDir = options.outDir ? String(options.outDir) : "";
           const retentionDays = parseInt(String(options.retentionDays ?? "0"), 10);
           const includeTranscripts = options.includeTranscripts === true;
           const namespace = options.namespace ? String(options.namespace) : "";
+          const doEncrypt = options.encrypt === true;
           if (!outDir) {
             console.log("Missing --out-dir. Example: openclaw engram backup --out-dir /tmp/engram-backups");
             return;
@@ -3938,13 +3940,141 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace, {
             rejectUnsupportedOverride: true,
           });
-          await backupMemoryDir({
+          const outPath = await backupMemoryDir({
             memoryDir,
             outDir,
             retentionDays: Number.isFinite(retentionDays) ? retentionDays : undefined,
             includeTranscripts,
             pluginVersion,
+            encrypt: doEncrypt,
           });
+          if (doEncrypt) {
+            console.log(`Encrypted backup: ${outPath}`);
+          } else {
+            console.log(`Backup: ${outPath}`);
+          }
+          console.log("OK");
+        });
+
+      // ── Capsule subcommand (issue #690 PR 4/4 + #676 PR 2-3/6) ─────────
+      // `remnic capsule export` — produce a portable V2 capsule archive.
+      // `remnic capsule import` — restore a capsule archive into a memory dir.
+      // --encrypt flag requires the secure-store to be unlocked (#690 PR 4/4).
+      const capsuleCmd = cmd
+        .command("capsule")
+        .description("Portable capsule archive export / import (issue #676, #690)");
+
+      capsuleCmd
+        .command("export")
+        .description(
+          "Export the memory directory as a portable .capsule.json.gz archive. " +
+            "Pass --encrypt to seal the archive with the secure-store master key.",
+        )
+        .option("--name <id>", "Capsule id (alphanumeric + dashes, ≤ 64 chars)")
+        .option("--out-dir <dir>", "Output directory (default: <memoryDir>/.capsules)")
+        .option("--since <iso8601>", "Only include files modified on or after this date")
+        .option("--include-kinds <kinds>", "Comma-separated top-level dir allow-list (e.g. facts,entities)")
+        .option("--peer-ids <ids>", "Comma-separated peer id allow-list for the peers/ subtree")
+        .option("--include-transcripts", "Include transcripts (excluded by default)")
+        .option("--encrypt", "Encrypt the output archive with the secure-store master key (must be unlocked)")
+        .option("--namespace <ns>", "Namespace (v3.0+, default: config defaultNamespace)", "")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const name = options.name ? String(options.name) : "";
+          if (!name) {
+            console.error("--name is required. Example: remnic capsule export --name my-capsule");
+            process.exitCode = 1;
+            return;
+          }
+          const namespace = options.namespace ? String(options.namespace) : "";
+          const doEncrypt = options.encrypt === true;
+          const outDir = options.outDir ? String(options.outDir) : undefined;
+          const since = options.since ? String(options.since) : undefined;
+          const includeKinds = options.includeKinds
+            ? String(options.includeKinds)
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean)
+            : undefined;
+          const peerIds = options.peerIds
+            ? String(options.peerIds)
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean)
+            : undefined;
+          const includeTranscripts = options.includeTranscripts === true;
+          const allKinds =
+            includeTranscripts && includeKinds
+              ? [...includeKinds, "transcripts"]
+              : includeTranscripts
+                ? ["facts", "entities", "corrections", "questions", "state", "transcripts"]
+                : includeKinds;
+
+          const pluginVersion = await getPluginVersion();
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace, {
+            rejectUnsupportedOverride: true,
+          });
+
+          const { exportCapsule } = await import("./transfer/capsule-export.js");
+          const result = await exportCapsule({
+            name,
+            root: memoryDir,
+            since,
+            includeKinds: allKinds,
+            peerIds,
+            outDir,
+            pluginVersion,
+            encrypt: doEncrypt,
+            memoryDir: doEncrypt ? memoryDir : undefined,
+          });
+          console.log(`Archive:  ${result.archivePath}`);
+          console.log(`Manifest: ${result.manifestPath}`);
+          if (result.encryptedArchivePath) {
+            console.log(`Encrypted: yes`);
+          }
+          console.log("OK");
+        });
+
+      capsuleCmd
+        .command("import")
+        .description(
+          "Import a capsule archive into the memory directory. " +
+            "Auto-detects encrypted archives (REMNIC-ENC header); " +
+            "requires --encrypt-key-dir or the memory dir to have an unlocked secure-store.",
+        )
+        .argument("<archive>", "Path to the .capsule.json.gz (or .enc) archive")
+        .option("--mode <mode>", "Conflict mode: skip (default), overwrite, fork", "skip")
+        .option("--namespace <ns>", "Target namespace (v3.0+, default: config defaultNamespace)", "")
+        .action(async (...args: unknown[]) => {
+          const archivePath = args[0] ? String(args[0]) : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!archivePath) {
+            console.error("Usage: remnic capsule import <archive>");
+            process.exitCode = 1;
+            return;
+          }
+          const mode = options.mode ? String(options.mode) : "skip";
+          if (mode !== "skip" && mode !== "overwrite" && mode !== "fork") {
+            console.error(`Invalid --mode '${mode}'. Expected: skip, overwrite, fork`);
+            process.exitCode = 1;
+            return;
+          }
+          const namespace = options.namespace ? String(options.namespace) : "";
+          const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace, {
+            rejectUnsupportedOverride: true,
+          });
+
+          const { importCapsule } = await import("./transfer/capsule-import.js");
+          const result = await importCapsule({
+            archivePath: expandTildePath(archivePath),
+            root: memoryDir,
+            mode: mode as "skip" | "overwrite" | "fork",
+            memoryDir,
+          });
+          console.log(`Imported: ${result.imported.length} record(s)`);
+          if (result.skipped.length > 0) {
+            console.log(`Skipped:  ${result.skipped.length} (mode=${mode})`);
+          }
           console.log("OK");
         });
 
