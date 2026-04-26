@@ -478,3 +478,99 @@ test("storage rejects non-positive or non-integer reinforcement_count on write",
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// ─── PR #730 Codex P2: instant-based timestamp comparison ────────────────────
+
+test("runPatternReinforcement: pickCanonical compares timestamps as instants, not strings", async () => {
+  // The newer memory (in real time) uses a `+02:00` offset that is
+  // lexicographically smaller than the older memory's `Z` suffix.  A
+  // string-compare would mis-pick the older entry as canonical.
+  // Both refer to the same instant viewed from different offsets:
+  //   newer:  2026-04-26T12:00:00+02:00  → 2026-04-26T10:00:00Z
+  //   older:  2026-04-26T09:00:00Z       → 2026-04-26T09:00:00Z
+  // So the `+02:00`-tagged memory IS newer in instant space.
+  const dupContent = "Pattern reinforcement timestamp test.";
+  const memories = [
+    makeMemory({
+      id: "m-older-z",
+      content: dupContent,
+      created: "2026-04-26T09:00:00Z",
+      updated: "2026-04-26T09:00:00Z",
+    }),
+    makeMemory({
+      id: "m-newer-offset",
+      content: dupContent,
+      created: "2026-04-26T12:00:00+02:00",
+      updated: "2026-04-26T12:00:00+02:00",
+    }),
+  ];
+  const { stub, writes } = makeStorageStub(memories);
+
+  const result = await runPatternReinforcement(stub, {
+    categories: ["preference"],
+    minCount: 2,
+    now: frozenNow,
+  });
+
+  assert.equal(result.clustersFound, 1);
+  assert.equal(result.clusters[0].canonicalId, "m-newer-offset");
+  // The OLDER (Z-suffix) memory must be the one superseded.
+  assert.deepEqual(result.clusters[0].supersededIds, ["m-older-z"]);
+  // The supersede write targets the older memory.
+  const supersedeWrite = writes.find((w) => w.patch.status === "superseded");
+  assert.ok(supersedeWrite);
+  assert.equal(supersedeWrite.memoryId, "m-older-z");
+});
+
+// ─── PR #730 Codex P2: cluster keys partition by category ────────────────────
+
+test("runPatternReinforcement: identical text in different categories is NOT cross-superseded", async () => {
+  // Same text in both `preference` and `decision`.  Without category
+  // partitioning the two would collide into one cluster of size 2 and
+  // one of them would be superseded — silently erasing a category-
+  // specific memory.
+  const text = "Strict no-bundle policy for optional packages.";
+  const memories = [
+    makeMemory({
+      id: "m-pref-1",
+      category: "preference",
+      content: text,
+      created: "2026-04-25T10:00:00Z",
+      updated: "2026-04-25T10:00:00Z",
+    }),
+    makeMemory({
+      id: "m-pref-2",
+      category: "preference",
+      content: text,
+      created: "2026-04-26T10:00:00Z",
+      updated: "2026-04-26T10:00:00Z",
+    }),
+    makeMemory({
+      id: "m-decision",
+      category: "decision",
+      content: text,
+      created: "2026-04-26T11:00:00Z",
+      updated: "2026-04-26T11:00:00Z",
+    }),
+  ];
+  const { stub, writes } = makeStorageStub(memories);
+
+  const result = await runPatternReinforcement(stub, {
+    categories: ["preference", "decision"],
+    minCount: 2,
+    now: frozenNow,
+  });
+
+  // Only the preference cluster (2 members) qualifies — the decision
+  // entry is alone in its category bucket.
+  assert.equal(result.clustersFound, 1);
+  assert.equal(result.clusters[0].canonicalId, "m-pref-2");
+  assert.deepEqual(result.clusters[0].supersededIds, ["m-pref-1"]);
+  // Crucially: the decision-category memory was NOT touched.
+  const decisionWrites = writes.filter((w) => w.memoryId === "m-decision");
+  assert.equal(
+    decisionWrites.length,
+    0,
+    `decision-category memory must not be touched; got ${JSON.stringify(decisionWrites)}`,
+  );
+});

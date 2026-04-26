@@ -97,26 +97,68 @@ export interface PatternReinforcementResult {
  * Truncation is intentional — long-form content with a stable opening
  * still clusters together even when the tail differs slightly.  200
  * chars matches the spec.
+ *
+ * @deprecated Prefer `patternReinforcementClusterKey(category, content)`
+ * which partitions by memory category so identical text in different
+ * categories does not get cross-superseded (PR #730 review feedback,
+ * Codex P2).  This bare helper is kept exported for backward
+ * compatibility with callers that already partition by category
+ * upstream.
  */
 export function patternReinforcementKey(content: string): string {
   return content.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 200);
 }
 
 /**
- * Compare two ISO-8601 timestamps lexicographically.  ISO-8601 sorts
- * chronologically as a string so we don't pay for `Date` parsing in a
- * tight loop.  Falls back to memory id for stable ordering when
- * timestamps tie.
+ * Cluster key derivation that includes the memory category as a prefix
+ * so identical text under different categories (e.g. `fact` and
+ * `decision`) does not collapse into one cluster.  Without this,
+ * pattern reinforcement would silently supersede a fact when a
+ * decision happens to share the same canonical text — distorting
+ * downstream category-scoped retrieval and governance behavior (PR
+ * #730 review feedback, Codex P2).
+ */
+export function patternReinforcementClusterKey(category: string, content: string): string {
+  // Use a `::` separator that cannot appear in either component so
+  // a category like `fact` plus content starting with `decision:...`
+  // cannot collide with category `decision`.
+  return `${category}::${patternReinforcementKey(content)}`;
+}
+
+/**
+ * Compare two memories by their effective timestamp.
+ *
+ * Parses each timestamp to an *instant* (epoch ms) via `Date.parse`
+ * rather than lexicographic `localeCompare` so ISO-8601 variants with
+ * non-`Z` offsets (e.g. `2026-04-26T10:00:00+02:00`) and mixed
+ * millisecond precision compare by actual time rather than by raw
+ * string (PR #730 review feedback, Codex P2).  Imported / hand-edited
+ * memory files routinely use such variants.
+ *
+ * Falls back to the raw string when an instant is unparseable (a
+ * corrupt frontmatter is rare but possible) and tie-breaks on memory
+ * id for stable ordering.
  */
 function pickCanonical(memories: MemoryFile[]): MemoryFile {
   let best = memories[0];
+  let bestInstant = memoryInstant(best);
   let bestStamp = memoryStamp(best);
   for (let i = 1; i < memories.length; i += 1) {
     const candidate = memories[i];
+    const instant = memoryInstant(candidate);
     const stamp = memoryStamp(candidate);
-    const cmp = stamp.localeCompare(bestStamp);
+    let cmp: number;
+    if (instant !== null && bestInstant !== null) {
+      cmp = instant - bestInstant;
+    } else {
+      // One side is unparseable — fall back to lexicographic compare
+      // on raw strings.  This keeps ordering deterministic even when
+      // a corrupt timestamp slipped past the parser.
+      cmp = stamp.localeCompare(bestStamp);
+    }
     if (cmp > 0 || (cmp === 0 && candidate.frontmatter.id > best.frontmatter.id)) {
       best = candidate;
+      bestInstant = instant;
       bestStamp = stamp;
     }
   }
@@ -128,6 +170,18 @@ function memoryStamp(memory: MemoryFile): string {
   // present on every well-formed memory; the parser default-fills them
   // when absent.
   return memory.frontmatter.updated || memory.frontmatter.created || "";
+}
+
+/**
+ * Parse a memory's effective timestamp to epoch milliseconds.  Returns
+ * `null` for an unparseable / empty stamp so callers can fall back to
+ * a string compare without observing `NaN` propagation.
+ */
+function memoryInstant(memory: MemoryFile): number | null {
+  const stamp = memoryStamp(memory);
+  if (stamp.length === 0) return null;
+  const parsed = Date.parse(stamp);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 const ACTIVE_STATUS: MemoryStatus = "active";
@@ -172,8 +226,11 @@ export async function runPatternReinforcement(
 
   if (eligible.length === 0) return emptyResult();
 
+  // Cluster by `<category> <content>` so identical text in different
+  // categories does not get cross-superseded (PR #730 review feedback,
+  // Codex P2).
   const clusters = clusterByKey(eligible, (m) =>
-    patternReinforcementKey(m.content),
+    patternReinforcementClusterKey(m.frontmatter.category, m.content),
   );
 
   const result: PatternReinforcementResult = {
