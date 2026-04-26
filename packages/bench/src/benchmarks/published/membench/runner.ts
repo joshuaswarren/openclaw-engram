@@ -102,8 +102,9 @@ export async function runMemBenchBenchmark(
         console.error(`  [WARN] membench drain failed for ${testCase.id}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
       }
 
+      const recallQuery = buildRecallQuery(testCase);
       const { result: recalledText, durationMs } = await timed(async () =>
-        options.system.recall(sessionId, testCase.question),
+        options.system.recall(sessionId, recallQuery),
       );
       const answerQuestion = buildQuestionPrompt(testCase);
       const answered = await answerBenchmarkQuestion({
@@ -1006,6 +1007,12 @@ function buildQuestionPrompt(testCase: MemBenchCase): string {
   ].join("\n");
 }
 
+function buildRecallQuery(testCase: MemBenchCase): string {
+  return testCase.questionTime
+    ? `${testCase.question} (${testCase.questionTime})`
+    : testCase.question;
+}
+
 function extractChoice(answer: string): MemBenchChoice | undefined {
   const trimmed = answer.trim().toUpperCase();
   if (/^[ABCD]$/.test(trimmed)) {
@@ -1043,9 +1050,7 @@ async function scoreRecallAt10(
 
   try {
     const results = await system.search(
-      testCase.questionTime
-        ? `${testCase.question} (${testCase.questionTime})`
-        : testCase.question,
+      buildRecallQuery(testCase),
       10,
       sessionId,
     );

@@ -379,6 +379,13 @@ test("runBenchmark scores official MemBench multiple-choice accuracy and recall"
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-membench-mcq-"));
   const datasetDir = path.join(tmpDir, "datasets", "membench");
   const adapter = new FakeMemoryAdapter();
+  let recallQuery = "";
+  adapter.recall = async (sessionId, query) => {
+    recallQuery = query;
+    return (adapter.sessions.get(sessionId) ?? [])
+      .map((message) => message.content)
+      .join("\n");
+  };
   adapter.search = async (_query, _limit, sessionId) => [
     {
       turnIndex: 0,
@@ -416,6 +423,7 @@ test("runBenchmark scores official MemBench multiple-choice accuracy and recall"
   assert.equal(task.actual, "B");
   assert.equal(task.scores.membench_accuracy, 1);
   assert.equal(task.scores.membench_recall_at_10, 1);
+  assert.match(recallQuery, /2026-04-01/);
   assert.equal(task.details?.correctAnswer, "Porto");
   assert.equal(task.details?.officialProtocol, "multiple_choice_accuracy");
   assert.equal(result.results.aggregates.membench_accuracy?.mean, 1);
