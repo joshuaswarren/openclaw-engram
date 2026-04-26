@@ -20,11 +20,30 @@ import type {
 import {
   aggregateTaskScores,
   containsAnswer,
+  exactMatch,
   f1Score,
   llmJudgeScoreDetailed,
   timed,
 } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
+
+type MemBenchChoice = "A" | "B" | "C" | "D";
+
+interface MemBenchQuestionAnswer {
+  id?: string;
+  question: string;
+  answer: string;
+  choices?: Record<MemBenchChoice, string>;
+  correctChoice?: MemBenchChoice;
+  questionTime?: string;
+  targetStepIds?: number[];
+  targetStepCoordinates?: number[][];
+}
+
+interface NormalizedMemBenchTurns {
+  turns: Message[];
+  coordinateIndex: Map<string, number>;
+}
 
 const DATASET_FILENAMES = [
   "membench.json",
@@ -83,34 +102,51 @@ export async function runMemBenchBenchmark(
         console.error(`  [WARN] membench drain failed for ${testCase.id}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
       }
 
+      const recallQuery = buildRecallQuery(testCase);
       const { result: recalledText, durationMs } = await timed(async () =>
-        options.system.recall(sessionId, testCase.question),
+        options.system.recall(sessionId, recallQuery),
       );
+      const answerQuestion = buildQuestionPrompt(testCase);
       const answered = await answerBenchmarkQuestion({
-        question: testCase.question,
+        question: answerQuestion,
         recalledText,
         responder: options.system.responder,
       });
+      const predictedChoice = testCase.choices && options.system.responder
+        ? extractChoice(answered.finalAnswer)
+        : undefined;
+      const actualAnswer = predictedChoice && testCase.choices
+        ? testCase.choices[predictedChoice]
+        : answered.finalAnswer;
       const judgeResult = await llmJudgeScoreDetailed(
         options.system.judge,
         testCase.question,
-        answered.finalAnswer,
+        actualAnswer,
         testCase.answer,
       );
 
       const scores: Record<string, number> = {
-        f1: f1Score(answered.finalAnswer, testCase.answer),
-        contains_answer: containsAnswer(answered.finalAnswer, testCase.answer),
+        f1: f1Score(actualAnswer, testCase.answer),
+        contains_answer: containsAnswer(actualAnswer, testCase.answer),
       };
+      if (testCase.correctChoice) {
+        scores.membench_accuracy = predictedChoice === testCase.correctChoice ? 1 : 0;
+      } else {
+        scores.membench_accuracy = exactMatch(actualAnswer, testCase.answer);
+      }
       if (judgeResult.score >= 0) {
         scores.llm_judge = judgeResult.score;
+      }
+      const recallScore = await scoreRecallAt10(options.system, sessionId, testCase);
+      if (recallScore !== undefined) {
+        scores.membench_recall_at_10 = recallScore;
       }
 
       tasks.push({
         taskId: testCase.id,
         question: testCase.question,
-        expected: testCase.answer,
-        actual: answered.finalAnswer,
+        expected: testCase.correctChoice ?? testCase.answer,
+        actual: predictedChoice ?? answered.finalAnswer,
         scores,
         latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
         tokens: {
@@ -124,6 +160,15 @@ export async function runMemBenchBenchmark(
           turnCount: testCase.turns.length,
           recalledLength: recalledText.length,
           answeredLength: answered.finalAnswer.length,
+          officialProtocol: testCase.choices ? "multiple_choice_accuracy" : "exact_answer_accuracy",
+          choices: testCase.choices,
+          correctChoice: testCase.correctChoice,
+          correctAnswer: testCase.answer,
+          predictedChoice,
+          predictedAnswer: actualAnswer,
+          questionTime: testCase.questionTime,
+          targetStepIds: testCase.targetStepIds,
+          targetStepCoordinates: testCase.targetStepCoordinates,
           recalledText,
           answeredText: answered.finalAnswer,
           responderModel: answered.model,
@@ -133,15 +178,37 @@ export async function runMemBenchBenchmark(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`  [WARN] membench task ${testCase.id} failed: ${message}`);
+      const scores: Record<string, number> = {
+        f1: -1,
+        contains_answer: -1,
+        llm_judge: -1,
+        membench_accuracy: -1,
+      };
+      if (testCase.targetStepIds && testCase.targetStepIds.length > 0) {
+        scores.membench_recall_at_10 = -1;
+      }
       tasks.push({
         taskId: testCase.id,
         question: testCase.question,
-        expected: testCase.answer,
+        expected: testCase.correctChoice ?? testCase.answer,
         actual: `(error: ${message})`,
-        scores: { f1: -1, contains_answer: -1, llm_judge: -1 },
+        scores,
         latencyMs: 0,
         tokens: { input: 0, output: 0 },
-        details: { error: message },
+        details: {
+          error: message,
+          memoryType: testCase.memoryType,
+          scenario: testCase.scenario,
+          level: testCase.level,
+          turnCount: testCase.turns.length,
+          officialProtocol: testCase.choices ? "multiple_choice_accuracy" : "exact_answer_accuracy",
+          choices: testCase.choices,
+          correctChoice: testCase.correctChoice,
+          correctAnswer: testCase.answer,
+          questionTime: testCase.questionTime,
+          targetStepIds: testCase.targetStepIds,
+          targetStepCoordinates: testCase.targetStepCoordinates,
+        },
       });
     }
 
@@ -183,7 +250,10 @@ export async function runMemBenchBenchmark(
     },
     results: {
       tasks,
-      aggregates: aggregateTaskScores(tasks.map((task) => task.scores)),
+      aggregates: {
+        ...aggregateTaskScores(tasks.map((task) => task.scores)),
+        ...aggregateMemBenchOfficialBreakdowns(tasks),
+      },
     },
     environment: {
       os: process.platform,
@@ -317,7 +387,13 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
     level,
     turns,
     question,
-    answer,
+      answer,
+    choices,
+    correctChoice,
+    questionTime,
+    targetStepIds,
+    targetStepCoordinates,
+    skipFlatCoordinateFallback,
   } = entry;
 
   if (typeof id !== "string" || id.length === 0) {
@@ -344,12 +420,31 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
     throw new Error(`MemBench case ${location} must include a non-empty question string.`);
   }
 
-  if (typeof answer !== "string" || answer.length === 0) {
-    throw new Error(`MemBench case ${location} must include a non-empty answer string.`);
-  }
-
   if (!Array.isArray(turns) || turns.length === 0) {
     throw new Error(`MemBench case ${location} must include a non-empty turns array.`);
+  }
+
+  const parsedChoices = parseChoices(choices, location);
+  const rawAnswer = typeof answer === "string" && answer.length > 0
+    ? answer
+    : undefined;
+  const parsedCorrectChoice = parseCorrectChoice(correctChoice, rawAnswer, parsedChoices, location);
+  const flatCoordinateIndex = buildFlatCoordinateIndex(turns.length);
+  const idRefs = parseTargetStepRefs(targetStepIds, flatCoordinateIndex);
+  const coordinateRefs = parseTargetStepRefs(
+    targetStepCoordinates,
+    skipFlatCoordinateFallback === true ? undefined : flatCoordinateIndex,
+    { treatSingleArrayAsCoordinate: true },
+  );
+  const targetRefs = {
+    targetStepIds: idRefs.targetStepIds ?? coordinateRefs.targetStepIds,
+    targetStepCoordinates: coordinateRefs.targetStepCoordinates ?? idRefs.targetStepCoordinates,
+  };
+  const parsedAnswer = parsedChoices && parsedCorrectChoice
+    ? parsedChoices[parsedCorrectChoice]
+    : rawAnswer;
+  if (!parsedAnswer) {
+    throw new Error(`MemBench case ${location} must include a non-empty answer string or choices with a correct choice.`);
   }
 
   return {
@@ -359,7 +454,12 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
     level,
     turns: turns.map((turn, index) => parseTurn(turn, `${location}.turns[${index}]`)),
     question,
-    answer,
+    answer: parsedAnswer,
+    choices: parsedChoices,
+    correctChoice: parsedCorrectChoice,
+    questionTime: typeof questionTime === "string" ? questionTime : undefined,
+    targetStepIds: targetRefs.targetStepIds,
+    targetStepCoordinates: targetRefs.targetStepCoordinates,
   };
 }
 
@@ -456,7 +556,10 @@ function normalizeFlatCase(
   hints: MemBenchHints,
   location: string,
 ): MemBenchCase | null {
-  if (!("turns" in record) || !("question" in record) || !("answer" in record)) {
+  const hasAnswer = "answer" in record;
+  const hasChoiceAnswer = ("choices" in record || "options" in record)
+    && ("correctChoice" in record || "correct_choice" in record);
+  if (!("turns" in record) || !("question" in record) || (!hasAnswer && !hasChoiceAnswer)) {
     return null;
   }
 
@@ -469,6 +572,14 @@ function normalizeFlatCase(
       turns: record.turns,
       question: record.question,
       answer: record.answer,
+      choices: record.choices ?? record.options,
+      correctChoice: record.correctChoice ?? record.correct_choice,
+      questionTime: record.questionTime ?? record.question_time ?? record.time,
+      targetStepIds: record.targetStepIds ?? record.target_step_ids ?? record.target_step_id,
+      targetStepCoordinates:
+        record.targetStepCoordinates
+        ?? record.target_step_coordinates
+        ?? record.target_step_coordinate,
     },
     location,
   );
@@ -479,19 +590,24 @@ function normalizeTrajectoryQaRecord(
   hints: MemBenchHints,
   location: string,
 ): MemBenchCase[] {
-  const trajectory = record.trajectory;
-  const qa = record.qa ?? record.qas ?? record.qa_pairs ?? record.question_answers;
+  const trajectory = record.trajectory ?? record.message_list ?? record.messages;
+  const rawQa = record.qa ?? record.QA ?? record.qas ?? record.qa_pairs ?? record.question_answers;
+  const qa = Array.isArray(rawQa)
+    ? rawQa
+    : isPlainObject(rawQa)
+      ? [rawQa]
+      : undefined;
 
   if (!Array.isArray(trajectory) || !Array.isArray(qa) || qa.length === 0) {
     return [];
   }
 
-  const turns = normalizeTrajectoryTurns(trajectory, `${location}.trajectory`);
-  if (!turns) {
+  const normalizedTurns = normalizeTrajectoryTurns(trajectory, `${location}.trajectory`);
+  if (!normalizedTurns) {
     return [];
   }
 
-  const qaPairs = normalizeQaPairs(qa, `${location}.qa`);
+  const qaPairs = normalizeQaPairs(qa, `${location}.qa`, normalizedTurns.coordinateIndex);
   if (qaPairs.length === 0) {
     return [];
   }
@@ -503,9 +619,15 @@ function normalizeTrajectoryQaRecord(
         memoryType: resolveMemoryType(record.memoryType, hints),
         scenario: resolveScenario(record.scenario, hints),
         level: resolveLevel(record.level, hints),
-        turns,
+        turns: normalizedTurns.turns,
         question: pair.question,
         answer: pair.answer,
+        choices: pair.choices,
+        correctChoice: pair.correctChoice,
+        questionTime: pair.questionTime,
+        targetStepIds: pair.targetStepIds,
+        targetStepCoordinates: pair.targetStepCoordinates,
+        skipFlatCoordinateFallback: true,
       },
       `${location}.qa[${index}]`,
     ),
@@ -515,7 +637,7 @@ function normalizeTrajectoryQaRecord(
 function normalizeTrajectoryTurns(
   trajectory: unknown[],
   location: string,
-): Message[] | null {
+): NormalizedMemBenchTurns | null {
   if (trajectory.length === 0) {
     return null;
   }
@@ -523,40 +645,119 @@ function normalizeTrajectoryTurns(
   const speakerRoles = new Map<string, Message["role"]>();
   let distinctSpeakers = 0;
   const turns: Message[] = [];
+  const coordinateIndex = new Map<string, number>();
 
   for (let index = 0; index < trajectory.length; index += 1) {
     const turn = trajectory[index];
-    if (!isPlainObject(turn)) {
-      return null;
-    }
-
-    const directMessage = parseDirectMessageTurn(turn);
-    if (directMessage) {
-      turns.push(directMessage);
+    if (Array.isArray(turn)) {
+      for (let nestedIndex = 0; nestedIndex < turn.length; nestedIndex += 1) {
+        if (!appendTrajectoryTurn(
+          turn[nestedIndex],
+          `${location}[${index}][${nestedIndex}]`,
+          [index, nestedIndex],
+          turns,
+          coordinateIndex,
+          speakerRoles,
+          () => distinctSpeakers++,
+        )) {
+          return null;
+        }
+      }
       continue;
     }
 
-    const speaker = typeof turn.speaker === "string" ? turn.speaker : undefined;
-    const text = typeof turn.text === "string"
-      ? turn.text
-      : typeof turn.content === "string"
-        ? turn.content
-        : undefined;
-    if (!speaker || !text) {
+    if (!appendTrajectoryTurn(
+      turn,
+      `${location}[${index}]`,
+      [index],
+      turns,
+      coordinateIndex,
+      speakerRoles,
+      () => distinctSpeakers++,
+    )) {
       return null;
     }
-
-    let role = speakerRoles.get(speaker);
-    if (!role) {
-      role = distinctSpeakers === 0 ? "user" : "assistant";
-      speakerRoles.set(speaker, role);
-      distinctSpeakers += 1;
-    }
-
-    turns.push({ role, content: text });
   }
 
-  return turns.length > 0 ? turns : null;
+  return turns.length > 0 ? { turns, coordinateIndex } : null;
+}
+
+function appendTrajectoryTurn(
+  turn: unknown,
+  _location: string,
+  coordinate: number[],
+  turns: Message[],
+  coordinateIndex: Map<string, number>,
+  speakerRoles: Map<string, Message["role"]>,
+  nextSpeakerIndex: () => number,
+): boolean {
+  const rememberCoordinate = (
+    targetCoordinate: number[] = coordinate,
+    turnIndex = turns.length,
+  ) => {
+    coordinateIndex.set(coordinateKey(targetCoordinate), turnIndex);
+    if (targetCoordinate.length === 1) {
+      const flatAliasKey = coordinateKey([0, targetCoordinate[0]!]);
+      if (!coordinateIndex.has(flatAliasKey)) {
+        coordinateIndex.set(flatAliasKey, turnIndex);
+      }
+    }
+  };
+
+  if (typeof turn === "string" && turn.trim().length > 0) {
+    rememberCoordinate();
+    turns.push({ role: "user", content: turn });
+    return true;
+  }
+
+  if (!isPlainObject(turn)) {
+    return false;
+  }
+
+  const directMessage = parseDirectMessageTurn(turn);
+  if (directMessage) {
+    rememberCoordinate();
+    turns.push(directMessage);
+    return true;
+  }
+
+  const speaker = typeof turn.speaker === "string" ? turn.speaker : undefined;
+  const text = typeof turn.text === "string"
+    ? turn.text
+    : typeof turn.content === "string"
+      ? turn.content
+      : typeof turn.message === "string"
+        ? turn.message
+        : undefined;
+  const userText = firstString(turn.user, turn.user_message);
+  const assistantText = firstString(turn.agent, turn.assistant, turn.assistant_message);
+  if (userText || assistantText) {
+    if (userText) {
+      rememberCoordinate();
+      rememberCoordinate(pairedTurnCoordinate(coordinate, 0));
+      turns.push({ role: "user", content: userText });
+    }
+    if (assistantText) {
+      rememberCoordinate(
+        userText ? pairedTurnCoordinate(coordinate, 1) : coordinate,
+      );
+      turns.push({ role: "assistant", content: assistantText });
+    }
+    return true;
+  }
+  if (!speaker || !text) {
+    return false;
+  }
+
+  let role = speakerRoles.get(speaker);
+  if (!role) {
+    role = nextSpeakerIndex() === 0 ? "user" : "assistant";
+    speakerRoles.set(speaker, role);
+  }
+
+  rememberCoordinate();
+  turns.push({ role, content: text });
+  return true;
 }
 
 function parseDirectMessageTurn(turn: Record<string, unknown>): Message | null {
@@ -570,8 +771,9 @@ function parseDirectMessageTurn(turn: Record<string, unknown>): Message | null {
 function normalizeQaPairs(
   qa: unknown[],
   location: string,
-): Array<{ id?: string; question: string; answer: string }> {
-  const pairs: Array<{ id?: string; question: string; answer: string }> = [];
+  coordinateIndex?: Map<string, number>,
+): MemBenchQuestionAnswer[] {
+  const pairs: MemBenchQuestionAnswer[] = [];
 
   for (let index = 0; index < qa.length; index += 1) {
     const item = qa[index];
@@ -580,16 +782,99 @@ function normalizeQaPairs(
     }
 
     const question = firstString(item.question, item.query, item.prompt);
-    const answer = firstString(item.answer, item.expected, item.gold, item.reference);
+    const choices = parseChoices(item.choices ?? item.options, `${location}[${index}].choices`);
+    const rawAnswer = firstString(
+      item.answer,
+      item.expected,
+      item.gold,
+      item.reference,
+      item.label,
+      item.correct_choice,
+    );
+    const correctChoice = parseCorrectChoice(
+      item.correctChoice ?? item.correct_choice,
+      rawAnswer,
+      choices,
+      `${location}[${index}]`,
+    );
+    const answer = choices && correctChoice
+      ? choices[correctChoice]
+      : rawAnswer;
     if (!question || !answer) {
       continue;
     }
 
     const id = firstString(item.id, item.qid, item.question_id);
-    pairs.push({ id: id ?? undefined, question, answer });
+    const targetRefSource = resolveTargetRefSource(item);
+    pairs.push({
+      id: id ?? undefined,
+      question,
+      answer,
+      choices: choices ?? undefined,
+      correctChoice: correctChoice ?? undefined,
+      questionTime: firstString(item.time, item.question_time, item.questionTime) ?? undefined,
+      ...parseTargetStepRefs(targetRefSource?.value, coordinateIndex, {
+        treatSingleArrayAsCoordinate: targetRefSource?.kind === "coordinates"
+          || targetRefSource?.treatSingleArrayAsCoordinate === true,
+        fallbackArrayTupleToIds: targetRefSource?.fallbackArrayTupleToIds === true,
+      }),
+    });
   }
 
   return pairs;
+}
+
+function resolveTargetRefSource(
+  item: Record<string, unknown>,
+): {
+  value: unknown;
+  kind: "ids" | "coordinates";
+  treatSingleArrayAsCoordinate?: boolean;
+  fallbackArrayTupleToIds?: boolean;
+} | undefined {
+  if (hasUsableTargetIdRef(item.target_step_id)) {
+    return {
+      value: item.target_step_id,
+      kind: "ids",
+      treatSingleArrayAsCoordinate: Array.isArray(item.target_step_id),
+      fallbackArrayTupleToIds: true,
+    };
+  }
+  if (hasUsableTargetIdRef(item.target_step_ids)) {
+    return { value: item.target_step_ids, kind: "ids" };
+  }
+  if (hasUsableTargetIdRef(item.targetStepIds)) {
+    return { value: item.targetStepIds, kind: "ids" };
+  }
+  if (hasUsableTargetRef(item.target_step_coordinates)) {
+    return { value: item.target_step_coordinates, kind: "coordinates" };
+  }
+  if (hasUsableTargetRef(item.targetStepCoordinates)) {
+    return { value: item.targetStepCoordinates, kind: "coordinates" };
+  }
+  if (hasUsableTargetRef(item.target_step_coordinate)) {
+    return { value: item.target_step_coordinate, kind: "coordinates" };
+  }
+  if (hasUsableTargetRef(item.targetStepCoordinate)) {
+    return { value: item.targetStepCoordinate, kind: "coordinates" };
+  }
+  return undefined;
+}
+
+function hasUsableTargetRef(value: unknown): boolean {
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  return value !== undefined
+    && value !== null
+    && (!Array.isArray(value) || value.length > 0);
+}
+
+function hasUsableTargetIdRef(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.length > 0 && value.every(hasUsableTargetIdRef);
+  }
+  return normalizeTargetRefPart(value) !== undefined;
 }
 
 function resolveCaseId(
@@ -707,6 +992,327 @@ function parseTurn(turn: unknown, location: string): Message {
   }
 
   return { role, content };
+}
+
+function buildQuestionPrompt(testCase: MemBenchCase): string {
+  if (!testCase.choices) {
+    return testCase.question;
+  }
+
+  const scenarioInstruction = testCase.scenario === "observation"
+    ? "Please answer the following question based on past memories of the user's messages."
+    : "Please answer the following question based on past memories of your conversation with the user.";
+  const timePrefix = testCase.questionTime
+    ? `(current time is ${testCase.questionTime}) `
+    : "";
+
+  return [
+    scenarioInstruction,
+    `Question: ${timePrefix}${testCase.question}`,
+    "Choices:",
+    `A. ${testCase.choices.A}`,
+    `B. ${testCase.choices.B}`,
+    `C. ${testCase.choices.C}`,
+    `D. ${testCase.choices.D}`,
+    "Please output the correct option for the question, only one corresponding letter, without any other messages.",
+    "Example: D",
+  ].join("\n");
+}
+
+function buildRecallQuery(testCase: MemBenchCase): string {
+  return testCase.questionTime
+    ? `${testCase.question} (${testCase.questionTime})`
+    : testCase.question;
+}
+
+function extractChoice(answer: string): MemBenchChoice | undefined {
+  const trimmed = answer.trim().toUpperCase();
+  if (/^[ABCD]$/.test(trimmed)) {
+    return trimmed as MemBenchChoice;
+  }
+
+  const jsonChoice = trimmed.match(/"CHOICE"\s*:\s*"([ABCD])"/);
+  if (jsonChoice?.[1]) {
+    return jsonChoice[1] as MemBenchChoice;
+  }
+
+  const answerMarkers = [
+    ...trimmed.matchAll(
+      /(?:FINAL\s+ANSWER|ANSWER|CHOICE|OPTION)\s*(?:IS|:|-)?\s*([ABCD])\b/g,
+    ),
+  ].map((match) => match[1] as MemBenchChoice);
+  if (answerMarkers.length > 0) {
+    return answerMarkers.at(-1);
+  }
+
+  const optionTokens = [...trimmed.matchAll(/\b([ABCD])\b/g)].map(
+    (match) => match[1] as MemBenchChoice,
+  );
+  return optionTokens.at(-1);
+}
+
+async function scoreRecallAt10(
+  system: ResolvedRunBenchmarkOptions["system"],
+  sessionId: string,
+  testCase: MemBenchCase,
+): Promise<number | undefined> {
+  if (!testCase.targetStepIds || testCase.targetStepIds.length === 0) {
+    return undefined;
+  }
+
+  try {
+    const results = await system.search(
+      buildRecallQuery(testCase),
+      10,
+      sessionId,
+    );
+    const relevant = new Set(testCase.targetStepIds);
+    const retrieved = new Set(
+      results
+        .map((result) => result.turnIndex)
+        .filter((turnIndex) => relevant.has(turnIndex)),
+    );
+    return retrieved.size / relevant.size;
+  } catch {
+    return -1;
+  }
+}
+
+function aggregateMemBenchOfficialBreakdowns(
+  tasks: TaskResult[],
+): ReturnType<typeof aggregateTaskScores> {
+  const metrics: Array<[string, (task: TaskResult) => boolean]> = [
+    ["membench_accuracy_factual_participant", (task) =>
+      task.details?.memoryType === "factual" && task.details?.scenario === "participant"],
+    ["membench_accuracy_factual_observation", (task) =>
+      task.details?.memoryType === "factual" && task.details?.scenario === "observation"],
+    ["membench_accuracy_reflective_participant", (task) =>
+      task.details?.memoryType === "reflective" && task.details?.scenario === "participant"],
+    ["membench_accuracy_reflective_observation", (task) =>
+      task.details?.memoryType === "reflective" && task.details?.scenario === "observation"],
+  ];
+  const breakdownScores = metrics
+    .flatMap(([metricName, predicate]) => {
+      const categoryTasks = tasks.filter(predicate);
+      const accuracyScores = categoryTasks
+        .map((task) => task.scores.membench_accuracy)
+        .filter((score): score is number => typeof score === "number" && score >= 0)
+        .map((score) => ({ [metricName]: score }));
+      const errorMetricName = metricName.replace(
+        "membench_accuracy_",
+        "membench_error_rate_",
+      );
+      const errorScores = categoryTasks
+        .filter((task) => typeof task.scores.membench_accuracy === "number")
+        .map((task) => ({
+          [errorMetricName]: task.scores.membench_accuracy < 0 ? 1 : 0,
+        }));
+      return [...accuracyScores, ...errorScores];
+    });
+
+  return aggregateTaskScores(breakdownScores);
+}
+
+function parseChoices(
+  choices: unknown,
+  location: string,
+): Record<MemBenchChoice, string> | undefined {
+  if (Array.isArray(choices)) {
+    const parsedArray = choices.map((choice) => firstString(choice));
+    if (parsedArray.length === 0) {
+      return undefined;
+    }
+    if (parsedArray.length !== 4 || parsedArray.some((choice) => !choice)) {
+      throw new Error(
+        `MemBench choices ${location} must include exactly four non-empty options when provided as an array.`,
+      );
+    }
+    return {
+      A: parsedArray[0]!,
+      B: parsedArray[1]!,
+      C: parsedArray[2]!,
+      D: parsedArray[3]!,
+    };
+  }
+
+  if (!isPlainObject(choices)) {
+    return undefined;
+  }
+
+  const parsed = {
+    A: firstString(choices.A, choices.a),
+    B: firstString(choices.B, choices.b),
+    C: firstString(choices.C, choices.c),
+    D: firstString(choices.D, choices.d),
+  };
+
+  if (!parsed.A && !parsed.B && !parsed.C && !parsed.D) {
+    return undefined;
+  }
+  if (!parsed.A || !parsed.B || !parsed.C || !parsed.D) {
+    throw new Error(
+      `MemBench choices ${location} must include non-empty A, B, C, and D options.`,
+    );
+  }
+
+  return parsed as Record<MemBenchChoice, string>;
+}
+
+function parseCorrectChoice(
+  directChoice: unknown,
+  answer: unknown,
+  choices: Record<MemBenchChoice, string> | undefined,
+  location: string,
+): MemBenchChoice | undefined {
+  if (!choices) {
+    return undefined;
+  }
+
+  const normalizedDirect = normalizeChoice(directChoice);
+  if (normalizedDirect) {
+    return normalizedDirect;
+  }
+
+  const normalizedAnswer = normalizeChoice(answer);
+  if (normalizedAnswer) {
+    return normalizedAnswer;
+  }
+
+  const answerText = firstString(answer);
+  if (!answerText) {
+    throw new Error(
+      `MemBench case ${location} includes choices but no answer or correct choice.`,
+    );
+  }
+
+  const matchingChoices = (Object.entries(choices) as Array<[MemBenchChoice, string]>)
+    .filter(([, value]) => normalizeComparable(value) === normalizeComparable(answerText))
+    .map(([choice]) => choice);
+  if (matchingChoices.length === 1) {
+    return matchingChoices[0];
+  }
+
+  throw new Error(
+    `MemBench case ${location} includes choices but answer does not identify exactly one option.`,
+  );
+}
+
+function normalizeChoice(value: unknown): MemBenchChoice | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toUpperCase();
+  return /^[ABCD]$/.test(normalized) ? normalized as MemBenchChoice : undefined;
+}
+
+function normalizeComparable(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function parseTargetStepRefs(
+  value: unknown,
+  coordinateIndex?: Map<string, number>,
+  options: {
+    treatSingleArrayAsCoordinate?: boolean;
+    fallbackArrayTupleToIds?: boolean;
+  } = {},
+): {
+  targetStepIds?: number[];
+  targetStepCoordinates?: number[][];
+} {
+  if (options.treatSingleArrayAsCoordinate && value !== undefined && !Array.isArray(value)) {
+    return {};
+  }
+
+  const rawValues = Array.isArray(value)
+    ? options.treatSingleArrayAsCoordinate
+      ? isCoordinateTuple(value) || !value.every(Array.isArray)
+        ? [value]
+        : value
+      : value
+    : value === undefined
+      ? []
+      : [value];
+  const coordinates = rawValues
+    .filter(Array.isArray)
+    .map(parseCoordinateTuple)
+    .filter((items): items is number[] => items !== undefined);
+  const candidates = new Set<number>();
+  for (const item of rawValues) {
+    const scalar = normalizeTargetRefPart(item);
+    if (scalar !== undefined) {
+      candidates.add(scalar);
+    } else if (Array.isArray(item)) {
+      const numeric = options.treatSingleArrayAsCoordinate
+        ? parseCoordinateTuple(item)
+        : item
+          .map(normalizeTargetRefPart)
+          .filter((part): part is number => part !== undefined);
+      if (!numeric) {
+        continue;
+      }
+      if (numeric.length >= 2) {
+        const mapped = coordinateIndex?.get(coordinateKey(numeric));
+        if (mapped !== undefined) {
+          candidates.add(mapped);
+        } else if (options.fallbackArrayTupleToIds) {
+          numeric.forEach((part) => candidates.add(part));
+        }
+      } else if (numeric.length === 1) {
+        const mapped = coordinateIndex?.get(coordinateKey(numeric));
+        if (mapped !== undefined) {
+          candidates.add(mapped);
+        } else if (!options.treatSingleArrayAsCoordinate || options.fallbackArrayTupleToIds) {
+          candidates.add(numeric[0]!);
+        }
+      }
+    }
+  }
+
+  const ids = [...candidates].sort((left, right) => left - right);
+  return {
+    targetStepIds: ids.length > 0 ? ids : undefined,
+    targetStepCoordinates: coordinates.length > 0 ? coordinates : undefined,
+  };
+}
+
+function normalizeTargetRefPart(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    return Number(value.trim());
+  }
+  return undefined;
+}
+
+function isCoordinateTuple(value: unknown[]): boolean {
+  return parseCoordinateTuple(value) !== undefined;
+}
+
+function parseCoordinateTuple(value: unknown[]): number[] | undefined {
+  const parsed = value.map(normalizeTargetRefPart);
+  if (parsed.length === 0 || parsed.some((item) => item === undefined)) {
+    return undefined;
+  }
+  return parsed as number[];
+}
+
+function coordinateKey(coordinate: number[]): string {
+  return coordinate.join(":");
+}
+
+function buildFlatCoordinateIndex(turnCount: number): Map<string, number> {
+  const index = new Map<string, number>();
+  for (let turnIndex = 0; turnIndex < turnCount; turnIndex += 1) {
+    index.set(coordinateKey([turnIndex]), turnIndex);
+    index.set(coordinateKey([0, turnIndex]), turnIndex);
+  }
+  return index;
+}
+
+function pairedTurnCoordinate(coordinate: number[], sideIndex: 0 | 1): number[] {
+  return [...coordinate, sideIndex];
 }
 
 function normalizeLimit(limit: number | undefined): number | undefined {

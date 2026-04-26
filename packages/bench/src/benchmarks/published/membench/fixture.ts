@@ -8,6 +8,11 @@ export interface MemBenchCase {
   turns: Message[];
   question: string;
   answer: string;
+  choices?: Record<"A" | "B" | "C" | "D", string>;
+  correctChoice?: "A" | "B" | "C" | "D";
+  questionTime?: string;
+  targetStepIds?: number[];
+  targetStepCoordinates?: number[][];
 }
 
 export const MEMBENCH_SMOKE_FIXTURE: MemBenchCase[] = [
