@@ -1617,6 +1617,8 @@ export interface CodexConnectorConfig {
 export interface LiveConnectorsConfig {
   /** Google Drive live connector (issue #683 PR 2/N). */
   googleDrive: GoogleDriveLiveConnectorConfig;
+  /** Notion live connector (issue #683 PR 3/N). */
+  notion: NotionLiveConnectorConfig;
 }
 
 /**
@@ -1644,6 +1646,28 @@ export interface GoogleDriveLiveConnectorConfig {
   pollIntervalMs: number;
   /** Optional folder-id scope. Empty array = all accessible files. */
   folderIds: string[];
+}
+
+/**
+ * Operator-facing config for the Notion live connector (issue #683 PR 3/N).
+ * The connector module defines a separate validated `NotionConnectorConfig`
+ * shape (frozen, post-validation). This interface is the pre-validation shape
+ * that `parseConfig` round-trips through.
+ *
+ * `token` is stored as a string here so operators can populate it from a
+ * secret store (e.g. an env-substituted plist or systemd EnvironmentFile).
+ * It MUST NEVER be committed to source. The repo-wide privacy policy in
+ * CLAUDE.md applies.
+ */
+export interface NotionLiveConnectorConfig {
+  /** Master gate. Default false — operators must opt in explicitly. */
+  enabled: boolean;
+  /** Notion integration token. Starts with `secret_`. Populate from a secret store; never commit. */
+  token: string;
+  /** Array of Notion database ids to import pages from. Empty = connector is a no-op. */
+  databaseIds: string[];
+  /** Poll interval in ms. Default 300000 (5 min); min 1000; max 86400000 (24h). */
+  pollIntervalMs: number;
 }
 
 export interface BootstrapOptions {

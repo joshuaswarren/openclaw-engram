@@ -51,3 +51,17 @@ export {
   type GoogleDriveConnectorConfig,
   type GoogleDriveSyncResult,
 } from "./google-drive.js";
+
+export {
+  NOTION_CONNECTOR_ID,
+  NOTION_CURSOR_KIND,
+  NOTION_DEFAULT_POLL_INTERVAL_MS,
+  createNotionConnector,
+  isTransientNotionError,
+  validateNotionConfig,
+  type NotionBlock,
+  type NotionConnectorConfig,
+  type NotionFetchFn,
+  type NotionPage,
+  type NotionSyncResult,
+} from "./notion.js";

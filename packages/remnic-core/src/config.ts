@@ -2596,6 +2596,62 @@ export function parseConfig(raw: unknown): PluginConfig {
           driveFolderIds.push(trimmed);
         }
       }
+      // notion (#683 PR 3/N)
+      if (
+        rawConnectors.notion !== undefined &&
+        (rawConnectors.notion === null ||
+          typeof rawConnectors.notion !== "object" ||
+          Array.isArray(rawConnectors.notion))
+      ) {
+        throw new Error(
+          `connectors.notion must be an object (got ${JSON.stringify(rawConnectors.notion)}).`,
+        );
+      }
+      const rawNotion =
+        rawConnectors.notion &&
+        typeof rawConnectors.notion === "object" &&
+        !Array.isArray(rawConnectors.notion)
+          ? (rawConnectors.notion as Record<string, unknown>)
+          : {};
+      const notionEnabled = coerceBool(rawNotion.enabled) === true;
+      const notionToken =
+        typeof rawNotion.token === "string" ? rawNotion.token : "";
+      const notionPollCoerced = coerceNumber(rawNotion.pollIntervalMs);
+      let notionPollIntervalMs = 300_000;
+      if (notionPollCoerced !== undefined) {
+        if (
+          !Number.isFinite(notionPollCoerced) ||
+          !Number.isInteger(notionPollCoerced) ||
+          notionPollCoerced < 1_000 ||
+          notionPollCoerced > 86_400_000
+        ) {
+          throw new Error(
+            `connectors.notion.pollIntervalMs must be an integer in [1000, 86400000] ms (got ${JSON.stringify(rawNotion.pollIntervalMs)})`,
+          );
+        }
+        notionPollIntervalMs = notionPollCoerced;
+      }
+      let notionDatabaseIds: string[] = [];
+      if (rawNotion.databaseIds !== undefined) {
+        if (!Array.isArray(rawNotion.databaseIds)) {
+          throw new Error(
+            `connectors.notion.databaseIds must be an array of strings (got ${typeof rawNotion.databaseIds})`,
+          );
+        }
+        const seen = new Set<string>();
+        for (const value of rawNotion.databaseIds) {
+          if (typeof value !== "string") {
+            throw new Error(
+              `connectors.notion.databaseIds entries must be strings; found ${typeof value}`,
+            );
+          }
+          const trimmed = value.trim();
+          if (trimmed.length === 0) continue;
+          if (seen.has(trimmed)) continue;
+          seen.add(trimmed);
+          notionDatabaseIds.push(trimmed);
+        }
+      }
       return {
         googleDrive: {
           enabled: driveEnabled,
@@ -2604,6 +2660,12 @@ export function parseConfig(raw: unknown): PluginConfig {
           refreshToken: driveRefreshToken,
           pollIntervalMs: drivePollIntervalMs,
           folderIds: driveFolderIds,
+        },
+        notion: {
+          enabled: notionEnabled,
+          token: notionToken,
+          databaseIds: notionDatabaseIds,
+          pollIntervalMs: notionPollIntervalMs,
         },
       };
     })(),
