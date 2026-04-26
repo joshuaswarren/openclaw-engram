@@ -96,6 +96,16 @@ export function runConsoleTui(
 
   let stopped = false;
   let inFlight = false;
+  // Codex P2 (PR #732): backpressure for trace recording. If the
+  // previous fire-and-forget `append()` has not resolved yet, we drop
+  // the current frame instead of enqueuing it onto the recorder's
+  // internal writeChain. Without this guard, a wedged filesystem
+  // would let memory grow unboundedly — every tick adds a JSON line
+  // to a serialized chain that never drains. Dropping is preferable
+  // to OOM; the operator can inspect `getLastError()` to learn that
+  // tracing fell behind.
+  let traceWritePending = false;
+  let traceFramesDropped = 0;
   let resolveDone!: () => void;
   const done = new Promise<void>((resolve) => {
     resolveDone = resolve;
@@ -138,14 +148,29 @@ export function runConsoleTui(
       // Codex P2: do NOT await trace writes inside the render tick.
       // Awaiting holds `inFlight = true` for the duration of the disk
       // write; on a slow / network-backed filesystem that stretches
-      // the visual refresh interval and skips ticks. The recorder
-      // already serializes appends internally via its writeChain, so
-      // fire-and-forget preserves frame order while keeping the paint
-      // path responsive. Errors are captured via `getLastError()`.
-      if (snapshot && options.traceRecorder) {
-        void options.traceRecorder.append(snapshot).catch(() => {
-          // already recorded in lastError; defense-in-depth.
-        });
+      // the visual refresh interval and skips ticks. Fire-and-forget
+      // preserves the paint cadence; errors are captured via
+      // `getLastError()`.
+      //
+      // Codex P2 (PR #732 follow-up): apply backpressure. If the
+      // previous append is still pending (writeChain not yet
+      // drained), drop this frame instead of queuing another line.
+      // Without this gate, a wedged FS lets the chain grow
+      // unboundedly — one JSON line per tick — until the process
+      // OOMs. Dropping is preferable; the operator can inspect
+      // `getLastError()` to see tracing fell behind.
+      if (snapshot && options.traceRecorder && !traceWritePending) {
+        traceWritePending = true;
+        void options.traceRecorder
+          .append(snapshot)
+          .catch(() => {
+            // already recorded in lastError; defense-in-depth.
+          })
+          .finally(() => {
+            traceWritePending = false;
+          });
+      } else if (snapshot && options.traceRecorder) {
+        traceFramesDropped += 1;
       }
     } finally {
       inFlight = false;

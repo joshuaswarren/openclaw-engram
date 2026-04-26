@@ -285,22 +285,71 @@ test("slow trace writes do not block render ticks (Codex P2 #732)", async () => 
   handle.stop();
   await handle.done;
 
-  // If the render path were still awaiting the stalled write, only
-  // the first tick would have called `append` (subsequent ticks
-  // would short-circuit on `inFlight`). With fire-and-forget, every
-  // tick calls `append` because each prior tick releases the latch
-  // immediately after painting.
-  assert.ok(
-    appendCalls >= 3,
-    `expected loop to keep ticking past stalled trace write, saw ${appendCalls} append calls`,
+  // Codex P2 (PR #732 follow-up): backpressure now drops subsequent
+  // appends while the previous one is still pending, so a wedged
+  // disk doesn't grow the recorder's writeChain unboundedly. The
+  // first call still goes through; subsequent calls are dropped
+  // until the pending append resolves (which never happens in this
+  // test). The KEY property is that the render loop keeps painting,
+  // not that every tick enqueues another append.
+  assert.equal(
+    appendCalls,
+    1,
+    `under backpressure, only the first stalled append should fire, saw ${appendCalls}`,
   );
-  // And the rendered output should reflect multiple paints.
+  // The rendered output must still reflect multiple paints — the
+  // stalled trace write must not block the render path.
   const text = stream.textPlain();
   const headerCount = (text.match(/remnic console/g) ?? []).length;
   assert.ok(
     headerCount >= 3,
     `expected >= 3 painted frames despite stalled trace, saw ${headerCount}`,
   );
+});
+
+test("trace backpressure drops frames while a previous append is pending (Codex P2 #732)", async () => {
+  // Regression: a wedged filesystem must not let the recorder's
+  // writeChain grow unboundedly. While one append is pending, the
+  // next tick's append is dropped instead of enqueued.
+  const stream = new CaptureStream();
+  const orchestrator = makeOrchestrator();
+  let appendCalls = 0;
+  let resolveFirst!: () => void;
+  const firstAppendBlocked = new Promise<void>((resolve) => {
+    resolveFirst = resolve;
+  });
+  const handle = runConsoleTui(orchestrator, {
+    refreshIntervalMs: 20,
+    output: stream,
+    installSigintHandler: false,
+    traceRecorder: {
+      append: async () => {
+        appendCalls += 1;
+        // First call blocks; subsequent calls (if backpressure
+        // didn't gate them) would also be queued.
+        if (appendCalls === 1) await firstAppendBlocked;
+      },
+    },
+  });
+  // Let the loop tick several times while the first append blocks.
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  // Backpressure should have prevented additional appends from
+  // landing while the first was pending.
+  assert.equal(
+    appendCalls,
+    1,
+    `expected backpressure to gate appends while one is pending, saw ${appendCalls}`,
+  );
+  // Now release the stalled append and let the loop drain.
+  resolveFirst();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  // After the gate releases, subsequent ticks should append again.
+  assert.ok(
+    appendCalls >= 2,
+    `expected appends to resume after pending one drained, saw ${appendCalls}`,
+  );
+  handle.stop();
+  await handle.done;
 });
 
 test("stop() clears the interval and resolves done", async () => {

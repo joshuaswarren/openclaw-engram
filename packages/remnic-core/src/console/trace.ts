@@ -496,6 +496,7 @@ export async function flushWithTimeout(
 ): Promise<FlushWithTimeoutResult> {
   const TIMEOUT_SENTINEL = Symbol("flush-timeout");
   let error: unknown = null;
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   const flushPromise = flush().then(
     () => undefined,
     (err) => {
@@ -506,16 +507,35 @@ export async function flushWithTimeout(
     },
   );
   const timeoutPromise = new Promise<symbol>((resolve) => {
-    setTimeout(() => resolve(TIMEOUT_SENTINEL), timeoutMs);
+    timeoutHandle = setTimeout(() => resolve(TIMEOUT_SENTINEL), timeoutMs);
+    // Codex P1 (PR #732): unref the fallback timer so it does not
+    // hold the event loop open on its own. Belt-and-suspenders with
+    // the `clearTimeout` in the `finally` below: even if a future
+    // refactor accidentally drops the clear, an unref'd timer will
+    // not prevent process exit once the flush has resolved.
+    if (typeof timeoutHandle.unref === "function") {
+      timeoutHandle.unref();
+    }
   });
-  const winner = await Promise.race<symbol | void>([
-    flushPromise,
-    timeoutPromise,
-  ]);
-  if (winner === TIMEOUT_SENTINEL) {
-    return { flushed: false, timedOut: true, error: null };
+  try {
+    const winner = await Promise.race<symbol | void>([
+      flushPromise,
+      timeoutPromise,
+    ]);
+    if (winner === TIMEOUT_SENTINEL) {
+      return { flushed: false, timedOut: true, error: null };
+    }
+    return { flushed: true, timedOut: false, error };
+  } finally {
+    // Codex P1 (PR #732): clear the fallback timer when the flush
+    // wins the race. Without this, Node keeps the ref'd timeout
+    // handle alive for the full `timeoutMs` and delays process exit
+    // by that interval on EVERY normal shutdown — turning a
+    // safety-net into a consistent user-visible hang.
+    if (timeoutHandle !== null) {
+      clearTimeout(timeoutHandle);
+    }
   }
-  return { flushed: true, timedOut: false, error };
 }
 
 function safeWrite(output: Writable, chunk: string): void {
