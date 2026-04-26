@@ -2077,6 +2077,20 @@ export class EngramMcpServer {
       case "remnic.peer_set": {
         const id = typeof args.id === "string" ? args.id : "";
         if (!id) throw new Error("engram.peer_set: id is required");
+        // Codex P2 (PR #756 round 2): mirror the HTTP surface — reject
+        // non-string `kind`/`displayName`/`notes` rather than silently
+        // coercing to `undefined` and letting peerSet fall back to its
+        // "human" default. Symmetry across access surfaces (CLAUDE.md
+        // rule 39) and no-silent-defaults on bad input (rule 51).
+        if (args.kind !== undefined && typeof args.kind !== "string") {
+          throw new Error("engram.peer_set: kind must be a string when provided");
+        }
+        if (args.displayName !== undefined && typeof args.displayName !== "string") {
+          throw new Error("engram.peer_set: displayName must be a string when provided");
+        }
+        if (args.notes !== undefined && typeof args.notes !== "string") {
+          throw new Error("engram.peer_set: notes must be a string when provided");
+        }
         return this.service.peerSet({
           id,
           kind: typeof args.kind === "string" ? args.kind : undefined,
