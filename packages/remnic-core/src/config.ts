@@ -2926,6 +2926,13 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
       consolidateTargetLines: 50,
     },
     {
+      // Peer profile (issue #679 PR 3/5). Placed adjacent to `profile` so
+      // ordering and budget behavior are deterministic and the section is
+      // not shoved to the unordered tail (Codex P2 review on PR #750).
+      id: "peer-profile",
+      enabled: cfg.peerProfileRecallEnabled === true,
+    },
+    {
       id: "identity-continuity",
       enabled: cfg.identityContinuityEnabled === true,
     },

@@ -177,6 +177,31 @@ test("config exports peerProfileRecallMaxFields defaulting to 5", () => {
   );
 });
 
+test("buildDefaultRecallPipeline registers peer-profile adjacent to profile (Codex P2 #750)", () => {
+  // The recall pipeline must include `peer-profile` as a known section, and
+  // it must be ordered next to `profile` so budget/truncation behavior is
+  // deterministic. Otherwise the section falls into the unordered tail and
+  // can be silently dropped under recall budget pressure even when the
+  // feature flag is on.
+  const src = readFileSync(
+    path.join(repoRoot, "packages/remnic-core/src/config.ts"),
+    "utf-8",
+  );
+  // Match: a `profile` entry block, then the `peer-profile` entry. The
+  // regex tolerates multiline gaps (the profile block spans several lines)
+  // but enforces that no other `id:` entry appears between them.
+  assert.match(
+    src,
+    /id:\s*"profile",[\s\S]*?consolidateTargetLines:\s*50,\s*\},\s*\{\s*(?:\/\/[^\n]*\n\s*)*id:\s*"peer-profile"/,
+    "peer-profile section must be registered immediately after profile in buildDefaultRecallPipeline",
+  );
+  assert.match(
+    src,
+    /id:\s*"peer-profile",\s*enabled:\s*cfg\.peerProfileRecallEnabled === true/,
+    "peer-profile section must gate on peerProfileRecallEnabled === true",
+  );
+});
+
 test("PluginConfig declares peerProfileRecallEnabled and peerProfileRecallMaxFields", () => {
   const src = readFileSync(
     path.join(repoRoot, "packages/remnic-core/src/types.ts"),
@@ -240,6 +265,10 @@ function buildPeerProfileSection(
   profile: PeerProfile,
   maxFields: number,
 ): string | null {
+  // Mirror the production gate at packages/remnic-core/src/orchestrator.ts —
+  // `peerProfileRecallMaxFields <= 0` short-circuits before the helper is
+  // called. We replicate that here so tests are not vacuously truthy.
+  if (maxFields <= 0) return null;
   const allFields = Object.entries(profile.fields);
   if (allFields.length === 0) return null;
 
@@ -281,15 +310,16 @@ test("buildPeerProfileSection injects fields when feature enabled", () => {
 test("buildPeerProfileSection returns null when maxFields is 0", () => {
   const profile = syntheticProfile();
   const section = buildPeerProfileSection(profile, 0);
-  // maxFields=0 means capped array is empty → no lines → we treat as
-  // null equivalent. In the orchestrator the gate `peerProfileRecallMaxFields <= 0`
-  // prevents the call entirely, but the helper should still return null
-  // for empty lines (empty section).
-  assert.equal(
-    section !== null ? section.split("**").length - 1 : 0,
-    0,
-    "zero maxFields must produce no field lines",
-  );
+  // The production orchestrator gates on `peerProfileRecallMaxFields <= 0`,
+  // and the helper now mirrors that gate. The result must be exactly null —
+  // not a truthy header-only string.
+  assert.equal(section, null, "zero maxFields must short-circuit to null");
+});
+
+test("buildPeerProfileSection returns null when maxFields is negative", () => {
+  const profile = syntheticProfile();
+  const section = buildPeerProfileSection(profile, -3);
+  assert.equal(section, null, "negative maxFields must short-circuit to null");
 });
 
 test("buildPeerProfileSection respects maxFields cap", () => {
