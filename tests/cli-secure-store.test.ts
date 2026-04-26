@@ -12,12 +12,14 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { PassThrough } from "node:stream";
 
 import {
   HEADER_FILENAME,
   MIN_PASSPHRASE_LENGTH,
   SECURE_STORE_DIR_NAME,
   buildHeader,
+  createPassphraseReader,
   generateSalt,
   headerPath,
   keyring,
@@ -469,6 +471,54 @@ test("readHeader rejects a tampered header file", async () => {
 });
 
 // ─── concurrent writeHeader: exactly one wins ────────────────────────
+
+// ─── passphrase reader: piped (non-TTY) input round-trips ────────────
+
+test("createPassphraseReader: piped non-TTY input returns the supplied line", async () => {
+  // Codex P1 on PR #737: a previous version of `readPlainLine`
+  // could resolve the promise with "" because rl.close() emits
+  // synchronously and the close handler raced the line handler.
+  // This test asserts a piped passphrase survives intact.
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const errorStream = new PassThrough();
+  // Drain output / errorStream so writes don't backpressure the test.
+  output.on("data", () => {});
+  errorStream.on("data", () => {});
+  const reader = createPassphraseReader({ input, output, errorStream });
+  const promise = reader("Enter passphrase: ");
+  input.write("supplied-secret\n");
+  input.end();
+  const result = await promise;
+  assert.equal(result, "supplied-secret");
+});
+
+test("createPassphraseReader: confirm mode mismatches throw a clear error", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const errorStream = new PassThrough();
+  output.on("data", () => {});
+  errorStream.on("data", () => {});
+  const reader = createPassphraseReader({ input, output, errorStream });
+  const promise = reader("Enter passphrase: ", { confirm: true });
+  input.write("first-line\n");
+  input.write("different-confirm\n");
+  input.end();
+  await assert.rejects(promise, /did not match/);
+});
+
+test("createPassphraseReader: empty stream resolves to empty string (status-only path)", async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const errorStream = new PassThrough();
+  output.on("data", () => {});
+  errorStream.on("data", () => {});
+  const reader = createPassphraseReader({ input, output, errorStream });
+  const promise = reader("Enter passphrase: ");
+  input.end();
+  const result = await promise;
+  assert.equal(result, "");
+});
 
 test("concurrent writeHeader calls — exactly one succeeds, the rest get EEXIST", async () => {
   // Codex P1 on PR #737: the previous read-then-write existence check

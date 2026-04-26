@@ -26,6 +26,7 @@
 
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 
 import type { PassphraseReader } from "./cli-handlers.js";
 
@@ -96,18 +97,27 @@ function readNoEcho(
     let buffer = "";
     let settled = false;
     const wasRaw = (input as Readable & { isRaw?: boolean }).isRaw === true;
+    // Codex P2 on PR #737: per-chunk `chunk.toString("utf8")` corrupts
+    // multibyte characters that straddle a chunk boundary (Node inserts
+    // U+FFFD replacement characters for incomplete sequences). Use a
+    // StringDecoder, which buffers partial sequences across chunks so
+    // non-ASCII passphrases survive intact.
+    const decoder = new StringDecoder("utf8");
     if (input.setRawMode) input.setRawMode(true);
     input.resume();
     const cleanup = (): void => {
       input.pause();
       input.removeListener("data", onData);
+      // Flush any remaining bytes the decoder is holding so trailing
+      // partial sequences are surfaced rather than silently swallowed.
+      decoder.end();
       // Restore the prior raw-mode state so we don't strand the parent shell
       // in an unexpected configuration.
       if (input.setRawMode) input.setRawMode(wasRaw);
       output.write("\n");
     };
     const onData = (chunk: Buffer): void => {
-      const str = chunk.toString("utf8");
+      const str = decoder.write(chunk);
       for (const ch of str) {
         if (settled) return;
         const code = ch.charCodeAt(0);
@@ -155,17 +165,31 @@ function readNoEcho(
 function readPlainLine(input: Readable, output: Writable): Promise<string> {
   return new Promise((resolve, reject) => {
     const rl = createInterface({ input, output, terminal: false });
-    rl.once("line", (line) => {
+    // Codex P1 on PR #737: a previous version called `rl.close()`
+    // before `resolve(line)`, but `close` emits synchronously and a
+    // separate `close` listener that resolved with `""` could win the
+    // race against the `line` listener — turning piped passphrases
+    // (`echo secret | remnic ...`) into empty input. Track settled
+    // state explicitly so the first event wins and subsequent events
+    // become no-ops.
+    let settled = false;
+    const settle = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+    rl.on("line", (line) => {
+      settle(() => resolve(line));
       rl.close();
-      resolve(line);
     });
-    rl.once("close", () => {
-      // If close fires before line, the stream ended without a newline.
-      resolve("");
+    rl.on("close", () => {
+      // Stream ended without a newline — only honored if no line was
+      // delivered first.
+      settle(() => resolve(""));
     });
-    rl.once("error", (err) => {
+    rl.on("error", (err) => {
+      settle(() => reject(err));
       rl.close();
-      reject(err);
     });
   });
 }
