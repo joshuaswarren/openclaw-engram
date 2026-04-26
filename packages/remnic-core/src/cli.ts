@@ -205,6 +205,14 @@ import { getTrainingExportAdapter, listTrainingExportAdapters } from "./training
 import { renderRecallExplain, parseRecallExplainFormat } from "./recall-explain-renderer.js";
 import { renderXray } from "./recall-xray-renderer.js";
 import { parseXrayCliOptions } from "./recall-xray-cli.js";
+import {
+  collectPatternMemories,
+  explainPatternMemory,
+  parsePatternsExplainOptions,
+  parsePatternsListOptions,
+  renderPatternExplain,
+  renderPatternsList,
+} from "./patterns-cli.js";
 
 interface CliApi {
   registerCli(
@@ -4510,6 +4518,74 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           } else {
             console.log(rendered);
           }
+        });
+
+      // ── Patterns subcommand (issue #687 PR 4/4) ──────────────────────────
+      // `remnic patterns list` and `remnic patterns explain <id>` surface
+      // the pattern-reinforcement output written by PR 2/4.  Validation
+      // helpers live in `patterns-cli.ts` (pure functions, unit-testable
+      // without booting an orchestrator — CLAUDE.md rules 14 + 51).
+      const patternsCmd = cmd
+        .command("patterns")
+        .description(
+          "Inspect reinforced pattern memories produced by the pattern-reinforcement job (#687 PR 2/4).",
+        );
+
+      patternsCmd
+        .command("list")
+        .description(
+          "List memories with reinforcement_count > 0, sorted by count desc.  Part of #687.",
+        )
+        .option(
+          "--limit <N>",
+          "Maximum number of rows to show (default 50, positive integer)",
+        )
+        .option(
+          "--category <list>",
+          "Comma-separated category filter (e.g. fact,preference)",
+        )
+        .option(
+          "--since <ISO>",
+          "Only include memories reinforced on or after this ISO 8601 timestamp",
+        )
+        .option(
+          "--format <fmt>",
+          "Output format: text (default), markdown, or json",
+        )
+        .action(async (...args: unknown[]) => {
+          // Commander passes the options object as the only / last arg
+          // for a command with no positional arguments.
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const parsed = parsePatternsListOptions(options);
+          const memories = await orchestrator.storage.readAllMemories();
+          const rows = collectPatternMemories(memories, parsed);
+          console.log(renderPatternsList(rows, parsed.format));
+        });
+
+      patternsCmd
+        .command("explain")
+        .description(
+          "Show reinforcement detail for a single pattern canonical: count, provenance chain, and cluster members.  Part of #687.",
+        )
+        .argument("<memoryId>", "ID of the canonical memory to explain")
+        .option(
+          "--format <fmt>",
+          "Output format: text (default), markdown, or json",
+        )
+        .action(async (...args: unknown[]) => {
+          const rawId = args[0];
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const parsed = parsePatternsExplainOptions(rawId, options);
+          const memories = await orchestrator.storage.readAllMemories();
+          const detail = explainPatternMemory(memories, parsed.id);
+          if (detail === null) {
+            process.stderr.write(
+              `patterns explain: "${parsed.id}" was not found or has no reinforcement_count > 0.\n`,
+            );
+            process.exitCode = 1;
+            return;
+          }
+          console.log(renderPatternExplain(detail, parsed.format));
         });
 
       cmd
