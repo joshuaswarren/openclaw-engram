@@ -696,10 +696,24 @@ let graphPulsePhase = 0;
  * @param {string} suffix
  * @returns {boolean}
  */
+/**
+ * Normalize a file path to forward-slash form so Windows backslash paths
+ * compare correctly against the forward-slash-normalized graph node IDs.
+ * @param {string} p
+ * @returns {string}
+ */
+function normalizeSep(p) {
+  return p.replace(/\\/g, "/");
+}
+
 function pathEndsWith(str, suffix) {
   if (!str || !suffix) return false;
-  if (str === suffix) return true;
-  return str.endsWith("/" + suffix);
+  // Normalize separators before comparison so Windows backslash paths
+  // (from recall result.path) match forward-slash graph node IDs.
+  const s = normalizeSep(str);
+  const fx = normalizeSep(suffix);
+  if (s === fx) return true;
+  return s.endsWith("/" + fx);
 }
 
 /**
@@ -1190,8 +1204,9 @@ async function loadMemoryGraph() {
   const nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
   const edges = Array.isArray(snapshot.edges) ? snapshot.edges : [];
 
-  // Always reset highlights and close panel at the start of every reload,
-  // before branching on empty vs non-empty — so stale state never persists.
+  // Always reset highlights, invalidate in-flight searches, and close panel
+  // at the start of every reload — so stale state never persists.
+  graphSearchToken += 1;
   graphHighlightIds = new Map();
   closeGraphNodePanel();
 
@@ -1256,6 +1271,14 @@ async function loadMemoryGraph() {
 // ─── Graph search + drill-through (issue #691 PR 4/5) ───────────────────────
 
 /**
+ * Monotonically incrementing token for in-flight graph search requests.
+ * Incremented on every runGraphSearch call; the async continuation discards
+ * results if the token changed while the fetch was in flight (e.g. because
+ * the user refreshed the graph or cleared search before it resolved).
+ */
+let graphSearchToken = 0;
+
+/**
  * Run a recall search against the existing recall endpoint and highlight the
  * matching nodes in the graph.  Uses `POST /engram/v1/recall` — the same
  * endpoint as the Recall Debugger — with a fixed `sessionKey` so it does not
@@ -1268,18 +1291,25 @@ async function runGraphSearch() {
     setStatus("graphStatus", "Load the graph first before searching.", "error");
     return;
   }
+  // Claim a token before the first await so a concurrent call gets a
+  // different value and this response is discarded when it resolves late.
+  const myToken = ++graphSearchToken;
   setStatus("graphStatus", `Searching for "${query}"…`);
   try {
     const recall = await fetchJson("/engram/v1/recall", {
       method: "POST",
       body: JSON.stringify({ query, sessionKey: "admin-console-graph-search" }),
     });
+    // Discard if a newer search (or a graph refresh/clear) ran while we awaited.
+    if (myToken !== graphSearchToken) return;
     // Normalise: recall response may have results in different shapes.
     // `recall.memories`, `recall.results`, or fall back to empty.
     const rawResults =
       Array.isArray(recall.memories) ? recall.memories :
       Array.isArray(recall.results)  ? recall.results  :
       [];
+    // Guard again: graphData may have been cleared during the fetch.
+    if (!graphData) return;
     graphHighlightIds = resolveHighlights(graphData.nodes, rawResults);
     // Store frontmatter IDs on matched nodes for drill-through.
     for (const [nodeId, memId] of graphHighlightIds.entries()) {
@@ -1296,12 +1326,15 @@ async function runGraphSearch() {
       count > 0 ? "ok" : "default",
     );
   } catch (err) {
+    if (myToken !== graphSearchToken) return;
     setStatus("graphStatus", err.message || String(err), "error");
   }
 }
 
 /** Clear the current highlight selection and redraw. */
 function clearGraphSearch() {
+  // Invalidate any in-flight search so its response is discarded.
+  graphSearchToken += 1;
   graphHighlightIds = new Map();
   const input = $("graphSearchQuery");
   if (input) input.value = "";
@@ -1369,82 +1402,114 @@ async function openGraphNodePanel(node) {
   // Use the frontmatter memory ID for the endpoint when available (attached
   // by runGraphSearch via resolveHighlights).  Graph node IDs are relative
   // paths; the memory-detail endpoint resolves by frontmatter ID, not path.
-  // Fall back to node.id so non-search-originated clicks still attempt a
-  // lookup (will 404 gracefully if the node ID isn't a frontmatter ID).
+  //
+  // When no frontmatter ID is available (node not yet matched by a search),
+  // we attempt the lookup with node.id and gracefully fall back to showing
+  // the snapshot metadata if the endpoint returns 404 — so the panel is still
+  // informative for every node, not just searched ones.
   const lookupId = node._memoryId || node.id;
 
+  let response = null;
   try {
-    const response = await fetchJson(`/engram/v1/memories/${encodeURIComponent(lookupId)}`);
-
-    // Discard if a newer openGraphNodePanel call was made while we awaited.
+    response = await fetchJson(`/engram/v1/memories/${encodeURIComponent(lookupId)}`);
+  } catch (err) {
+    // Discard stale errors.
     if (myToken !== graphNodePanelToken) return;
-
-    const mem = response.memory || {};
-
-    // Build frontmatter table from top-level scalar fields.
-    if (frontmatterEl) {
-      const table = document.createElement("table");
-      const FRONTMATTER_KEYS = [
-        "id", "category", "status", "importance", "entityRef",
-        "created", "updated", "path",
-      ];
-      FRONTMATTER_KEYS.forEach((key) => {
-        const val = mem[key];
-        if (val == null) return;
-        const tr = document.createElement("tr");
-        const tdKey = document.createElement("td");
-        tdKey.textContent = key;
-        const tdVal = document.createElement("td");
-        tdVal.textContent = String(val);
-        tr.appendChild(tdKey);
-        tr.appendChild(tdVal);
-        table.appendChild(tr);
-      });
-      clearChildren(frontmatterEl);
-      frontmatterEl.appendChild(table);
+    // On 404 (no frontmatter ID known yet) fall through with null response so
+    // the panel still shows snapshot data.  Surface real errors as-is.
+    const isNotFound = err?.payload?.error === "Not found" ||
+      (err?.message || "").includes("404");
+    if (!isNotFound) {
+      if (status) { status.textContent = err.message || String(err); status.className = "status error"; }
+      if (contentEl) contentEl.textContent = "Failed to load memory content.";
+      return;
     }
+    // 404 — fall through with response = null; we'll show snapshot data.
+  }
 
-    // Render content — raw text.
-    if (contentEl) {
+  // Discard if a newer openGraphNodePanel call was made while we awaited.
+  if (myToken !== graphNodePanelToken) return;
+
+  // When lookup succeeded, use the full memory record.
+  // When it 404-ed (response === null), synthesise from snapshot node data
+  // so the panel is informative for every node, not just searched ones.
+  const mem = response?.memory || {};
+  const isSnapshotOnly = !response?.found;
+
+  // Build frontmatter table from top-level scalar fields.
+  if (frontmatterEl) {
+    const table = document.createElement("table");
+    const FRONTMATTER_KEYS = [
+      "id", "category", "status", "importance", "entityRef",
+      "created", "updated", "path",
+    ];
+    FRONTMATTER_KEYS.forEach((key) => {
+      const val = mem[key];
+      if (val == null) return;
+      const tr = document.createElement("tr");
+      const tdKey = document.createElement("td");
+      tdKey.textContent = key;
+      const tdVal = document.createElement("td");
+      tdVal.textContent = String(val);
+      tr.appendChild(tdKey);
+      tr.appendChild(tdVal);
+      table.appendChild(tr);
+    });
+    clearChildren(frontmatterEl);
+    frontmatterEl.appendChild(table);
+  }
+
+  // Render content — raw text, or snapshot summary when no detail loaded.
+  if (contentEl) {
+    if (isSnapshotOnly) {
+      contentEl.textContent = [
+        `id: ${node.id}`,
+        `category: ${node.kind || "unknown"}`,
+        `score: ${typeof node.score === "number" ? node.score.toFixed(3) : "?"}`,
+        node.lastUpdated ? `updated: ${node.lastUpdated}` : null,
+        "",
+        "(Run a graph search to load the full memory detail for this node.)",
+      ].filter((l) => l !== null).join("\n");
+    } else {
       contentEl.textContent = typeof mem.content === "string"
         ? mem.content
         : JSON.stringify(mem, null, 2);
     }
+  }
 
-    // Render related edges from the snapshot already in memory.
-    // Uses DOM methods exclusively — no innerHTML — to avoid XSS.
-    if (edgesEl && graphData) {
-      const related = graphData.edges.filter(
-        (e) => e._srcNode?.id === node.id || e._tgtNode?.id === node.id,
-      );
-      clearChildren(edgesEl);
-      if (related.length === 0) {
-        edgesEl.textContent = "No edges in current snapshot.";
-      } else {
-        const ul = document.createElement("ul");
-        related.forEach((e) => {
-          const li = document.createElement("li");
-          const isSource = e._srcNode?.id === node.id;
-          const peerId = isSource ? e._tgtNode?.id : e._srcNode?.id;
-          const direction = isSource ? "→" : "←";
-          const strong = document.createElement("strong");
-          strong.textContent = `${direction} ${e.kind ?? ""}`;
-          li.appendChild(strong);
-          li.appendChild(document.createTextNode(
-            ` ${peerId || "?"} (confidence ${e.confidence?.toFixed(2) ?? "?"})`,
-          ));
-          ul.appendChild(li);
-        });
-        edgesEl.appendChild(ul);
-      }
+  // Render related edges from the snapshot already in memory.
+  // Uses DOM methods exclusively — no innerHTML — to avoid XSS.
+  if (edgesEl && graphData) {
+    const related = graphData.edges.filter(
+      (e) => e._srcNode?.id === node.id || e._tgtNode?.id === node.id,
+    );
+    clearChildren(edgesEl);
+    if (related.length === 0) {
+      edgesEl.textContent = "No edges in current snapshot.";
+    } else {
+      const ul = document.createElement("ul");
+      related.forEach((e) => {
+        const li = document.createElement("li");
+        const isSource = e._srcNode?.id === node.id;
+        const peerId = isSource ? e._tgtNode?.id : e._srcNode?.id;
+        const direction = isSource ? "→" : "←";
+        const strong = document.createElement("strong");
+        strong.textContent = `${direction} ${e.kind ?? ""}`;
+        li.appendChild(strong);
+        li.appendChild(document.createTextNode(
+          ` ${peerId || "?"} (confidence ${e.confidence?.toFixed(2) ?? "?"})`,
+        ));
+        ul.appendChild(li);
+      });
+      edgesEl.appendChild(ul);
     }
+  }
 
-    if (status) { status.textContent = `Loaded ${lookupId}.`; status.className = "status ok"; }
-  } catch (err) {
-    // Discard stale error responses too.
-    if (myToken !== graphNodePanelToken) return;
-    if (status) { status.textContent = err.message || String(err); status.className = "status error"; }
-    if (contentEl) contentEl.textContent = "Failed to load memory content.";
+  if (status) {
+    status.textContent = isSnapshotOnly
+      ? `Snapshot data for ${node.id}. Search to load full detail.`
+      : `Loaded ${lookupId}.`;
+    status.className = isSnapshotOnly ? "status" : "status ok";
   }
 }
 
