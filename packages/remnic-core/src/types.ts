@@ -894,6 +894,20 @@ export interface PluginConfig {
    * apply across all peers in a single run. Default 8.
    */
   peerProfileReasonerMaxFieldsPerRun: number;
+  /**
+   * When true, inject the active peer's profile fields into the recall
+   * context as a "## Peer Profile" section. Default false (opt-in,
+   * Gotcha #30/#48 — least-privileged default). Requires the session's
+   * peer ID to be registered via `setPeerIdForSession` before recall.
+   */
+  peerProfileRecallEnabled: boolean;
+  /**
+   * Maximum number of peer profile fields to inject per recall. Only
+   * the most-recently-updated N fields are included to keep the context
+   * budget predictable. Default 5. Setting to 0 disables field
+   * injection even when `peerProfileRecallEnabled` is true.
+   */
+  peerProfileRecallMaxFields: number;
   // Creation-memory foundation
   creationMemoryEnabled: boolean;
   memoryUtilityLearningEnabled: boolean;

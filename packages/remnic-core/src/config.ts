@@ -1650,6 +1650,19 @@ export function parseConfig(raw: unknown): PluginConfig {
       8,
       "peerProfileReasonerMaxFieldsPerRun",
     ),
+    // Peer profile recall injection (issue #679 PR 3/5). Default-off
+    // per Gotcha #30/#48 (least-privileged default, new feature gate).
+    // `coerceBool` handles CLI string forms "true"/"1"/"yes"/"on"
+    // (Gotcha #36). `coerceNonNegativeInt` handles string CLI values
+    // (Gotcha #28) and documents 0 as the disable value (Gotcha #45 —
+    // schema minimum must also be 0 so they stay consistent).
+    peerProfileRecallEnabled:
+      coerceBool(cfg.peerProfileRecallEnabled) ?? false,
+    peerProfileRecallMaxFields: coerceNonNegativeInt(
+      cfg.peerProfileRecallMaxFields,
+      5,
+      "peerProfileRecallMaxFields",
+    ),
     creationMemoryEnabled: cfg.creationMemoryEnabled === true,
     memoryUtilityLearningEnabled: cfg.memoryUtilityLearningEnabled === true,
     promotionByOutcomeEnabled: cfg.promotionByOutcomeEnabled === true,

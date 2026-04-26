@@ -1323,6 +1323,15 @@ export class Orchestrator {
    * through the same namespace layer).
    */
   private readonly _codingContextBySession = new Map<string, CodingContext>();
+  /**
+   * Per-session peer ID registry (issue #679 PR 3/5).
+   * Set by connectors / hooks via `setPeerIdForSession` so `recallInternal`
+   * can inject the peer's profile into recall context when
+   * `peerProfileRecallEnabled` is true. Cleared when the session ends.
+   * Keyed by sessionKey so concurrent sessions don't clobber each other
+   * (rule 11 — scope globals per plugin ID / session).
+   */
+  private readonly _peerIdBySession = new Map<string, string>();
   private routingRulesStore: RoutingRulesStore | null = null;
   private contentHashIndex: ContentHashIndex | null = null;
   private readonly artifactSourceStatusCache = new WeakMap<
@@ -1517,6 +1526,62 @@ export class Orchestrator {
     const overlay = resolveCodingNamespaceOverlay(codingContext, this.config.codingMode, this.config.defaultNamespace);
     if (!overlay) return baseNamespace;
     return combineNamespaces(baseNamespace, overlay.namespace);
+  }
+
+  /**
+   * Register a peer ID for a session so recall can inject the peer's
+   * profile into context (issue #679 PR 3/5). Pass `null` to clear.
+   *
+   * Connectors and the `before_agent_start` hook call this when the
+   * session's counter-party is known. The ID is validated against
+   * `PEER_ID_PATTERN` before storing.
+   *
+   * Fail-closed (Codex P1 review): an invalid peerId clears any
+   * previously registered mapping for the session rather than silently
+   * keeping stale data. This prevents a malformed metadata update from
+   * mixing one peer's profile context into another session.
+   *
+   * Defensive init (Cursor review + rule 16): `Object.create(
+   * Orchestrator.prototype)` stubs in legacy tests skip class-field
+   * initializers, so `_peerIdBySession` may be undefined. Mirror the
+   * same guard used by `setCodingContextForSession`.
+   */
+  setPeerIdForSession(sessionKey: string, peerId: string | null): void {
+    if (typeof sessionKey !== "string" || sessionKey.length === 0) return;
+    // Defensive init — mirrors setCodingContextForSession (rule 16).
+    if (!this._peerIdBySession) {
+      (this as unknown as { _peerIdBySession: Map<string, string> })._peerIdBySession = new Map();
+    }
+    if (peerId === null) {
+      this._peerIdBySession.delete(sessionKey);
+      return;
+    }
+    // Basic pattern guard — full validation lives in peers/storage.ts.
+    // Invalid input is fail-closed: clear the existing mapping so stale
+    // peer context can't bleed in after a bad metadata update (Codex P1).
+    if (
+      typeof peerId !== "string" ||
+      peerId.length === 0 ||
+      peerId.length > 64 ||
+      !/^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$/.test(peerId)
+    ) {
+      log.warn(`setPeerIdForSession: invalid peerId — clearing session mapping`);
+      this._peerIdBySession.delete(sessionKey);
+      return;
+    }
+    this._peerIdBySession.set(sessionKey, peerId);
+  }
+
+  /**
+   * Return the peer ID registered for a session, or `null` when none
+   * is set. Used by `recallInternal` to inject the peer profile section.
+   * Defensive `_peerIdBySession` lookup — legacy orchestrator-flush tests
+   * use `Object.create(Orchestrator.prototype)` which skips class-field
+   * initializers, so the Map may be undefined on stubs.
+   */
+  getPeerIdForSession(sessionKey: string | undefined): string | null {
+    if (typeof sessionKey !== "string" || sessionKey.length === 0) return null;
+    return this._peerIdBySession?.get(sessionKey) ?? null;
   }
 
   /**
@@ -6303,6 +6368,88 @@ export class Orchestrator {
       return profile || null;
     })();
 
+    // 1p. Peer profile injection (issue #679 PR 3/5).
+    // Reads the profile.md for the peer registered on this session and
+    // injects the most-recently-updated N fields into context. Wrapped
+    // in a try-catch (CLAUDE.md #13 — external I/O must not crash the
+    // primary recall flow). Gate: `peerProfileRecallEnabled` must be
+    // true AND `peerProfileRecallMaxFields` must be > 0 AND a peer ID
+    // must be registered for this session (rule 30 — new
+    // filters/transforms must have configuration gates).
+    const peerProfileRecallPromise = (async (): Promise<string | null> => {
+      if (!this.config.peerProfileRecallEnabled) return null;
+      if (this.config.peerProfileRecallMaxFields <= 0) return null;
+      const peerId = this.getPeerIdForSession(sessionKey);
+      if (!peerId) return null;
+      const t0 = Date.now();
+      try {
+        const { readPeerProfile: _readPeerProfile } = await import("./peers/index.js");
+        const peerProfile = await _readPeerProfile(this.config.memoryDir, peerId);
+        recordRecallSectionMetric({
+          section: "peerProfile",
+          priority: "core",
+          durationMs: Date.now() - t0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "fresh",
+          success: true,
+        });
+        if (!peerProfile) return null;
+        const allFields = Object.entries(peerProfile.fields);
+        if (allFields.length === 0) return null;
+        // Select the top-N most-recently-updated fields by consulting
+        // provenance. Fields without provenance get epoch-0 ms so they
+        // sort last (least recent).
+        // Codex P2: parse ISO-8601 to epoch ms rather than comparing
+        // strings. ISO-8601 strings with different timezone offsets
+        // (e.g. "2026-04-20T00:00:00+05:00" vs "2026-04-20T00:00:00Z")
+        // can order incorrectly under lexicographic comparison even
+        // though they may refer to different instants. `Date.parse`
+        // returns NaN on malformed input — we fall back to 0 (epoch)
+        // so invalid timestamps sort last rather than causing NaN
+        // comparison instability.
+        const fieldsByRecency = allFields
+          .map(([key, value]) => {
+            const prov = peerProfile.provenance[key];
+            // Find the most recent observedAt (epoch ms) across all
+            // provenance entries for this field. Fall back to 0 if none
+            // recorded or if all entries are malformed.
+            let latestMs = 0;
+            if (Array.isArray(prov) && prov.length > 0) {
+              for (const p of prov) {
+                if (typeof p.observedAt === "string") {
+                  const parsed = Date.parse(p.observedAt);
+                  if (Number.isFinite(parsed) && parsed > latestMs) {
+                    latestMs = parsed;
+                  }
+                }
+              }
+            }
+            return { key, value, latestMs };
+          })
+          // Descending: most-recently-updated first (rule 19 — sort
+          // comparators must return 0 for equal items so use secondary key).
+          .sort((a, b) => {
+            if (b.latestMs !== a.latestMs) return b.latestMs - a.latestMs;
+            return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+          });
+        const capped = fieldsByRecency.slice(0, this.config.peerProfileRecallMaxFields);
+        const lines = capped.map(({ key, value }) => `**${key}**: ${value}`);
+        return `## Peer Profile\n\n${lines.join("\n\n")}`;
+      } catch (err) {
+        recordRecallSectionMetric({
+          section: "peerProfile",
+          priority: "core",
+          durationMs: Date.now() - t0,
+          deadlineMs: recallSectionDeadlineMs,
+          source: "fresh",
+          success: false,
+          timing: `error(${err instanceof Error ? err.message : String(err)})`,
+        });
+        log.debug(`peer profile recall injection failed (non-fatal): ${err}`);
+        return null;
+      }
+    })();
+
     // 1a. Identity continuity signals (v8.4)
     const identityContinuityPromise = (async () => {
       if (
@@ -7870,6 +8017,7 @@ export class Orchestrator {
       compactionSection,
       summariesSection,
       conversationRecallSection,
+      peerProfileSection,
     ] = await raceRecallAbort(
       Promise.all(
         (
@@ -7893,6 +8041,7 @@ export class Orchestrator {
             ["compaction", compactionPromise],
             ["summaries", summariesPromise],
             ["convRecall", conversationRecallPromise],
+            ["peerProfile", peerProfileRecallPromise],
           ] as const
         ).map(([name, p]) =>
           (p as Promise<unknown>).then((v) => {
@@ -7923,6 +8072,7 @@ export class Orchestrator {
           typeof compactionPromise extends Promise<infer T> ? T : never,
           typeof summariesPromise extends Promise<infer T> ? T : never,
           typeof conversationRecallPromise extends Promise<infer T> ? T : never,
+          typeof peerProfileRecallPromise extends Promise<infer T> ? T : never,
         ]
       >,
       options.abortSignal,
@@ -8036,6 +8186,14 @@ export class Orchestrator {
         sectionBuckets,
         "profile",
         `## User Profile\n\n${profile}`,
+      );
+
+    // 1p. Peer profile (issue #679 PR 3/5)
+    if (peerProfileSection)
+      this.appendRecallSection(
+        sectionBuckets,
+        "peer-profile",
+        peerProfileSection,
       );
 
     // 1-pre. Calibration rules (injected early so model sees adjustments first)
