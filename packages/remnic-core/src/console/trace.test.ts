@@ -590,18 +590,30 @@ test("flushWithTimeout returns timedOut=true when flush stalls past deadline (Co
   // disk / stuck network FS), the helper must return
   // `timedOut: true` so the CLI can log a warning and proceed with
   // shutdown rather than hanging on Ctrl-C.
-  const start = Date.now();
-  const result = await flushWithTimeout(
-    () => new Promise<void>(() => undefined), // never resolves
-    50,
-  );
-  const elapsed = Date.now() - start;
-  assert.equal(result.timedOut, true);
-  assert.equal(result.flushed, false);
-  assert.ok(
-    elapsed >= 40 && elapsed < 500,
-    `expected ~50ms wall time, took ${elapsed}ms`,
-  );
+  //
+  // Codex P1 round 3: the fallback timer is now `unref()`'d so it
+  // does not, on its own, hold the event loop open. In production
+  // the CLI keeps the loop alive via the awaited `recorder.close()`
+  // promise plus other handles. In this isolated unit test we
+  // anchor a ref'd handle (a long no-op interval) to mirror that
+  // and ensure the unref'd timer still fires.
+  const anchor = setInterval(() => undefined, 60_000);
+  try {
+    const start = Date.now();
+    const result = await flushWithTimeout(
+      () => new Promise<void>(() => undefined), // never resolves
+      50,
+    );
+    const elapsed = Date.now() - start;
+    assert.equal(result.timedOut, true);
+    assert.equal(result.flushed, false);
+    assert.ok(
+      elapsed >= 40 && elapsed < 500,
+      `expected ~50ms wall time, took ${elapsed}ms`,
+    );
+  } finally {
+    clearInterval(anchor);
+  }
 });
 
 test("flushWithTimeout captures errors from flush without throwing (Codex P1 #732)", async () => {
@@ -615,6 +627,69 @@ test("flushWithTimeout captures errors from flush without throwing (Codex P1 #73
   assert.equal(result.flushed, true);
   assert.equal(result.timedOut, false);
   assert.equal(result.error, boom);
+});
+
+test("flushWithTimeout cancels fallback timer when flush wins the race (Codex P1 #732 round 3)", async () => {
+  // Codex P1 round 3: the 2s fallback timer must be cleared AND
+  // unref'd once the flush resolves. Without this, every normal
+  // shutdown leaves a ref'd setTimeout pending and Node delays exit
+  // by the full timeout window. We verify by:
+  //   1. Spying `globalThis.setTimeout` to capture the handle and
+  //      observe `unref()` calls.
+  //   2. Spying `globalThis.clearTimeout` to confirm the helper
+  //      invokes it after the flush wins.
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  const handles: Array<{ unrefCalled: boolean; cleared: boolean }> = [];
+  let lastHandle: ReturnType<typeof setTimeout> | null = null;
+  globalThis.setTimeout = ((cb: () => void, ms?: number) => {
+    const handle = realSetTimeout(cb, ms);
+    const record = { unrefCalled: false, cleared: false };
+    const originalUnref = handle.unref?.bind(handle);
+    if (originalUnref) {
+      handle.unref = () => {
+        record.unrefCalled = true;
+        return originalUnref();
+      };
+    }
+    handles.push(record);
+    lastHandle = handle;
+    // Tag so clearTimeout spy can map handle → record.
+    (handle as unknown as { __record: typeof record }).__record = record;
+    return handle;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((handle: ReturnType<typeof setTimeout>) => {
+    const record = (handle as unknown as { __record?: { cleared: boolean } })
+      .__record;
+    if (record) record.cleared = true;
+    return realClearTimeout(handle);
+  }) as typeof clearTimeout;
+  try {
+    const result = await flushWithTimeout(async () => {
+      // resolves on next microtask
+      await Promise.resolve();
+    }, 5000);
+    assert.equal(result.flushed, true);
+    assert.equal(result.timedOut, false);
+    // The helper schedules exactly one timer (the fallback). It must
+    // be both unref'd and cleared.
+    const fallback = handles.find((h) => h === handles[handles.length - 1]);
+    assert.ok(fallback, "expected at least one setTimeout call");
+    assert.equal(
+      fallback!.unrefCalled,
+      true,
+      "fallback timer must be unref()'d so it never holds the event loop",
+    );
+    assert.equal(
+      fallback!.cleared,
+      true,
+      "fallback timer must be cleared once flush wins the race",
+    );
+    assert.ok(lastHandle, "expected a captured timer handle");
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
 });
 
 test("replayTrace exits cleanly when sleep override rejects with AbortError", async () => {
