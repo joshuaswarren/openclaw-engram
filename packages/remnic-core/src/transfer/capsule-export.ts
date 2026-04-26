@@ -212,10 +212,24 @@ function validateName(name: unknown): void {
   }
 }
 
+/**
+ * Strict ISO-8601 prefix used to validate {@link ExportCapsuleOptions.since}.
+ * `Date.parse` accepts permissive values like `"April 26"`, which silently
+ * defaults to the local timezone and the year 2001. Rule 51: reject invalid
+ * input rather than silently coercing.
+ */
+const ISO_8601_RE =
+  /^\d{4}-\d{2}-\d{2}(?:[Tt]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:[Zz]|[+-]\d{2}:?\d{2})?)?$/;
+
 function parseSince(since: string | undefined): number | null {
   if (since === undefined) return null;
   if (typeof since !== "string" || since.trim() === "") {
     throw new Error("exportCapsule: 'since' must be a non-empty ISO-8601 string");
+  }
+  if (!ISO_8601_RE.test(since)) {
+    throw new Error(
+      `exportCapsule: 'since' is not a valid ISO-8601 timestamp: ${since}`,
+    );
   }
   const ms = Date.parse(since);
   if (!Number.isFinite(ms)) {
