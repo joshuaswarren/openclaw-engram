@@ -293,6 +293,24 @@ test("'since' accepts well-formed timestamps with offsets", async () => {
   }
 });
 
+test("'since' rejects time-of-day forms without a timezone designator", async () => {
+  const root = await makeFixture([{ rel: "a.md", content: "a\n" }]);
+  // ECMAScript parses these as local time, which makes acceptance and the
+  // resulting cutoff depend on the host's TZ. The strict regex requires an
+  // explicit Z or ±HH:MM offset whenever a time component is present.
+  for (const bad of [
+    "2026-02-28T00:00:00",
+    "2026-02-28T12:34",
+    "2026-02-28T00:00:00.500",
+  ]) {
+    await assert.rejects(
+      exportCapsule({ name: "bad-tz", root, since: bad }),
+      /not a valid ISO/i,
+      `expected ${bad} to be rejected`,
+    );
+  }
+});
+
 test("non-directory root is rejected", async () => {
   const tmp = await mkdtemp(path.join(tmpdir(), "capsule-root-file-"));
   const filePath = path.join(tmp, "not-a-dir");

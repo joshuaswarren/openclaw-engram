@@ -213,13 +213,21 @@ function validateName(name: unknown): void {
 }
 
 /**
- * Strict ISO-8601 prefix used to validate {@link ExportCapsuleOptions.since}.
- * `Date.parse` accepts permissive values like `"April 26"`, which silently
- * defaults to the local timezone and the year 2001. Rule 51: reject invalid
- * input rather than silently coercing.
+ * Strict ISO-8601 form accepted by {@link parseSince}. We accept exactly two
+ * shapes:
+ *
+ *   1. Date-only:  `YYYY-MM-DD` — interpreted as UTC midnight per ECMAScript.
+ *   2. Date+time with an explicit timezone designator:
+ *      `YYYY-MM-DDTHH:MM(:SS(.fff)?)?(Z|±HH:MM)`.
+ *
+ * Notably **rejected**: date+time **without** a timezone (e.g.
+ * `2026-02-28T00:00:00`). ECMAScript treats this as local time, which makes
+ * acceptance and the resulting cutoff depend on the host's `TZ` and silently
+ * shifts incremental-export windows for users outside UTC. Rule 51: reject
+ * inputs that silently coerce to a host-dependent meaning.
  */
 const ISO_8601_RE =
-  /^\d{4}-\d{2}-\d{2}(?:[Tt]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:[Zz]|[+-]\d{2}:?\d{2})?)?$/;
+  /^\d{4}-\d{2}-\d{2}(?:[Tt]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:[Zz]|[+-]\d{2}:?\d{2}))?$/;
 
 function parseSince(since: string | undefined): number | null {
   if (since === undefined) return null;
