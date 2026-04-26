@@ -118,8 +118,13 @@ existing top-level keys readable for backward compatibility.
 - `consolidationRequireNonZeroExtraction` — only consolidate when
   the recent extraction has produced at least one fact. Default
   `true`.
-- `summaryRecallHours`, `summaryModel` — summary snapshot horizon
-  and model used during REM.
+
+(Note: `summaryRecallHours` and `summaryModel` are *not* REM-phase
+gates — they configure the recall summaries path in
+`orchestrator.ts`, not `runSemanticConsolidation`. Summary
+snapshotting that runs alongside REM is gated by the
+`semanticConsolidation*` keys above and by `summary-snapshot.ts`
+internally.)
 
 ### Deep sleep gates (today)
 
@@ -134,11 +139,15 @@ existing top-level keys readable for backward compatibility.
   disables pruning.
 - The `engram-nightly-governance` cron registered in
   `maintenance/memory-governance-cron.ts` — orchestrates the deep
-  sleep pass on a schedule. The same module also registers
-  `engram-day-summary`, `engram-procedural-mining`, and
-  `engram-contradiction-scan`. Light sleep and REM tasks are
-  scheduled in adjacent crons today; PR 3/4 wires per-phase
-  telemetry through the same registration path.
+  sleep pass on a schedule. The same module registers exactly four
+  crons today: `engram-day-summary`, `engram-nightly-governance`,
+  `engram-procedural-mining`, and `engram-contradiction-scan`.
+  Light sleep and REM are *not* cron-scheduled — they run inside the
+  orchestrator maintenance pass via `runLifecyclePolicyPass` (light
+  sleep) and `runSemanticConsolidation` (REM) in `orchestrator.ts`.
+  PR 3/4 will wire per-phase telemetry through both code paths
+  (cron and orchestrator pass) so the named-phase view stays
+  consistent regardless of which trigger ran the work.
 
 ## What's next
 
