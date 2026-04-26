@@ -2,7 +2,7 @@
  * PersonaMem-v2 runner migrated into @remnic/bench for phase 1.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { Message } from "../../../adapters/types.js";
@@ -39,6 +39,7 @@ interface RawPersonaMemRow {
   chat_history_128k_link?: string;
   user_query: string;
   correct_answer: string;
+  incorrect_answers?: string;
   topic_query?: string;
   preference?: string;
   topic_preference?: string;
@@ -105,8 +106,19 @@ export async function runPersonaMemBenchmark(
         10,
         sessionId,
       );
+      const mcq =
+        sample.incorrectAnswers && sample.incorrectAnswers.length > 0
+          ? buildMcqPrompt(sample, options.seed ?? 0)
+          : undefined;
+      const evaluationQuestion = mcq
+        ? [
+            appendPersonaMemRecallInstruction(sample.userQuery),
+            "",
+            mcq.instruction,
+          ].join("\n")
+        : sample.userQuery;
       const answered = await answerBenchmarkQuestion({
-        question: sample.userQuery,
+        question: evaluationQuestion,
         recalledText,
         responder: options.system.responder,
       });
@@ -122,6 +134,12 @@ export async function runPersonaMemBenchmark(
         contains_answer: containsAnswer(answered.finalAnswer, sample.correctAnswer),
         search_hits: searchResults.length,
       };
+      const predictedMcqOption = mcq
+        ? extractMcqFinalAnswer(answered.finalAnswer)
+        : undefined;
+      if (mcq) {
+        scores.mcq_accuracy = predictedMcqOption === mcq.correctOption ? 1 : 0;
+      }
       if (judgeResult.score >= 0) {
         scores.llm_judge = judgeResult.score;
       }
@@ -147,9 +165,15 @@ export async function runPersonaMemBenchmark(
           who: sample.who,
           updated: sample.updated,
           prevPref: sample.prevPref,
+          incorrectAnswers: sample.incorrectAnswers,
           chatHistoryMessageCount: sample.chatHistory.chat_history.length,
           chatHistory32kLink: sample.chatHistory32kLink,
           chatHistory128kLink: sample.chatHistory128kLink,
+          evaluationMode: mcq ? "mcq" : "open_ended",
+          evaluationQuestion,
+          mcqOptions: mcq?.options,
+          correctMcqOption: mcq?.correctOption,
+          predictedMcqOption,
           recalledLength: recalledText.length,
           answeredLength: answered.finalAnswer.length,
           recalledText,
@@ -315,6 +339,7 @@ async function hydrateSample(
     personaId: row.persona_id,
     userQuery,
     correctAnswer: row.correct_answer,
+    incorrectAnswers: parseIncorrectAnswers(row.incorrect_answers),
     topicQuery: row.topic_query,
     preference: row.preference,
     topicPreference: row.topic_preference,
@@ -373,6 +398,7 @@ function parseCsvRows(
         chat_history_128k_link: valueAt("chat_history_128k_link") || undefined,
         user_query: valueAt("user_query"),
         correct_answer: valueAt("correct_answer"),
+        incorrect_answers: valueAt("incorrect_answers") || undefined,
         topic_query: valueAt("topic_query") || undefined,
         preference: valueAt("preference") || undefined,
         topic_preference: valueAt("topic_preference") || undefined,
@@ -543,6 +569,135 @@ function readQuotedValue(
       return { value, end: index + 1 };
     }
     value += char;
+  }
+
+  return undefined;
+}
+
+function parseIncorrectAnswers(raw: string | undefined): string[] | undefined {
+  if (!raw || raw.trim().length === 0) {
+    return undefined;
+  }
+
+  const trimmed = raw.trim();
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed.map((value) => String(value)).filter((value) => value.trim().length > 0);
+    }
+  } catch {
+    // Fall through to the Python-literal parser below.
+  }
+
+  return parseLooseStringList(trimmed);
+}
+
+function parseLooseStringList(raw: string): string[] | undefined {
+  const values: string[] = [];
+  let index = 0;
+
+  while (index < raw.length) {
+    const char = raw[index]!;
+    if (char !== "'" && char !== "\"") {
+      index += 1;
+      continue;
+    }
+
+    const parsed = readQuotedValue(raw, index);
+    if (!parsed) {
+      return undefined;
+    }
+    if (parsed.value.trim().length > 0) {
+      values.push(parsed.value);
+    }
+    index = parsed.end;
+  }
+
+  return values.length > 0 ? values : undefined;
+}
+
+interface PersonaMemMcqPrompt {
+  instruction: string;
+  options: Record<string, string>;
+  correctOption: string;
+}
+
+function buildMcqPrompt(
+  sample: PersonaMemSample,
+  seed: number,
+): PersonaMemMcqPrompt {
+  const options = deterministicShuffle(
+    [sample.correctAnswer, ...(sample.incorrectAnswers ?? [])],
+    `${seed}:${sample.personaId}:${sample.userQuery}`,
+  );
+  const mappedOptions: Record<string, string> = {};
+  const optionLines = options.map((option, index) => {
+    const letter = String.fromCharCode(65 + index);
+    mappedOptions[letter] = option;
+    return `${letter}. ${option}`;
+  });
+  const correctOption = Object.entries(mappedOptions).find(
+    ([, value]) => value === sample.correctAnswer,
+  )?.[0];
+
+  if (!correctOption) {
+    throw new Error(
+      `PersonaMem-v2 could not map correct answer for persona ${sample.personaId}.`,
+    );
+  }
+
+  return {
+    instruction: [
+      "Please choose the best answer from the following options:",
+      "",
+      ...optionLines,
+      "",
+      "Think step by step about which answer best fits the user's query and conversation context.",
+      "Provide your reasoning first, then give your final answer as 'Final Answer: [Letter]'",
+    ].join("\n"),
+    options: mappedOptions,
+    correctOption,
+  };
+}
+
+function deterministicShuffle(values: string[], seedMaterial: string): string[] {
+  return values
+    .map((value, index) => ({
+      value,
+      key: createHash("sha256")
+        .update(`${seedMaterial}:${index}:${value}`)
+        .digest("hex"),
+      index,
+    }))
+    .sort((left, right) => {
+      const byKey = left.key.localeCompare(right.key);
+      return byKey === 0 ? left.index - right.index : byKey;
+    })
+    .map((entry) => entry.value);
+}
+
+function appendPersonaMemRecallInstruction(userQuery: string): string {
+  return `${userQuery} Please recall my related preferences from our conversation history to give personalized responses.`;
+}
+
+function extractMcqFinalAnswer(response: string): string | undefined {
+  const patterns = [
+    /\$\\boxed\{([A-Z])\}\$/i,
+    /\\boxed\{([A-Z])\}/i,
+    /final answer:\s*([A-Z])/i,
+    /final answer is\s*\$?\\boxed\{([A-Z])\}\$?/i,
+    /final answer is\s*([A-Z])/i,
+    /the answer is\s*\$?\\boxed\{([A-Z])\}\$?/i,
+    /the answer is\s*([A-Z])/i,
+    /answer:\s*([A-Z])\b/i,
+    /\b([A-Z])\.\s*$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = response.match(pattern);
+    if (match?.[1]) {
+      return match[1].toUpperCase();
+    }
   }
 
   return undefined;

@@ -12,6 +12,7 @@ export interface PersonaMemSample {
   personaId: string;
   userQuery: string;
   correctAnswer: string;
+  incorrectAnswers?: string[];
   chatHistory: PersonaMemChatHistory;
   topicQuery?: string;
   preference?: string;

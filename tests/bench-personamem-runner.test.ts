@@ -5,6 +5,7 @@ import path from "node:path";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import type {
   BenchMemoryAdapter,
+  BenchResponder,
   Message,
   SearchResult,
 } from "../packages/bench/src/index.js";
@@ -12,6 +13,8 @@ import { runBenchmark } from "../packages/bench/src/index.js";
 
 class FakeMemoryAdapter implements BenchMemoryAdapter {
   readonly sessions = new Map<string, Message[]>();
+
+  constructor(readonly responder?: BenchResponder) {}
 
   async store(sessionId: string, messages: Message[]): Promise<void> {
     const existing = this.sessions.get(sessionId) ?? [];
@@ -179,6 +182,150 @@ test("runBenchmark executes personamem in full mode from an explicit dataset roo
     result.results.tasks[0]?.actual.includes("Earl Grey"),
     true,
   );
+});
+
+test("runBenchmark scores personamem with official-style MCQ accuracy when distractors are present", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-personamem-mcq-"));
+  const datasetDir = path.join(tmpDir, "datasets", "personamem");
+  const benchmarkDir = path.join(datasetDir, "benchmark", "text");
+  const chatHistoryDir = path.join(datasetDir, "data", "chat_history_32k");
+  let promptSeen = "";
+  const adapter = new FakeMemoryAdapter({
+    async respond(question, recalledText) {
+      promptSeen = question;
+      assert.match(question, /Please choose the best answer/);
+      assert.match(question, /Please recall my related preferences/);
+      assert.match(recalledText, /Earl Grey/);
+      return {
+        text: "The history points to the tea option.\n\nFinal Answer: A",
+        tokens: { input: 10, output: 8 },
+        latencyMs: 3,
+        model: "fake-responder",
+      };
+    },
+  });
+  await mkdir(benchmarkDir, { recursive: true });
+  await mkdir(chatHistoryDir, { recursive: true });
+
+  await writeFile(
+    path.join(chatHistoryDir, "persona-1.json"),
+    JSON.stringify({
+      metadata: { persona_id: "persona-1" },
+      chat_history: [
+        {
+          role: "user",
+          content: "I like to journal every morning with a mug of Earl Grey tea.",
+        },
+      ],
+    }),
+    "utf8",
+  );
+
+  await writeFile(
+    path.join(benchmarkDir, "benchmark.csv"),
+    toCsv(
+      [
+        "persona_id",
+        "chat_history_32k_link",
+        "user_query",
+        "correct_answer",
+        "incorrect_answers",
+      ],
+      [
+        "persona-1",
+        "data/chat_history_32k/persona-1.json",
+        "{'role': 'user', 'content': 'Which tea do I usually drink while journaling?'}",
+        "Earl Grey",
+        JSON.stringify(["coffee", "peppermint"]),
+      ],
+    ),
+    "utf8",
+  );
+
+  const result = await runBenchmark("personamem", {
+    mode: "full",
+    datasetDir,
+    seed: 0,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.mcq_accuracy, 1);
+  assert.equal(result.results.aggregates.mcq_accuracy?.mean, 1);
+  assert.equal(task.details?.evaluationMode, "mcq");
+  assert.equal(task.details?.correctMcqOption, "A");
+  assert.equal(task.details?.predictedMcqOption, "A");
+  assert.deepEqual(task.details?.mcqOptions, {
+    A: "Earl Grey",
+    B: "coffee",
+    C: "peppermint",
+  });
+  assert.match(promptSeen, /Final Answer: \[Letter\]/);
+});
+
+test("runBenchmark prefers explicit final MCQ answers over broad answer labels", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-personamem-mcq-final-priority-"));
+  const datasetDir = path.join(tmpDir, "datasets", "personamem");
+  const benchmarkDir = path.join(datasetDir, "benchmark", "text");
+  const chatHistoryDir = path.join(datasetDir, "data", "chat_history_32k");
+  const adapter = new FakeMemoryAdapter({
+    async respond() {
+      return {
+        text: "My answer: After checking the memory, my final answer is B.",
+        tokens: { input: 10, output: 10 },
+        latencyMs: 3,
+        model: "fake-responder",
+      };
+    },
+  });
+  await mkdir(benchmarkDir, { recursive: true });
+  await mkdir(chatHistoryDir, { recursive: true });
+
+  await writeFile(
+    path.join(chatHistoryDir, "persona-1.json"),
+    JSON.stringify({
+      chat_history: [
+        {
+          role: "user",
+          content: "I like to journal every morning with a mug of Earl Grey tea.",
+        },
+      ],
+    }),
+    "utf8",
+  );
+
+  await writeFile(
+    path.join(benchmarkDir, "benchmark.csv"),
+    toCsv(
+      [
+        "persona_id",
+        "chat_history_32k_link",
+        "user_query",
+        "correct_answer",
+        "incorrect_answers",
+      ],
+      [
+        "persona-1",
+        "data/chat_history_32k/persona-1.json",
+        "{'role': 'user', 'content': 'Which tea do I usually drink while journaling?'}",
+        "Earl Grey",
+        JSON.stringify(["peppermint", "zebra"]),
+      ],
+    ),
+    "utf8",
+  );
+
+  const result = await runBenchmark("personamem", {
+    mode: "full",
+    datasetDir,
+    seed: 0,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.details?.correctMcqOption, "B");
+  assert.equal(task.details?.predictedMcqOption, "B");
+  assert.equal(task.scores.mcq_accuracy, 1);
 });
 
 test("runBenchmark rejects personamem full mode without datasetDir", async () => {
