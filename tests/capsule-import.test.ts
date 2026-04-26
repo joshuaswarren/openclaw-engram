@@ -6,6 +6,7 @@ import {
   readFile,
   readdir,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -663,6 +664,180 @@ test("imported records are returned sorted by sourcePath regardless of bundle or
 // Type-only sanity: ImportCapsuleMode covers exactly the documented values.
 const _allModes: ImportCapsuleMode[] = ["skip", "overwrite", "fork"];
 void _allModes;
+
+// ---------------------------------------------------------------------------
+// Thread 1 (#741 line 467): CRLF line endings preserved during frontmatter rewrite
+// ---------------------------------------------------------------------------
+
+test("fork mode preserves CRLF line endings when rewriting frontmatter id", async () => {
+  // Build a CRLF file manually and inject it into a hand-crafted bundle so
+  // the importer's CRLF-preservation logic (Cursor thread #741 line 467) is
+  // exercised.  `exportCapsule` normalises to LF, so we bypass it here.
+  const crlfContent = "---\r\nid: crlf-id\r\nimportance: 3\r\n---\r\n\r\nbody text\r\n";
+  const { sha256String } = await import(
+    "../packages/remnic-core/src/transfer/fs-utils.js"
+  );
+  const { sha256, bytes } = sha256String(crlfContent);
+
+  const bundle = {
+    manifest: {
+      format: "openclaw-engram-export" as const,
+      schemaVersion: 2 as const,
+      createdAt: "2026-04-26T00:00:00.000Z",
+      pluginVersion: "9.9.9",
+      includesTranscripts: false,
+      files: [{ path: "facts/crlf.md", sha256, bytes }],
+      capsule: {
+        id: "crlf-cap",
+        version: "0.1.0",
+        schemaVersion: "taxonomy-v1",
+        parentCapsule: null,
+        description: "",
+        retrievalPolicy: { tierWeights: {}, directAnswerEnabled: false },
+        includes: {
+          taxonomy: false,
+          identityAnchors: false,
+          peerProfiles: false,
+          procedural: false,
+        },
+      },
+    },
+    records: [{ path: "facts/crlf.md", content: crlfContent }],
+  };
+
+  const { gzipSync } = await import("node:zlib");
+  const tmp = await mkdtemp(path.join(tmpdir(), "capsule-crlf-"));
+  const archivePath = path.join(tmp, "crlf.capsule.json.gz");
+  await writeFile(archivePath, gzipSync(Buffer.from(JSON.stringify(bundle), "utf-8")));
+
+  const dst = await makeEmptyMemoryDir();
+  const result = await importCapsule({
+    archivePath,
+    root: dst,
+    mode: "fork",
+    now: 9999,
+  });
+
+  assert.equal(result.imported.length, 1);
+  assert.equal(result.imported[0].rewroteId, true);
+
+  const written = await readFile(
+    path.join(dst, "forks", "crlf-cap", "facts", "crlf.md"),
+    "utf-8",
+  );
+
+  // The opening `---` delimiter must use CRLF, not LF.
+  assert.ok(
+    written.startsWith("---\r\n"),
+    `expected CRLF after opening ---, got: ${JSON.stringify(written.slice(0, 10))}`,
+  );
+  // The body line endings must also be CRLF.
+  assert.ok(
+    written.includes("importance: 3\r\n"),
+    "CRLF line endings must be preserved in frontmatter body",
+  );
+  // The id line was rewritten.
+  assert.ok(!written.includes("id: crlf-id\r\n"), "original id must be replaced");
+  assert.match(written, /^id: crlf-id-fork-crlf-cap-[0-9a-f]{8}\r\n/m);
+  // Body text preserved with CRLF.
+  assert.ok(written.includes("\r\nbody text\r\n"), "body CRLF must be preserved");
+});
+
+// ---------------------------------------------------------------------------
+// Thread 2 (#741 line 247): fork-mode path escape via parent-traversal in
+// the original record path is caught by the containment check.
+// ---------------------------------------------------------------------------
+
+test("fork mode rejects a record whose original path traverses out of the fork namespace", async () => {
+  // A manifest path of `../../escape.md` in fork mode computes a targetRel of
+  // `forks/<id>/../../escape.md`, which path.join normalises to `escape.md`
+  // (still inside root if only two levels), or if deep enough the suffix
+  // escapes the root entirely.  We use enough `../` to definitely escape.
+  const content = "evil\n";
+  const { sha256String } = await import(
+    "../packages/remnic-core/src/transfer/fs-utils.js"
+  );
+  const { sha256, bytes } = sha256String(content);
+
+  // Three levels of `../` ensures the target ends up above rootReal regardless
+  // of how deep rootReal itself is, because path.join collapses the segments:
+  //   path.join('/tmp/dst', 'forks/cap-id/../../../escape.md')
+  //   → path.join('/tmp/dst', '../escape.md')
+  //   → '/tmp/escape.md'  (outside dst)
+  const escapingPath = "../../../escape.md";
+  const bundle = {
+    manifest: {
+      format: "openclaw-engram-export" as const,
+      schemaVersion: 2 as const,
+      createdAt: "2026-04-26T00:00:00.000Z",
+      pluginVersion: "9.9.9",
+      includesTranscripts: false,
+      files: [{ path: escapingPath, sha256, bytes }],
+      capsule: {
+        id: "escape-cap",
+        version: "0.1.0",
+        schemaVersion: "taxonomy-v1",
+        parentCapsule: null,
+        description: "",
+        retrievalPolicy: { tierWeights: {}, directAnswerEnabled: false },
+        includes: {
+          taxonomy: false,
+          identityAnchors: false,
+          peerProfiles: false,
+          procedural: false,
+        },
+      },
+    },
+    records: [{ path: escapingPath, content }],
+  };
+
+  const { gzipSync } = await import("node:zlib");
+  const tmp = await mkdtemp(path.join(tmpdir(), "capsule-fork-escape-"));
+  const archivePath = path.join(tmp, "escape.capsule.json.gz");
+  await writeFile(archivePath, gzipSync(Buffer.from(JSON.stringify(bundle), "utf-8")));
+
+  const dst = await makeEmptyMemoryDir();
+  await assert.rejects(
+    importCapsule({ archivePath, root: dst, mode: "fork" }),
+    /escapes target root/i,
+  );
+  // Nothing should have been written.
+  const written = await listMemoryFiles(dst);
+  assert.deepEqual(written, [], "escaping fork path must not leave partial writes");
+});
+
+// ---------------------------------------------------------------------------
+// Thread 3 (#741 line 264): symlinked subdirectory bypass is caught by
+// the realpath-aware containment check.
+// ---------------------------------------------------------------------------
+
+test("import rejects a record that would write through a symlinked subdirectory pointing outside root", async () => {
+  // Create a source capsule with a normal record at `subdir/secret.md`.
+  const { archivePath } = await exportTo(
+    [{ rel: "subdir/secret.md", content: "should not land outside\n" }],
+    "symlink-cap",
+  );
+
+  // Create the destination root.
+  const dst = await makeEmptyMemoryDir();
+
+  // Create a real directory adjacent to `dst` (the "outside" target).
+  const outside = await mkdtemp(path.join(tmpdir(), "capsule-outside-"));
+
+  // Plant a symlink at dst/subdir → outside, so that any write to
+  // dst/subdir/secret.md would actually land in outside/secret.md.
+  const symlinkPath = path.join(dst, "subdir");
+  await symlink(outside, symlinkPath, "dir");
+
+  await assert.rejects(
+    importCapsule({ archivePath, root: dst }),
+    /escapes target root via symlink/i,
+  );
+
+  // Confirm the outside directory is empty (no partial write occurred).
+  const outsideFiles = await listMemoryFiles(outside);
+  assert.deepEqual(outsideFiles, [], "symlink bypass must not write outside the root");
+});
 
 // ---------------------------------------------------------------------------
 // Additional coverage for reviewer feedback

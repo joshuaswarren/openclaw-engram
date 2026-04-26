@@ -1,4 +1,4 @@
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
@@ -230,6 +230,23 @@ export async function importCapsule(
       );
     }
 
+    // Source path validation: reject any record whose posix source path
+    // contains a `..` segment, an absolute prefix, or any component that would
+    // let fork-mode bypass its isolation invariant.  This check runs before
+    // `computeTargetPath` so that fork mode's `forks/<id>/` rebase cannot be
+    // bypassed by a path like `../../profile.md` (which `path.join` would
+    // silently collapse, landing the file inside root but outside the fork
+    // prefix — Cursor medium thread #741).  Rejecting `..` up-front is simpler
+    // and more robust than normalising after the fact.
+    if (
+      rec.path.startsWith("/") ||
+      rec.path.split("/").some((seg) => seg === "..")
+    ) {
+      throw new Error(
+        `importCapsule: record path escapes target root: ${rec.path}`,
+      );
+    }
+
     // Path-traversal validation (moved here from phase 2 per Cursor feedback:
     // the traversal check must run before ANY write so a malicious archive
     // with an escaping path that sorts last cannot land partial writes).
@@ -245,6 +262,15 @@ export async function importCapsule(
         `importCapsule: record path escapes target root: ${rec.path}`,
       );
     }
+
+    // Symlink-aware containment check (Cursor thread #741 line 247/264).
+    // The lexical check above handles `..`-traversal but cannot detect
+    // symlinked subdirectories that point outside the root. We resolve the
+    // nearest existing ancestor of the target via realpath to catch symlinks
+    // anywhere in the path components. If any resolved prefix escapes rootReal,
+    // the import is rejected before any write. This applies to ALL modes,
+    // including fork mode whose rebase prefix may itself traverse a symlink.
+    await assertRealpathInsideRoot(rootReal, targetAbs, rec.path);
 
     // Duplicate normalized target path detection (Codex P1 #741, line 188).
     // `path.join` already normalises `.` segments (e.g. `subdir/./file.md` →
@@ -407,6 +433,46 @@ async function fileExistsAt(absPath: string): Promise<boolean> {
   return st !== null && st.isFile();
 }
 
+/**
+ * Walk upward from {@link targetAbs} to find the nearest existing ancestor,
+ * resolve it via `fs.realpath` (which follows symlinks), then re-append the
+ * remaining suffix and verify the result is inside {@link rootReal}.
+ *
+ * This catches the case where an existing subdirectory at any point in the
+ * path is a symlink that points outside the intended import root. Because the
+ * file does not exist yet we cannot realpath it directly; we resolve the
+ * deepest existing prefix and re-apply the non-existent suffix.
+ *
+ * Callers must ensure {@link rootReal} was already resolved via `realpath`.
+ */
+async function assertRealpathInsideRoot(
+  rootReal: string,
+  targetAbs: string,
+  sourcePath: string,
+): Promise<void> {
+  // Walk from targetAbs toward root until we find a path component that exists.
+  let existing = targetAbs;
+  const suffix: string[] = [];
+  while (existing !== path.dirname(existing)) {
+    const st = await lstat(existing).catch(() => null);
+    if (st !== null) break;
+    suffix.unshift(path.basename(existing));
+    existing = path.dirname(existing);
+  }
+
+  // Resolve the existing prefix via realpath to follow any symlinks.
+  const existingReal = await realpath(existing).catch(() => existing);
+
+  // Re-apply the non-existent suffix to get the real final path.
+  const targetReal = suffix.length > 0 ? path.join(existingReal, ...suffix) : existingReal;
+
+  if (!isPathInsideRoot(rootReal, targetReal)) {
+    throw new Error(
+      `importCapsule: record path escapes target root via symlink: ${sourcePath}`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Fork-mode id rewriting
 // ---------------------------------------------------------------------------
@@ -434,6 +500,16 @@ function rewriteFrontmatterIdForFork(
   capsuleId: string,
   now: number | undefined,
 ): { content: string; rewrote: boolean } {
+  // Detect the dominant line ending in the file so we can preserve it when
+  // rebuilding the frontmatter delimiters. Splitting/joining on `\n` silently
+  // drops `\r` from CRLF files, changing the byte content (Cursor thread #741
+  // line 467). We detect the ending of the very first line (the opening `---`)
+  // and use that as the canonical separator for the reconstructed delimiters.
+  // All three cases are covered: CRLF (\r\n), LF (\n), and bare CR (\r).
+  const crlfMatch = /^---(\r\n|\r|\n)/.exec(content);
+  // Fall back to LF if the file starts with `---` but has no newline (EOF).
+  const eol = crlfMatch ? crlfMatch[1] : "\n";
+
   // Frontmatter block detection: `---` on its own line at the very start,
   // followed by content, followed by `---` on its own line. The closing
   // delimiter must be at column 0. We capture the trailing terminator
@@ -457,12 +533,15 @@ function rewriteFrontmatterIdForFork(
   const newId = mintForkId(capsuleId, idMatch[1]?.trim() ?? "", now);
   const replacedBody = fmBody.replace(idLineRe, `id: ${newId}`);
   // Reconstruct the file: original prefix (always empty here, fmStart === 0
-  // by the `^` anchor) + frontmatter delimiters around the rewritten body
-  // (preserving the original trailing terminator) + the original body that
-  // followed the closing `---`.
+  // by the `^` anchor) + frontmatter delimiters around the rewritten body.
+  // Use the detected `eol` for the opening/closing `---` lines so that CRLF
+  // files remain CRLF and LF files remain LF, preserving byte-content fidelity
+  // (Cursor thread #741 line 467).  The captured `fmTrailer` (the newline
+  // immediately after the closing `---`, or end-of-string) is re-emitted
+  // verbatim so the byte immediately after the closing fence is unchanged.
   const prefix = content.slice(0, fmStart);
   const tail = content.slice(fmEnd);
-  const rebuilt = `${prefix}---\n${replacedBody}\n---${fmTrailer}${tail}`;
+  const rebuilt = `${prefix}---${eol}${replacedBody}${eol}---${fmTrailer}${tail}`;
   return { content: rebuilt, rewrote: true };
 }
 
