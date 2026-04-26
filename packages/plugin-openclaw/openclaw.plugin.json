@@ -696,6 +696,57 @@
           }
         }
       },
+      "connectors": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "description": "Live-connector configuration (issue #683). Each child object maps to one concrete LiveConnector. Defaults are off; operators must opt in.",
+        "properties": {
+          "googleDrive": {
+            "type": "object",
+            "additionalProperties": false,
+            "default": {},
+            "description": "Google Drive live connector (issue #683 PR 2/N). Imports text content from a user's Drive into Remnic on a poll schedule.",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": false,
+                "description": "Master gate. Default off — set to true to enable Drive imports. The connector additionally requires clientId, clientSecret, and refreshToken to be populated before it will run."
+              },
+              "clientId": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 client id. Populate from your secret store (e.g. ${GOOGLE_DRIVE_CLIENT_ID}). Never commit a real value to source."
+              },
+              "clientSecret": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 client secret. Populate from your secret store (e.g. ${GOOGLE_DRIVE_CLIENT_SECRET}). Never commit a real value to source."
+              },
+              "refreshToken": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 refresh token issued for the user's Drive scope. Populate from your secret store (e.g. ${GOOGLE_DRIVE_REFRESH_TOKEN}). Never commit a real value to source."
+              },
+              "pollIntervalMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 86400000,
+                "default": 300000,
+                "description": "How often the scheduler should call the connector's syncIncremental, in milliseconds. Defaults to 5 minutes; max 24 hours."
+              },
+              "folderIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "Optional array of Google Drive folder ids to scope the import. Empty = all accessible files. Folder ids are validated for shape; nested folders are NOT auto-included."
+              }
+            }
+          }
+        }
+      },
       "codexMaterializeMemories": {
         "type": "boolean",
         "default": true,

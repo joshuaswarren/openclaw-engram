@@ -143,22 +143,89 @@ Credential storage (OAuth tokens, refresh tokens) is **not** part of this PR
 read them from the OS keychain or a user-supplied secret store, never from
 the connector state file.
 
+## Concrete connectors
+
+### Google Drive (`google-drive`) — issue #683 PR 2/N
+
+Imports text content from a user's Google Drive into Remnic on a poll
+schedule.
+
+- **Cursor:** opaque Drive `startPageToken` (`{kind: "drivePageToken"}`).
+  First sync seeds the token via `drive.changes.getStartPageToken` and emits
+  zero documents — historical files are deliberately not back-filled, so
+  enabling the connector does not flood the memory layer.
+- **Content extraction:** Google Docs / Sheets / Slides are exported to
+  plaintext / CSV via `files.export`; plain-text MIME types are pulled with
+  `files.get?alt=media`. Binary formats (images, PDFs, archives) are
+  skipped — those go through the binary-lifecycle pipeline, not the
+  textual ingestion path.
+- **Folder scope:** when `connectors.googleDrive.folderIds` is non-empty,
+  only files whose `parents` intersect the configured set are imported.
+  Empty array = all accessible files. Folder ids are validated for shape;
+  nested folders are NOT auto-included.
+- **Idempotency:** every emitted `ConnectorDocument.source` carries
+  `externalId = file.id` plus `externalRevision = file.modifiedTime`, so
+  downstream dedup recognises repeat fetches even if the cursor is rewound.
+- **Required OAuth scope:** read-only —
+  `https://www.googleapis.com/auth/drive.readonly` is sufficient.
+- **À-la-carte packaging.** The `googleapis` npm package is **not** a hard
+  dependency of `@remnic/core`. The connector loads it via a
+  computed-specifier dynamic import; operators who never enable the
+  connector pay nothing for it. To enable: `npm install googleapis` in the
+  host package, then populate `clientId`, `clientSecret`, `refreshToken`
+  in `connectors.googleDrive` and set `enabled: true`.
+- **Privacy.** No document content is ever logged. OAuth credentials are
+  accepted via config but the intended pattern is to populate them from a
+  secret store (env vars, keychain, systemd `EnvironmentFile`) — never
+  commit real values. The connector never persists credentials through the
+  state-store; it only persists the cursor + sync-status metadata.
+
+### Configuration
+
+```jsonc
+{
+  "connectors": {
+    "googleDrive": {
+      "enabled": true,
+      "clientId": "${GOOGLE_DRIVE_CLIENT_ID}",
+      "clientSecret": "${GOOGLE_DRIVE_CLIENT_SECRET}",
+      "refreshToken": "${GOOGLE_DRIVE_REFRESH_TOKEN}",
+      "pollIntervalMs": 300000,
+      "folderIds": []
+    }
+  }
+}
+```
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `enabled` | `false` | Master gate. Connector is also no-op until credentials are populated. |
+| `clientId` | `""` | OAuth2 client id. Populate from a secret store. |
+| `clientSecret` | `""` | OAuth2 client secret. Populate from a secret store. |
+| `refreshToken` | `""` | OAuth2 refresh token. Populate from a secret store. |
+| `pollIntervalMs` | `300000` (5 min) | Min `1000`, max `86400000` (24h). |
+| `folderIds` | `[]` | Drive folder ids to scope import. Empty = all accessible. |
+
 ## What's deferred
 
-- **Concrete connectors** — Drive, Notion, Gmail, GitHub (PRs 2–5).
+- **Other concrete connectors** — Notion, Gmail, GitHub (PRs 3–5).
 - **Maintenance scheduler integration** — wiring connectors into the periodic
   sync loop (separate PR).
 - **CLI surface** — `remnic connector list/status/sync/disable` (PR 6).
-- **OAuth helpers and credential storage** — PR 2 design.
+- **OAuth helpers and credential storage** — keychain-backed storage is
+  still TODO; the Drive connector currently reads its credential triple
+  directly from the validated config.
 
 ## File map
 
 ```
 packages/remnic-core/src/connectors/live/
-├── framework.ts         # LiveConnector interface + ConnectorConfig/Cursor/Document
-├── registry.ts          # LiveConnectorRegistry (pure, in-memory)
-├── state-store.ts       # readConnectorState / writeConnectorState / listConnectorStates
-├── index.ts             # Public barrel
+├── framework.ts             # LiveConnector interface + ConnectorConfig/Cursor/Document
+├── registry.ts              # LiveConnectorRegistry (pure, in-memory)
+├── state-store.ts           # readConnectorState / writeConnectorState / listConnectorStates
+├── google-drive.ts          # Google Drive connector (#683 PR 2/N)
+├── google-drive.test.ts     # Drive connector tests (mocked client)
+├── index.ts                 # Public barrel
 └── live-connectors.test.ts
 ```
 
