@@ -134,6 +134,13 @@ export class EngramAccessHttpServer {
   /** Throttle batch: pending SSE event batches per client. */
   private readonly sseBatchTimers = new Map<ServerResponse, ReturnType<typeof setTimeout>>();
   private readonly ssePendingBatches = new Map<ServerResponse, GraphEvent[]>();
+  /**
+   * Per-client cleanup callbacks: clear heartbeat interval, flush timer,
+   * unsubscribe from bus, and end the response.  Stored here so `stop()`
+   * can invoke them even when the client hasn't disconnected yet
+   * (Cursor review thread `access-http.ts:232`).
+   */
+  private readonly sseCleanupFns = new Set<() => void>();
 
   constructor(options: EngramAccessHttpServerOptions) {
     this.service = options.service;
@@ -219,8 +226,16 @@ export class EngramAccessHttpServer {
     const server = this.server;
     this.server = null;
     this.boundPort = 0;
-    // Drain all pending SSE batch timers and close client streams before
-    // closing the HTTP server so no dangling keep-alive connections block it.
+    // Invoke each SSE client's cleanup callback so heartbeat intervals,
+    // batch timers, and graph-bus subscriptions are all released before the
+    // HTTP server closes.  Without this, long-running SSE connections leak
+    // setInterval handles and EventEmitter listeners (Cursor review thread
+    // `access-http.ts:232`).
+    for (const cleanup of this.sseCleanupFns) {
+      try { cleanup(); } catch { /* ignore */ }
+    }
+    this.sseCleanupFns.clear();
+    // Belt-and-suspenders: clear any state not yet reached by cleanup fns.
     for (const [res, timer] of this.sseBatchTimers.entries()) {
       clearTimeout(timer);
       this.sseBatchTimers.delete(res);
@@ -351,7 +366,7 @@ export class EngramAccessHttpServer {
       return;
     }
 
-    if (!this.isAuthorized(req)) {
+    if (!this.isAuthorized(req, pathname)) {
       const body = JSON.stringify({ error: "unauthorized", code: "unauthorized" });
       res.writeHead(401, {
         "content-type": "application/json; charset=utf-8",
@@ -1172,13 +1187,27 @@ export class EngramAccessHttpServer {
    * Lifecycle:
    *  1. Write SSE headers (Content-Type: text/event-stream).
    *  2. Register this response in `sseClients`.
-   *  3. Subscribe to the graph event bus for the resolved memoryDir.
+   *  3. Resolve the namespace from the request and subscribe to THAT
+   *     namespace's graph event bus (Codex P1: in multi-namespace
+   *     deployments each namespace has its own bus keyed by its storage
+   *     dir — subscribing to the global root leaks events across tenants).
    *  4. On each event, add to a 200 ms batch; flush batch as a single SSE frame.
    *  5. Send heartbeat every 25 s.
    *  6. On client disconnect (req "close"), clean up timers and unsubscribe.
+   *  7. Register the cleanup callback in `sseCleanupFns` so `stop()` can
+   *     release the heartbeat interval and bus subscription even when the
+   *     client never disconnects (Cursor review thread `access-http.ts:232`).
    */
   private async handleGraphEventsSSE(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const memoryDir = this.service.memoryDir;
+    // Resolve namespace from the ?namespace= query parameter (same pattern
+    // as graphSnapshot and other read endpoints).  Falls back to the
+    // default namespace when absent.
+    const parsed = new URL(req.url ?? "/", `http://${hostToUrlAuthority(this.host)}`);
+    const namespaceParam = parsed.searchParams.get("namespace");
+    const namespace = namespaceParam && namespaceParam.length > 0 ? namespaceParam : undefined;
+    // Resolve to the per-namespace storage directory so the bus subscription
+    // is scoped to the correct tenant (CLAUDE.md rule 42).
+    const memoryDir = await this.service.getMemoryDirForNamespace(namespace);
 
     res.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
@@ -1238,8 +1267,14 @@ export class EngramAccessHttpServer {
       this.ssePendingBatches.delete(res);
       unsubscribe();
       this.sseClients.delete(res);
+      this.sseCleanupFns.delete(cleanup);
       try { res.end(); } catch { /* ignore */ }
     };
+
+    // Register so stop() can invoke cleanup even when the client is still
+    // connected (releases the heartbeat interval and bus subscription
+    // before the HTTP server is torn down).
+    this.sseCleanupFns.add(cleanup);
 
     req.once("close", cleanup);
     req.once("error", cleanup);
@@ -1381,7 +1416,7 @@ export class EngramAccessHttpServer {
     return result.data as SchemaTypeFor<S>;
   }
 
-  private isAuthorized(req: IncomingMessage): boolean {
+  private isAuthorized(req: IncomingMessage, pathname?: string): boolean {
     if (!this.authToken && this.authTokens.length === 0 && !this.authTokensGetter) return false;
     // Primary path: Authorization: Bearer <token> header.
     const raw = req.headers.authorization;
@@ -1395,11 +1430,15 @@ export class EngramAccessHttpServer {
         }
       }
     }
-    // Fallback: ?token= query parameter for SSE clients (EventSource can't
-    // set request headers).  Only accepted when no Authorization header is
-    // present — Authorization always wins.  CLAUDE.md rule 6: same security
-    // model as the header path; timing-safe compare used below.
-    if (!candidate) {
+    // Fallback: ?token= query parameter — ONLY accepted for the SSE
+    // endpoint (/engram/v1/graph/events).  EventSource cannot set request
+    // headers, so SSE clients must pass the token via the query string.
+    // Allowing this fallback on every endpoint would let a CSRF attacker
+    // embed a credentialed URL anywhere — restricting it to SSE limits the
+    // attack surface (Codex P2 review thread `access-http.ts:1406`; Cursor
+    // review thread `access-http.ts:1412`).  Authorization header always
+    // wins; timing-safe compare used below.
+    if (!candidate && pathname === "/engram/v1/graph/events") {
       try {
         const parsed = new URL(req.url ?? "/", `http://${hostToUrlAuthority(this.host)}`);
         const queryToken = parsed.searchParams.get("token");

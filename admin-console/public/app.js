@@ -1386,16 +1386,28 @@ function applyGraphEvent(event) {
   }
 
   if (event.type === "edge-removed") {
+    // Track which nodes had at least one edge BEFORE this removal so we
+    // only prune nodes that lost their last edge.  Nodes that were already
+    // isolated (no edges at all) are intentional standalone nodes and must
+    // not be removed (Cursor review thread `app.js:1398`).
+    const hadEdges = new Set();
+    for (const e of graphData.edges) {
+      hadEdges.add(e.source);
+      hadEdges.add(e.target);
+    }
     graphData.edges = graphData.edges.filter(
       (e) => !(e.source === p.source && e.target === p.target && e.kind === p.kind),
     );
-    // Prune orphan nodes (nodes with no remaining edges).
-    const connected = new Set();
+    // Build the still-connected set after removal.
+    const stillConnected = new Set();
     for (const e of graphData.edges) {
-      connected.add(e.source);
-      connected.add(e.target);
+      stillConnected.add(e.source);
+      stillConnected.add(e.target);
     }
-    graphData.nodes = graphData.nodes.filter((n) => connected.has(n.id));
+    // Only prune a node when it was connected before AND is now orphaned.
+    graphData.nodes = graphData.nodes.filter(
+      (n) => !hadEdges.has(n.id) || stillConnected.has(n.id),
+    );
     if (graphSim) graphSim.reheat();
     drawGraph();
   }
