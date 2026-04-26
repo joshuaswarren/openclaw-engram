@@ -155,7 +155,7 @@ function createOfficialChoiceDataset() {
               D: "Seville",
             },
             answer: "B",
-            target_step_id: [0],
+            target_step_id: "0",
           },
         },
       ],
@@ -223,6 +223,7 @@ function createOfficialPairedCoordinateDataset() {
               question: "Which item did I choose second?",
               choices: ["blue mug", "green notebook", "yellow folder", "silver watch"],
               answer: "B",
+              target_step_id: "not-a-number",
               target_step_coordinates: [[0, 0, 1], [0, 1]],
             },
           ],
@@ -371,6 +372,15 @@ test("runBenchmark scores official MemBench multiple-choice accuracy and recall"
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-membench-mcq-"));
   const datasetDir = path.join(tmpDir, "datasets", "membench");
   const adapter = new FakeMemoryAdapter();
+  adapter.search = async (_query, _limit, sessionId) => [
+    {
+      turnIndex: 0,
+      role: "user",
+      snippet: "Avery moved to Porto last year to be closer to the river walk.",
+      sessionId,
+      score: 1,
+    },
+  ];
   adapter.responder = {
     async respond() {
       return {
@@ -454,6 +464,15 @@ test("runBenchmark maps singular and paired MemBench coordinate tuples without c
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-membench-paired-coords-"));
   const datasetDir = path.join(tmpDir, "datasets", "membench");
   const adapter = new FakeMemoryAdapter();
+  adapter.search = async (_query, _limit, sessionId) => [
+    {
+      turnIndex: 1,
+      role: "assistant",
+      snippet: "The blue mug choice is saved.",
+      sessionId,
+      score: 1,
+    },
+  ];
   adapter.responder = {
     async respond() {
       return {
@@ -480,8 +499,10 @@ test("runBenchmark maps singular and paired MemBench coordinate tuples without c
   assert.equal(result.results.tasks.length, 2);
   assert.deepEqual(result.results.tasks[0]?.details?.targetStepCoordinates, [[0, 0, 1]]);
   assert.deepEqual(result.results.tasks[0]?.details?.targetStepIds, [1]);
+  assert.equal(result.results.tasks[0]?.scores.membench_recall_at_10, 1);
   assert.deepEqual(result.results.tasks[1]?.details?.targetStepCoordinates, [[0, 0, 1], [0, 1]]);
   assert.deepEqual(result.results.tasks[1]?.details?.targetStepIds, [1, 2]);
+  assert.equal(result.results.tasks[1]?.scores.membench_recall_at_10, 0.5);
 });
 
 test("runBenchmark keeps flat aliases from overwriting nested MemBench coordinates", async () => {

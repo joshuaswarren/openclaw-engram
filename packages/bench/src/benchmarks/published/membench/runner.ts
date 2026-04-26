@@ -815,13 +815,13 @@ function normalizeQaPairs(
 function resolveTargetRefSource(
   item: Record<string, unknown>,
 ): { value: unknown; kind: "ids" | "coordinates" } | undefined {
-  if (hasUsableTargetRef(item.target_step_id)) {
+  if (hasUsableTargetIdRef(item.target_step_id)) {
     return { value: item.target_step_id, kind: "ids" };
   }
-  if (hasUsableTargetRef(item.target_step_ids)) {
+  if (hasUsableTargetIdRef(item.target_step_ids)) {
     return { value: item.target_step_ids, kind: "ids" };
   }
-  if (hasUsableTargetRef(item.targetStepIds)) {
+  if (hasUsableTargetIdRef(item.targetStepIds)) {
     return { value: item.targetStepIds, kind: "ids" };
   }
   if (hasUsableTargetRef(item.target_step_coordinates)) {
@@ -846,6 +846,13 @@ function hasUsableTargetRef(value: unknown): boolean {
   return value !== undefined
     && value !== null
     && (!Array.isArray(value) || value.length > 0);
+}
+
+function hasUsableTargetIdRef(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some(hasUsableTargetIdRef);
+  }
+  return normalizeTargetRefPart(value) !== undefined;
 }
 
 function resolveCaseId(
@@ -1034,7 +1041,12 @@ async function scoreRecallAt10(
       sessionId,
     );
     const relevant = new Set(testCase.targetStepIds);
-    return results.some((result) => relevant.has(result.turnIndex)) ? 1 : 0;
+    const retrieved = new Set(
+      results
+        .map((result) => result.turnIndex)
+        .filter((turnIndex) => relevant.has(turnIndex)),
+    );
+    return retrieved.size / relevant.size;
   } catch {
     return -1;
   }
@@ -1178,18 +1190,19 @@ function parseTargetStepRefs(
       : [value];
   const coordinates = rawValues
     .filter(Array.isArray)
-    .map((items) => items.filter((item): item is number =>
-      typeof item === "number" && Number.isInteger(item) && item >= 0,
-    ))
+    .map((items) => items
+      .map(normalizeTargetRefPart)
+      .filter((item): item is number => item !== undefined))
     .filter((items) => items.length > 0);
   const candidates = new Set<number>();
   for (const item of rawValues) {
-    if (typeof item === "number" && Number.isInteger(item) && item >= 0) {
-      candidates.add(item);
+    const scalar = normalizeTargetRefPart(item);
+    if (scalar !== undefined) {
+      candidates.add(scalar);
     } else if (Array.isArray(item)) {
-      const numeric = item.filter((part): part is number =>
-        typeof part === "number" && Number.isInteger(part) && part >= 0,
-      );
+      const numeric = item
+        .map(normalizeTargetRefPart)
+        .filter((part): part is number => part !== undefined);
       if (numeric.length >= 2) {
         const mapped = coordinateIndex?.get(coordinateKey(numeric));
         if (mapped !== undefined) {
@@ -1213,10 +1226,19 @@ function parseTargetStepRefs(
   };
 }
 
+function normalizeTargetRefPart(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    return Number(value.trim());
+  }
+  return undefined;
+}
+
 function isCoordinateTuple(value: unknown[]): boolean {
-  return value.length > 0 && value.every((item) =>
-    typeof item === "number" && Number.isInteger(item) && item >= 0,
-  );
+  return value.length > 0
+    && value.every((item) => normalizeTargetRefPart(item) !== undefined);
 }
 
 function coordinateKey(coordinate: number[]): string {
