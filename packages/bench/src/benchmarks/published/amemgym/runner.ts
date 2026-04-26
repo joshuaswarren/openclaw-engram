@@ -269,7 +269,8 @@ function parseAMemGymChoice(
   qa: AMemGymQA,
 ): { index: number; choice: AMemGymQA["answer_choices"][number] } | undefined {
   const trimmed = rawAnswer.trim();
-  const selectedNumber = parseAMemGymOptionNumber(trimmed);
+  const optionCount = qa.answer_choices.length;
+  const selectedNumber = parseAMemGymOptionNumber(trimmed, optionCount);
   if (selectedNumber !== undefined) {
     const index = selectedNumber - 1;
     const choice = qa.answer_choices[index];
@@ -277,6 +278,25 @@ function parseAMemGymChoice(
       return { index, choice };
     }
     return undefined;
+  }
+  let fallbackAnswer = rawAnswer;
+  let forceTextFallback = false;
+  let blockTextFallbackSelection = false;
+  const normalizedTrimmedAnswer = normalizeForChoiceMatch(trimmed);
+  const exactTrimmedMatches = qa.answer_choices
+    .map((choice, index) => ({
+      index,
+      choice,
+      normalized: normalizeForChoiceMatch(choice.answer),
+    }))
+    .filter(
+      (candidate) =>
+        candidate.normalized.length > 0
+        && normalizedTrimmedAnswer === candidate.normalized,
+    );
+  if (exactTrimmedMatches.length === 1) {
+    const exactMatch = exactTrimmedMatches[0]!;
+    return { index: exactMatch.index, choice: exactMatch.choice };
   }
   const plainTextOption = parseAMemGymPlainTextOptionNumber(trimmed);
   if (plainTextOption !== undefined) {
@@ -286,18 +306,39 @@ function parseAMemGymChoice(
       return undefined;
     }
     if (
+      plainOptionTextExactlyMatchesChoice(
+        plainTextOption.choiceText,
+        choice.answer,
+      )
+    ) {
+      return { index, choice };
+    }
+    const hasConflictingOptionNumber = mentionsConflictingOptionNumber(
+      removeFirstChoiceAnswerText(plainTextOption.choiceText, choice.answer),
+      plainTextOption.selectedNumber,
+      optionCount,
+    );
+    if (
+      !hasConflictingOptionNumber
+      &&
       plainOptionTextMatchesChoice(plainTextOption.choiceText, choice.answer)
     ) {
       return { index, choice };
     }
+    if (hasConflictingOptionNumber) {
+      fallbackAnswer = plainTextOption.choiceText;
+      forceTextFallback = true;
+      blockTextFallbackSelection = true;
+    }
   }
-  const normalizedAnswer = normalizeForChoiceMatch(rawAnswer);
+  const normalizedAnswer = normalizeForChoiceMatch(fallbackAnswer);
   const normalizedChoices = qa.answer_choices.map((choice, index) => ({
     index,
     choice,
     normalized: normalizeForChoiceMatch(choice.answer),
   }));
-  const numericChoiceNumberAttempt = looksLikeChoiceNumberAttempt(trimmed);
+  const numericChoiceNumberAttempt = !forceTextFallback
+    && looksLikeChoiceNumberAttempt(trimmed);
   const numericAttemptPrefix = leadingNumericToken(normalizedAnswer);
 
   const exactMatches = normalizedChoices.filter(
@@ -308,8 +349,11 @@ function parseAMemGymChoice(
   if (exactMatches.length === 1) {
     const exactMatch = exactMatches[0]!;
     if (
-      !numericChoiceNumberAttempt
-      || numericPrefixesAgree(numericAttemptPrefix, exactMatch.normalized)
+      !blockTextFallbackSelection
+      && (
+        !numericChoiceNumberAttempt
+        || numericPrefixesAgree(numericAttemptPrefix, exactMatch.normalized)
+      )
     ) {
       return { index: exactMatch.index, choice: exactMatch.choice };
     }
@@ -341,7 +385,7 @@ function parseAMemGymChoice(
   const uniqueMatch = bestSubstringMatches.length === 1
     ? bestSubstringMatches[0]
     : undefined;
-  return uniqueMatch
+  return uniqueMatch && !blockTextFallbackSelection
     ? { index: uniqueMatch.index, choice: uniqueMatch.choice }
     : undefined;
 }
@@ -386,6 +430,60 @@ function plainOptionTextMatchesChoice(
     );
 }
 
+function plainOptionTextExactlyMatchesChoice(
+  choiceText: string,
+  choiceAnswer: string,
+): boolean {
+  const normalizedChoiceText = normalizeForChoiceMatch(choiceText);
+  const normalizedChoiceAnswer = normalizeForChoiceMatch(choiceAnswer);
+  return normalizedChoiceText.length > 0
+    && normalizedChoiceAnswer.length > 0
+    && normalizedChoiceText === normalizedChoiceAnswer;
+}
+
+function removeFirstChoiceAnswerText(
+  choiceText: string,
+  choiceAnswer: string,
+): string {
+  const choiceTextTokens = choiceMatchTokenSpans(choiceText);
+  const choiceAnswerTokens = choiceMatchTokenSpans(choiceAnswer);
+  if (
+    choiceTextTokens.length === 0
+    || choiceAnswerTokens.length === 0
+    || choiceAnswerTokens.length > choiceTextTokens.length
+  ) {
+    return choiceText;
+  }
+
+  for (let index = 0; index <= choiceTextTokens.length - choiceAnswerTokens.length; index += 1) {
+    const matches = choiceAnswerTokens.every(
+      (token, offset) => choiceTextTokens[index + offset]!.token === token.token,
+    );
+    if (!matches) {
+      continue;
+    }
+
+    const start = choiceTextTokens[index]!.start;
+    const end = choiceTextTokens[index + choiceAnswerTokens.length - 1]!.end;
+    return [
+      choiceText.slice(0, start),
+      choiceText.slice(end),
+    ].join(" ");
+  }
+
+  return choiceText;
+}
+
+function choiceMatchTokenSpans(
+  value: string,
+): Array<{ token: string; start: number; end: number }> {
+  return [...value.matchAll(/\w+/g)].map((match) => ({
+    token: match[0].toLowerCase(),
+    start: match.index ?? 0,
+    end: (match.index ?? 0) + match[0].length,
+  }));
+}
+
 function containsNormalizedPhrase(haystack: string, needle: string): boolean {
   const haystackTokens = haystack.split(" ").filter((token) => token.length > 0);
   const needleTokens = needle.split(" ").filter((token) => token.length > 0);
@@ -415,13 +513,16 @@ function leadingNumericToken(value: string): string | undefined {
   return value.match(/^(\d+)\b/)?.[1];
 }
 
-function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
+function parseAMemGymOptionNumber(
+  trimmedAnswer: string,
+  optionCount: number,
+): number | undefined {
   const bareNumber = trimmedAnswer.match(
     /^\(?#?\s*(\d+)\s*(?:\)(?!\s+\S))?(?<tail>\s*(?:\)\s+\S.*|\([^)]*\).*|because.*|[,.;:\-](?!\s*#?\d).*)?)$/i,
   );
   if (bareNumber) {
     const selectedNumber = Number.parseInt(bareNumber[1]!, 10);
-    if (mentionsConflictingOptionNumber(bareNumber.groups?.tail ?? "", selectedNumber)) {
+    if (mentionsConflictingOptionNumber(bareNumber.groups?.tail ?? "", selectedNumber, optionCount)) {
       return undefined;
     }
     return selectedNumber;
@@ -432,7 +533,7 @@ function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
   );
   if (labeledNumber) {
     const selectedNumber = Number.parseInt(labeledNumber[1]!, 10);
-    if (mentionsConflictingOptionNumber(labeledNumber.groups?.tail ?? "", selectedNumber)) {
+    if (mentionsConflictingOptionNumber(labeledNumber.groups?.tail ?? "", selectedNumber, optionCount)) {
       return undefined;
     }
     return selectedNumber;
@@ -450,29 +551,30 @@ function looksLikeChoiceNumberAttempt(trimmedAnswer: string): boolean {
 function mentionsConflictingOptionNumber(
   value: string,
   selectedNumber: number,
+  optionCount: number,
 ): boolean {
   const trimmed = value.trim();
   for (const match of trimmed.matchAll(/\b(?:option|choice|answer)\s*#?\s*(\d+)\b/gi)) {
-    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+    if (isConflictingOptionRef(match[1]!, selectedNumber, optionCount)) {
       return true;
     }
   }
   for (const match of trimmed.matchAll(/#\s*(\d+)\b/gi)) {
-    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+    if (isConflictingOptionRef(match[1]!, selectedNumber, optionCount)) {
       return true;
     }
   }
   for (const match of trimmed.matchAll(
     /\b(\d+)\s+(?:(?:might|may|could|would|should)\s+be\s+|is\s+(?:also\s+)?|also\s+)?(?:right|correct|valid|the\s+(?:answer|option|choice))\b/gi,
   )) {
-    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+    if (isConflictingOptionRef(match[1]!, selectedNumber, optionCount)) {
       return true;
     }
   }
   for (const match of trimmed.matchAll(
     /\b(?:or|maybe|possibly|probably|perhaps|alternatively)\s+#?\s*(\d+)\b/gi,
   )) {
-    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+    if (isConflictingOptionRef(match[1]!, selectedNumber, optionCount)) {
       return true;
     }
   }
@@ -482,7 +584,18 @@ function mentionsConflictingOptionNumber(
   );
   const ambiguousNumber = punctuationNumber?.[1] ?? punctuationNumber?.[2];
   return ambiguousNumber !== undefined
-    && Number.parseInt(ambiguousNumber, 10) !== selectedNumber;
+    && isConflictingOptionRef(ambiguousNumber, selectedNumber, optionCount);
+}
+
+function isConflictingOptionRef(
+  rawNumber: string,
+  selectedNumber: number,
+  optionCount: number,
+): boolean {
+  const optionNumber = Number.parseInt(rawNumber, 10);
+  return optionNumber >= 1
+    && optionNumber <= optionCount
+    && optionNumber !== selectedNumber;
 }
 
 function normalizeForChoiceMatch(value: string): string {
