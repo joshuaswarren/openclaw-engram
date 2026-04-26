@@ -16,7 +16,7 @@
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { importCapsule, type ImportCapsuleResult } from "./capsule-import.js";
-import { assertIsDirectoryNotSymlink } from "./fs-utils.js";
+import { assertIsDirectoryNotSymlink, assertRealpathInsideRoot } from "./fs-utils.js";
 import type { CapsuleParent, ExportManifestV2 } from "./types.js";
 import { CAPSULE_ID_PATTERN } from "./types.js";
 
@@ -180,8 +180,29 @@ export async function forkCapsule(opts: ForkCapsuleOptions): Promise<ForkCapsule
 
   // Ensure the fork breadcrumb directory exists (it may not exist if forkId
   // differs from the source capsule's id, or if all records were skipped).
-  await mkdir(path.dirname(path.join(forkDirAbs, "lineage.json")), { recursive: true });
   const lineagePath = path.join(forkDirAbs, "lineage.json");
+
+  // Guard lineage write against a symlinked `forks/` directory (or any
+  // intermediate path component) pointing outside the memory root.  If
+  // `targetRoot/forks` is a symlink to `/tmp/evil`, a zero-record capsule
+  // passes `importCapsule` without triggering per-record path checks and this
+  // write would silently escape the root sandbox.  We resolve the nearest
+  // existing ancestor of `lineagePath` via `realpath` (same technique used by
+  // `capsule-import` and `capsule-merge`) and verify the canonical path is
+  // still inside `rootReal` before creating any directories or writing.
+  //
+  // Note: `rootReal` is computed from `rootAbs` here rather than reusing
+  // `forkDirAbs` for the lexical check, because on macOS /tmp is a symlink
+  // to /private/tmp and `path.relative(rootReal, forkDirAbs)` would produce
+  // an absolute path if forkDirAbs was not also resolved. We skip the lexical
+  // pre-check and rely solely on `assertRealpathInsideRoot` which handles
+  // both the realpath walk and the containment check atomically.
+  const rootReal = await realpath(rootAbs);
+  // Symlink-safe containment check: walks the nearest existing ancestor and
+  // confirms the canonical path is still inside rootReal.
+  await assertRealpathInsideRoot(rootReal, lineagePath, `forks/${opts.forkId}/lineage.json`, "forkCapsule");
+
+  await mkdir(path.dirname(lineagePath), { recursive: true });
 
   // Write breadcrumb AFTER import completes successfully — consistent with
   // gotcha #25 (don't destroy old state before new state is confirmed) and

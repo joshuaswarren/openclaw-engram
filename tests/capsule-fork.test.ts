@@ -574,3 +574,45 @@ test("exportCapsule: explicit parentCapsule override still wins over parent.caps
   assert.equal(result.manifest.capsule.parentCapsule, "legacy-id");
   assert.equal(result.manifest.capsule.parent?.capsuleId, "structured-id");
 });
+
+// ---------------------------------------------------------------------------
+// Test 20: forkCapsule rejects symlinked forks/ directory escaping root
+// ---------------------------------------------------------------------------
+//
+// Codex P1 review #751: forkCapsule writes `forks/<forkId>/lineage.json` via
+// mkdir+writeFile. If `targetRoot/forks` is a symlink to an external directory
+// (and the archive has zero records, bypassing per-record path checks),
+// the lineage write would escape the root sandbox. The fix adds a
+// assertRealpathInsideRoot check before mkdir/writeFile.
+
+test("forkCapsule: rejects symlinked forks/ directory that escapes targetRoot before lineage write", async () => {
+  // Export a zero-record capsule so importCapsule does no per-record checks.
+  const { archivePath } = await exportFixture([], "zero-rec");
+
+  const realRoot = await makeEmptyDir();
+  const escape = await makeEmptyDir();
+
+  // Make `forks/` itself a symlink pointing to the escape dir. This way the
+  // path `forks/safe-fork` does NOT exist yet (bypassing the duplicate-forkId
+  // check at step 3), but once mkdir tries to create it the symlink will
+  // redirect writes into `escape/`. The assertRealpathInsideRoot guard must
+  // catch this before any mkdir/writeFile.
+  await symlink(escape, path.join(realRoot, "forks"), "dir");
+
+  await assert.rejects(
+    () =>
+      forkCapsule({
+        sourceArchive: archivePath,
+        targetRoot: realRoot,
+        forkId: "safe-fork",
+        now: Date.parse("2026-04-26T00:00:00.000Z"),
+      }),
+    (err: Error) => {
+      assert.ok(
+        err.message.includes("symlink") || err.message.includes("escapes"),
+        `Expected symlink-escape rejection, got: ${err.message}`,
+      );
+      return true;
+    },
+  );
+});
