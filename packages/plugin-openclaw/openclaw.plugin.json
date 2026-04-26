@@ -777,6 +777,49 @@
                 "description": "How often the scheduler should call the connector's syncIncremental, in milliseconds. Defaults to 5 minutes; max 24 hours."
               }
             }
+          },
+          "github": {
+            "type": "object",
+            "additionalProperties": false,
+            "default": {},
+            "description": "GitHub live connector (issue #683 PR 5/6). Imports issue comments, PR review comments, and optionally discussion posts authored by the configured user from watched repos into Remnic on a poll schedule.",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": false,
+                "description": "Master gate. Default off — set to true to enable GitHub imports. The connector additionally requires token, userLogin, and at least one repo to be populated before it will run."
+              },
+              "token": {
+                "type": "string",
+                "default": "",
+                "description": "GitHub personal access token. Populate from your secret store (e.g. ${GITHUB_TOKEN}). Never commit a real value to source."
+              },
+              "userLogin": {
+                "type": "string",
+                "default": "",
+                "description": "GitHub login of the user whose comments will be imported. Only comments authored by this login are ingested. Required when enabled."
+              },
+              "repos": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "Array of repos to poll in \"owner/repo\" format. Empty = connector is a no-op."
+              },
+              "pollIntervalMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 86400000,
+                "default": 300000,
+                "description": "How often the scheduler should call the connector's syncIncremental, in milliseconds. Defaults to 5 minutes; max 24 hours."
+              },
+              "includeDiscussions": {
+                "type": "boolean",
+                "default": false,
+                "description": "Whether to import GitHub Discussion comments in addition to issue and PR review comments. Default false."
+              }
+            }
           }
         }
       },
