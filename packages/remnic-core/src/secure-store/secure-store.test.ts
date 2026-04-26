@@ -15,6 +15,9 @@
  */
 
 import { PassThrough } from "node:stream";
+import { mkdtemp, rm, symlink, writeFile as fsWriteFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -57,6 +60,14 @@ import {
   validateMetadata,
 } from "./metadata.js";
 import { createPassphraseReader } from "./passphrase-reader.js";
+import {
+  SecureStoreDecryptError,
+  SecureStoreLockedError,
+  encryptFileBody,
+  migrateMemoryDirToEncrypted,
+  readMaybeEncryptedFile,
+  writeMaybeEncryptedFile,
+} from "./secure-fs.js";
 
 /** Cheap scrypt params for tests — still hex-correct but ~milliseconds. */
 const FAST_SCRYPT: ScryptParams = {
@@ -710,4 +721,210 @@ test("backspace on BMP character removes exactly one character (thread 7 — reg
   const result = await readPromise;
 
   assert.equal(result, "a");
+});
+
+// ─── secure-fs.ts — Thread 1: symlink traversal blocked (#743) ──────────
+
+test("migrateMemoryDirToEncrypted skips symlinks and does not follow them (thread 1 — Codex P1)", async () => {
+  // Create a real memory dir with one .md file and a symlink pointing
+  // OUTSIDE the dir.  The migration walk must skip the symlink entirely
+  // and must not encrypt (or even read) the target outside the root.
+  const memDir = await mkdtemp(path.join(os.tmpdir(), "rmsf-symlink-test-"));
+  const outsideDir = await mkdtemp(path.join(os.tmpdir(), "rmsf-symlink-outside-"));
+  try {
+    const salt = generateSalt();
+    const key = deriveKeyScrypt("symlink-test-key", salt, FAST_SCRYPT);
+
+    // Write a legitimate plaintext file inside memDir.
+    const legitimateMd = path.join(memDir, "legitimate.md");
+    await fsWriteFile(legitimateMd, "---\nid: leg-1\n---\ncontent", "utf8");
+
+    // Write a plaintext file outside memDir — migration must NOT touch it.
+    const outsideMd = path.join(outsideDir, "outside.md");
+    await fsWriteFile(outsideMd, "---\nid: outside-1\n---\nsensitive outside content", "utf8");
+
+    // Plant a symlink inside memDir that points to the outside file.
+    const symlinkPath = path.join(memDir, "evil-link.md");
+    await symlink(outsideMd, symlinkPath);
+
+    const report = await migrateMemoryDirToEncrypted(memDir, { key });
+
+    // The legitimate file must be encrypted.
+    assert.equal(report.encrypted, 1, "should have encrypted exactly 1 real file");
+    // The symlink must have been silently skipped — NOT counted as scanned.
+    assert.equal(report.scanned, 1, "symlink must not appear in scanned count");
+    assert.equal(report.errors.length, 0, "no errors expected");
+
+    // The outside file must remain plaintext (unmodified by migration).
+    const outsideContent = await fsWriteFile(outsideMd, "---\nid: outside-1\n---\nsensitive outside content", "utf8")
+      .then(() => import("node:fs/promises").then((m) => m.readFile(outsideMd, "utf8")));
+    assert.ok(
+      outsideContent.includes("sensitive outside content"),
+      "outside file must not have been encrypted",
+    );
+  } finally {
+    await rm(memDir, { recursive: true, force: true });
+    await rm(outsideDir, { recursive: true, force: true });
+  }
+});
+
+test("migrateMemoryDirToEncrypted skips symlink directories (thread 1 — directory symlink)", async () => {
+  const memDir = await mkdtemp(path.join(os.tmpdir(), "rmsf-dirlink-test-"));
+  const outsideDir = await mkdtemp(path.join(os.tmpdir(), "rmsf-dirlink-outside-"));
+  try {
+    const salt = generateSalt();
+    const key = deriveKeyScrypt("dirlink-test-key", salt, FAST_SCRYPT);
+
+    // Write a file in the outside dir.
+    const outsideMd = path.join(outsideDir, "private.md");
+    await fsWriteFile(outsideMd, "---\nid: priv-1\n---\nprivate", "utf8");
+
+    // Plant a symlink to the outside DIRECTORY inside memDir.
+    const symlinkDir = path.join(memDir, "linked-subdir");
+    await symlink(outsideDir, symlinkDir);
+
+    const report = await migrateMemoryDirToEncrypted(memDir, { key });
+
+    // Nothing inside the symlinked directory should have been encrypted.
+    assert.equal(report.encrypted, 0, "no files should be encrypted via directory symlink");
+    assert.equal(report.scanned, 0, "no files should be scanned via directory symlink");
+    assert.equal(report.errors.length, 0, "no errors expected");
+
+    // The outside file must be untouched.
+    const content = await import("node:fs/promises").then((m) => m.readFile(outsideMd, "utf8"));
+    assert.ok(content.includes("private"), "outside file must remain plaintext");
+  } finally {
+    await rm(memDir, { recursive: true, force: true });
+    await rm(outsideDir, { recursive: true, force: true });
+  }
+});
+
+// ─── secure-fs.ts — Thread 2: surface read failures (#743) ──────────────
+
+test("readMaybeEncryptedFile throws SecureStoreDecryptError on wrong key (thread 2 — Codex P1)", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "rmsf-decrypt-err-"));
+  try {
+    const salt = generateSalt();
+    const goodKey = deriveKeyScrypt("correct-key", salt, FAST_SCRYPT);
+    const badKey = deriveKeyScrypt("wrong-key", salt, FAST_SCRYPT);
+
+    const filePath = path.join(dir, "memory.md");
+    await writeMaybeEncryptedFile(filePath, "---\nid: t1\n---\nsecret", { key: goodKey });
+
+    // Reading with the wrong key must throw SecureStoreDecryptError (not silently return empty).
+    await assert.rejects(
+      () => readMaybeEncryptedFile(filePath, { key: badKey }),
+      (err: unknown) => {
+        assert.ok(
+          err instanceof SecureStoreDecryptError,
+          `expected SecureStoreDecryptError, got ${err instanceof Error ? err.constructor.name : String(err)}`,
+        );
+        assert.ok(
+          (err as SecureStoreDecryptError).filePath === filePath,
+          "error.filePath must equal the file that failed",
+        );
+        return true;
+      },
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("readMaybeEncryptedFile throws SecureStoreDecryptError on tampered ciphertext (thread 2)", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "rmsf-tamper-"));
+  try {
+    const salt = generateSalt();
+    const key = deriveKeyScrypt("test-key", salt, FAST_SCRYPT);
+
+    const filePath = path.join(dir, "memory.md");
+    await writeMaybeEncryptedFile(filePath, "---\nid: t2\n---\ncontent", { key });
+
+    // Flip a byte in the ciphertext to simulate tampering.
+    const { readFile, writeFile } = await import("node:fs/promises");
+    const raw = await readFile(filePath);
+    const tampered = Buffer.from(raw);
+    // Byte 20 is well within the sealed envelope body (past magic + header).
+    tampered[20] ^= 0xff;
+    await writeFile(filePath, tampered);
+
+    await assert.rejects(
+      () => readMaybeEncryptedFile(filePath, { key }),
+      (err: unknown) => {
+        assert.ok(
+          err instanceof SecureStoreDecryptError,
+          `expected SecureStoreDecryptError, got ${err instanceof Error ? err.constructor.name : String(err)}`,
+        );
+        return true;
+      },
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("readMaybeEncryptedFile throws SecureStoreLockedError when no key provided for encrypted file (thread 2 — locked store)", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "rmsf-locked-"));
+  try {
+    const salt = generateSalt();
+    const key = deriveKeyScrypt("lock-test-key", salt, FAST_SCRYPT);
+
+    const filePath = path.join(dir, "memory.md");
+    await writeMaybeEncryptedFile(filePath, "---\nid: t3\n---\ndata", { key });
+
+    // Reading without a key must throw SecureStoreLockedError, not return empty.
+    await assert.rejects(
+      () => readMaybeEncryptedFile(filePath, {}),
+      (err: unknown) => {
+        assert.ok(
+          err instanceof SecureStoreLockedError,
+          `expected SecureStoreLockedError, got ${err instanceof Error ? err.constructor.name : String(err)}`,
+        );
+        return true;
+      },
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("SecureStoreDecryptError carries filePath and cause (thread 2 — error shape)", () => {
+  const cause = new Error("auth tag mismatch");
+  const err = new SecureStoreDecryptError("/mem/foo.md", cause);
+  assert.equal(err.filePath, "/mem/foo.md");
+  assert.equal(err.cause, cause);
+  assert.equal(err.name, "SecureStoreDecryptError");
+  assert.ok(err.message.includes("/mem/foo.md"), "message must include the file path");
+  assert.ok(err.message.includes("auth tag mismatch"), "message must include the cause");
+  assert.ok(err instanceof Error, "must be an Error subclass");
+});
+
+test("readMaybeEncryptedFile wraps bad-magic encrypted header as SecureStoreDecryptError (thread 2 — corrupted header)", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "rmsf-bad-magic-"));
+  try {
+    const salt = generateSalt();
+    const key = deriveKeyScrypt("header-corrupt-key", salt, FAST_SCRYPT);
+
+    const filePath = path.join(dir, "memory.md");
+
+    // Write raw bytes that look encrypted (start with RMSF magic) but
+    // have a completely garbage body — this simulates a truncated/corrupt file.
+    const { ENCRYPTED_FILE_MAGIC } = await import("./secure-fs.js");
+    const garbage = Buffer.concat([ENCRYPTED_FILE_MAGIC, Buffer.alloc(4, 0xcc)]);
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(filePath, garbage);
+
+    await assert.rejects(
+      () => readMaybeEncryptedFile(filePath, { key }),
+      (err: unknown) => {
+        assert.ok(
+          err instanceof SecureStoreDecryptError,
+          `expected SecureStoreDecryptError, got ${err instanceof Error ? err.constructor.name : String(err)}`,
+        );
+        return true;
+      },
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
