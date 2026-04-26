@@ -2861,7 +2861,7 @@ export class StorageManager {
       aliases: [],
     };
     try {
-      const existing = await readFile(filePath, "utf-8");
+      const existing = await readMaybeEncryptedFile(filePath, { key: this._secureStoreKey });
       entity = parseEntityFile(existing, this.entitySchemas);
     } catch {
       // File doesn't exist yet
@@ -2937,7 +2937,7 @@ export class StorageManager {
 
   async readProfile(): Promise<string> {
     try {
-      return await readFile(this.profilePath, "utf-8");
+      return await readMaybeEncryptedFile(this.profilePath, { key: this._secureStoreKey });
     } catch {
       return "";
     }
@@ -3175,7 +3175,12 @@ export class StorageManager {
               ),
               content: parsed.content,
             } satisfies MemoryFile;
-          } catch {
+          } catch (err) {
+            // Re-throw SecureStoreLockedError: a locked store must surface
+            // clearly rather than silently collapsing memory scan results to
+            // empty. Only suppress non-fatal I/O errors (ENOENT, parse
+            // failures, etc.) — Codex P1.
+            if (err instanceof SecureStoreLockedError) throw err;
             return null;
           }
         }),

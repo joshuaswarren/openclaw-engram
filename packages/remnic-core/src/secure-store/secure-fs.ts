@@ -55,7 +55,7 @@
  *   decide based on the file's role (memory `.md` vs. ledger / index).
  */
 
-import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, lstat, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -399,11 +399,17 @@ export async function migrateMemoryDirToEncrypted(
       const full = path.join(current, name);
       let entryStat;
       try {
-        entryStat = await stat(full);
+        // Use lstat (not stat) so symlinks are NOT followed.
+        // A symlink planted under memoryDir could otherwise redirect the
+        // walk outside the intended root — a security boundary violation
+        // for a security-sensitive operation (Codex P1).
+        entryStat = await lstat(full);
       } catch (err) {
         report.errors.push({ filePath: full, message: errMsg(err) });
         continue;
       }
+      // Skip symlinks unconditionally — never follow them during migration.
+      if (entryStat.isSymbolicLink()) continue;
       if (entryStat.isDirectory()) {
         stack.push(full);
         continue;
