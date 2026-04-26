@@ -106,3 +106,25 @@ export {
 } from "./cli-renderer.js";
 
 export { createPassphraseReader } from "./passphrase-reader.js";
+
+// Issue #690 PR 3/4 — transparent storage wrapping + migration.
+export {
+  ENCRYPTED_FILE_HEADER_SIZE,
+  ENCRYPTED_FILE_LAYOUT,
+  ENCRYPTED_FILE_MAGIC,
+  ENCRYPTED_FILE_MAGIC_LENGTH,
+  ENCRYPTED_FILE_RESERVED_LENGTH,
+  ENCRYPTED_FILE_VERSION,
+  SecureStoreDecryptError,
+  SecureStoreLockedError,
+  decryptFileBody,
+  encryptFileBody,
+  isEncryptedFile,
+  migrateMemoryDirToEncrypted,
+  readMaybeEncryptedFile,
+  writeMaybeEncryptedFile,
+  type MigrateMemoryDirOptions,
+  type SecureFsMigrationReport,
+  type SecureFsOptions,
+  type SecureFsSnapshotFn,
+} from "./secure-fs.js";

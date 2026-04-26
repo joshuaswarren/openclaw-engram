@@ -8,6 +8,12 @@ import { rotateMarkdownFileToArchive } from "./hygiene.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import { createVersion as createPageVersion, type VersioningConfig, type VersionTrigger } from "./page-versioning.js";
 import {
+  SecureStoreDecryptError,
+  SecureStoreLockedError,
+  readMaybeEncryptedFile,
+  writeMaybeEncryptedFile,
+} from "./secure-store/secure-fs.js";
+import {
   isConsolidationOperator,
   isValidDerivedFromEntry,
   type ConsolidationOperator,
@@ -2064,14 +2070,36 @@ export class StorageManager {
     this._versioningConfig = config;
   }
 
+  // Issue #690 PR 3/4 — transparent at-rest encryption.
+  /**
+   * The master AES-256 key for the unlocked secure-store, or `null` when
+   * the store is locked / not enabled.  Set by the orchestrator via
+   * `setSecureStoreKey` after the keyring is unlocked.  Never persisted;
+   * a daemon restart re-locks the store.
+   */
+  private _secureStoreKey: Buffer | null = null;
+  /** Whether to encrypt new writes.  Gates on both `secureStoreEnabled` and `secureStoreEncryptOnWrite`. */
+  private _secureStoreEncryptOnWrite: boolean = false;
+
+  /**
+   * Configure the secure-store integration.  Call after `runSecureStoreUnlock`
+   * populates the keyring.  Passing `key = null` has the same effect as locking:
+   * reads of encrypted files will throw `SecureStoreLockedError`.
+   */
+  setSecureStoreKey(key: Buffer | null, encryptOnWrite: boolean = true): void {
+    this._secureStoreKey = key;
+    this._secureStoreEncryptOnWrite = key !== null && encryptOnWrite;
+  }
+
   /**
    * Snapshot the current content of a page before overwriting.
    * No-op when versioning is disabled or the file does not yet exist.
+   * Reads via the secure-fs path so encrypted files are decrypted before snapshot.
    */
   private async snapshotBeforeWrite(filePath: string, trigger: VersionTrigger): Promise<void> {
     if (!this._versioningConfig || !this._versioningConfig.enabled) return;
     try {
-      const existing = await readFile(filePath, "utf-8");
+      const existing = await readMaybeEncryptedFile(filePath, { key: this._secureStoreKey });
       await createPageVersion(filePath, existing, trigger, this._versioningConfig, log, undefined, this.baseDir);
     } catch {
       // File does not exist yet — nothing to snapshot
@@ -2096,7 +2124,7 @@ export class StorageManager {
     if (!this._versioningConfig || !this._versioningConfig.enabled) return null;
     let existing: string;
     try {
-      existing = await readFile(filePath, "utf-8");
+      existing = await readMaybeEncryptedFile(filePath, { key: this._secureStoreKey });
     } catch {
       return null;
     }
@@ -2590,7 +2618,9 @@ export class StorageManager {
     }
 
     await this.snapshotBeforeWrite(filePath, "write");
-    await writeFile(filePath, fileContent, "utf-8");
+    await writeMaybeEncryptedFile(filePath, fileContent, {
+      key: this._secureStoreEncryptOnWrite ? this._secureStoreKey : null,
+    });
     this.invalidateAllMemoriesCache();
     await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.writeMemory", {
       memoryId: id,
@@ -2681,7 +2711,9 @@ export class StorageManager {
       return "";
     }
     const filePath = path.join(dir, `${id}.md`);
-    await writeFile(filePath, `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`, "utf-8");
+    await writeMaybeEncryptedFile(filePath, `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`, {
+      key: this._secureStoreEncryptOnWrite ? this._secureStoreKey : null,
+    });
     const actor =
       typeof options.actor === "string" && options.actor.length > 0
         ? options.actor
@@ -2830,10 +2862,16 @@ export class StorageManager {
       aliases: [],
     };
     try {
-      const existing = await readFile(filePath, "utf-8");
+      const existing = await readMaybeEncryptedFile(filePath, { key: this._secureStoreKey });
       entity = parseEntityFile(existing, this.entitySchemas);
-    } catch {
-      // File doesn't exist yet
+    } catch (err) {
+      // Re-throw secure-store errors: a locked store or decryption failure
+      // must surface clearly rather than silently proceeding with an empty
+      // entity and overwriting encrypted data (Cursor review, CLAUDE.md
+      // gotcha #34).
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (err instanceof SecureStoreDecryptError) throw err;
+      // File doesn't exist yet — fall through to empty entity default.
     }
 
     const timestamp = options.timestamp?.trim() || new Date().toISOString();
@@ -2895,7 +2933,9 @@ export class StorageManager {
     entity.updated = new Date().toISOString();
 
     await this.snapshotBeforeWrite(filePath, "write");
-    await writeFile(filePath, serializeEntityFile(entity, this.entitySchemas), "utf-8");
+    await writeMaybeEncryptedFile(filePath, serializeEntityFile(entity, this.entitySchemas), {
+      key: this._secureStoreEncryptOnWrite ? this._secureStoreKey : null,
+    });
     this.invalidateKnowledgeIndexCache();
     this.bumpMemoryStatusVersion(); // invalidate entity cache
     log.debug(`wrote entity ${normalized}`);
@@ -2904,7 +2944,7 @@ export class StorageManager {
 
   async readProfile(): Promise<string> {
     try {
-      return await readFile(this.profilePath, "utf-8");
+      return await readMaybeEncryptedFile(this.profilePath, { key: this._secureStoreKey });
     } catch {
       return "";
     }
@@ -2913,7 +2953,9 @@ export class StorageManager {
   async writeProfile(content: string): Promise<void> {
     await this.ensureDirectories();
     await this.snapshotBeforeWrite(this.profilePath, "consolidation");
-    await writeFile(this.profilePath, content, "utf-8");
+    await writeMaybeEncryptedFile(this.profilePath, content, {
+      key: this._secureStoreEncryptOnWrite ? this._secureStoreKey : null,
+    });
     log.debug("updated profile.md");
   }
 
@@ -3128,7 +3170,7 @@ export class StorageManager {
       const results = await Promise.all(
         batch.map(async (fullPath) => {
           try {
-            const raw = await readFile(fullPath, "utf-8");
+            const raw = await readMaybeEncryptedFile(fullPath, { key: this._secureStoreKey });
             const parsed = parseFrontmatter(raw);
             if (!parsed) return null;
             return {
@@ -3140,7 +3182,19 @@ export class StorageManager {
               ),
               content: parsed.content,
             } satisfies MemoryFile;
-          } catch {
+          } catch (err) {
+            // Re-throw SecureStoreLockedError: a locked store must surface
+            // clearly rather than silently collapsing memory scan results to
+            // empty.
+            if (err instanceof SecureStoreLockedError) throw err;
+            // Re-throw decryption failures with a telemetry signal — wrong
+            // key or tampered ciphertext must not be silently dropped (Codex
+            // P1, CLAUDE.md gotcha #34). The caller (orchestrator) decides
+            // whether to abort the recall or degrade gracefully.
+            if (err instanceof SecureStoreDecryptError) {
+              log.warn(`secure-store: decryption failure for ${fullPath} — ${err.message}`);
+              throw err;
+            }
             return null;
           }
         }),
@@ -3402,7 +3456,7 @@ export class StorageManager {
             await readDir(fullPath);
           } else if (entry.name.endsWith(".md")) {
             try {
-              const raw = await readFile(fullPath, "utf-8");
+              const raw = await readMaybeEncryptedFile(fullPath, { key: this._secureStoreKey });
               const parsed = parseFrontmatter(raw);
               if (parsed) {
                 memories.push({
@@ -3415,13 +3469,23 @@ export class StorageManager {
                   content: parsed.content,
                 });
               }
-            } catch {
-              // Skip unreadable files
+            } catch (err) {
+              // Re-throw decryption failures with a telemetry signal — wrong
+              // key or tampered ciphertext must not be silently dropped (Codex
+              // P1, CLAUDE.md gotcha #34).
+              if (err instanceof SecureStoreLockedError) throw err;
+              if (err instanceof SecureStoreDecryptError) {
+                log.warn(`secure-store: decryption failure for archived file ${fullPath} — ${err.message}`);
+                throw err;
+              }
+              // Silently skip other I/O errors (ENOENT, EPERM, parse failures).
             }
           }
         }
-      } catch {
-        // Directory doesn't exist yet
+      } catch (err) {
+        // Re-throw secure-store errors; swallow only "directory doesn't exist".
+        if (err instanceof SecureStoreLockedError || err instanceof SecureStoreDecryptError) throw err;
+        // Directory doesn't exist yet (or other benign readdir error).
       }
     };
 
@@ -3432,7 +3496,7 @@ export class StorageManager {
   /** Read a single memory file by its absolute path. Returns null if unreadable. */
   async readMemoryByPath(filePath: string): Promise<MemoryFile | null> {
     try {
-      const raw = await readFile(filePath, "utf-8");
+      const raw = await readMaybeEncryptedFile(filePath, { key: this._secureStoreKey });
       const parsed = parseFrontmatter(raw);
       if (parsed) {
         return {
@@ -3480,7 +3544,15 @@ export class StorageManager {
       }
 
       return null;
-    } catch {
+    } catch (err) {
+      // Re-throw secure-store errors — decryption failures and locked-store
+      // states must surface to the caller rather than being silently dropped
+      // as `null` (Codex P1, CLAUDE.md gotcha #34).
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (err instanceof SecureStoreDecryptError) {
+        log.warn(`secure-store: decryption failure for ${filePath} — ${err.message}`);
+        throw err;
+      }
       return null;
     }
   }
@@ -3526,20 +3598,11 @@ export class StorageManager {
 
   private async writeMemoryFileAtomic(targetPath: string, memory: MemoryFile): Promise<void> {
     const fileContent = `${serializeFrontmatter(memory.frontmatter)}\n\n${memory.content}\n`;
-    await mkdir(path.dirname(targetPath), { recursive: true });
-    const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
-    try {
-      await writeFile(tempPath, fileContent, "utf-8");
-      await rename(tempPath, targetPath);
-      this.invalidateAllMemoriesCache();
-    } catch (err) {
-      try {
-        await unlink(tempPath);
-      } catch {
-        // best-effort cleanup
-      }
-      throw err;
-    }
+    // writeMaybeEncryptedFile handles mkdir + temp+rename atomically.
+    await writeMaybeEncryptedFile(targetPath, fileContent, {
+      key: this._secureStoreEncryptOnWrite ? this._secureStoreKey : null,
+    });
+    this.invalidateAllMemoriesCache();
   }
 
   async moveMemoryToPath(memory: MemoryFile, targetPath: string): Promise<void> {
@@ -3668,7 +3731,9 @@ export class StorageManager {
 
   async readEntity(name: string): Promise<string> {
     try {
-      return await readFile(path.join(this.entitiesDir, `${name}.md`), "utf-8");
+      return await readMaybeEncryptedFile(path.join(this.entitiesDir, `${name}.md`), {
+        key: this._secureStoreKey,
+      });
     } catch {
       return "";
     }
@@ -3780,7 +3845,9 @@ export class StorageManager {
       log.warn(`updated memory content sanitized for ${id}; violations=${sanitized.violations.join(", ")}`);
     }
     const fileContent = `${serializeFrontmatter(updated)}\n\n${sanitized.text}\n`;
-    await writeFile(memory.path, fileContent, "utf-8");
+    await writeMaybeEncryptedFile(memory.path, fileContent, {
+      key: this._secureStoreEncryptOnWrite ? this._secureStoreKey : null,
+    });
     this.invalidateAllMemoriesCache();
     await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.updateMemory", {
       memoryId: id,
@@ -3815,7 +3882,9 @@ export class StorageManager {
     const afterStatus = updated.status ?? "active";
 
     const fileContent = `${serializeFrontmatter(updated)}\n\n${memory.content}\n`;
-    await writeFile(memory.path, fileContent, "utf-8");
+    await writeMaybeEncryptedFile(memory.path, fileContent, {
+      key: this._secureStoreEncryptOnWrite ? this._secureStoreKey : null,
+    });
     this.invalidateAllMemoriesCache();
     // If the target file lives in cold/, bump the cold-version sentinel so
     // other processes detect the change on their next readAllColdMemories()

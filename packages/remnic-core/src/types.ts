@@ -1405,6 +1405,21 @@ export interface PluginConfig {
    * memoryDir: go up to the Remnic home dir and append memory_extensions.
    */
   memoryExtensionsRoot: string;
+
+  // At-rest encryption for memory files (issue #690 PR 3/4)
+  /**
+   * Enable transparent at-rest encryption for memory files.
+   * When true, the secure-store module wraps storage.ts read/write paths
+   * so that all memory file contents are encrypted with the master key
+   * whenever the store is unlocked. Default false.
+   */
+  secureStoreEnabled: boolean;
+  /**
+   * When secureStoreEnabled is true and the store is unlocked, encrypt
+   * every new write. When false, writes are still plaintext even if the
+   * store is unlocked (useful for migrating gradually). Default true.
+   */
+  secureStoreEncryptOnWrite: boolean;
 }
 
 /** Runtime configuration for the daily context briefing feature. */

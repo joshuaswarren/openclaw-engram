@@ -2605,6 +2605,12 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.memoryExtensionsRoot === "string" && cfg.memoryExtensionsRoot.trim().length > 0
         ? cfg.memoryExtensionsRoot.trim()
         : "",
+
+    // At-rest encryption for memory files (issue #690 PR 3/4)
+    // Default false (least-privileged). Callers explicitly opt in.
+    secureStoreEnabled: coerceBool(cfg.secureStoreEnabled) === true,
+    // Default true once enabled — new writes are encrypted by default.
+    secureStoreEncryptOnWrite: coerceBool(cfg.secureStoreEncryptOnWrite) !== false,
   };
 }
 
