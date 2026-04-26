@@ -872,7 +872,7 @@ function hasUsableTargetRef(value: unknown): boolean {
 
 function hasUsableTargetIdRef(value: unknown): boolean {
   if (Array.isArray(value)) {
-    return value.some(hasUsableTargetIdRef);
+    return value.length > 0 && value.every(hasUsableTargetIdRef);
   }
   return normalizeTargetRefPart(value) !== undefined;
 }
