@@ -480,6 +480,30 @@ test("outDir outside root does not affect inclusion", async () => {
   );
 });
 
+test("outDir named '..capsules' (valid in-tree dir) is still excluded", async () => {
+  // Boundary check: `rel.startsWith("..")` would falsely treat `<root>/..capsules`
+  // as outside the root. Use `rel === ".."` or `rel.startsWith(".." + sep)`
+  // so valid in-tree names like `..capsules` are still excluded on re-export.
+  const root = await makeFixture([{ rel: "facts/a.md", content: "a\n" }]);
+  const trickyOut = path.join(root, "..capsules");
+
+  await exportCapsule({ name: "first", root, outDir: trickyOut });
+  const second = await exportCapsule({
+    name: "second",
+    root,
+    outDir: trickyOut,
+  });
+  assert.deepEqual(
+    second.manifest.files.map((f) => f.path),
+    ["facts/a.md"],
+    "files under '..capsules' (an in-tree dir) must be excluded on re-export",
+  );
+  assert.ok(
+    !second.manifest.files.some((f) => f.path.startsWith("..capsules/")),
+    "the in-tree '..capsules' subtree must not leak into the manifest",
+  );
+});
+
 test("default-excluded directories (.git, node_modules) are skipped", async () => {
   const root = await makeFixture([
     { rel: "facts/a.md", content: "a\n" },
