@@ -15,6 +15,7 @@ import {
   type ConnectorConfig,
   type ConnectorCursor,
   type ConnectorDocument,
+  type ConnectorSyncStatus,
   type LiveConnector,
   type SyncIncrementalArgs,
   type SyncIncrementalResult,
@@ -399,6 +400,86 @@ test("state store: rejects invalid id at boundary", async (t) => {
       }),
     /invalid connector id/,
   );
+});
+
+test("state store: rejects invalid lastSyncStatus at boundary (PR #724 review)", async (t) => {
+  // P1 review: writeConnectorState must validate lastSyncStatus before
+  // writing — otherwise readConnectorState's shape check rejects the file
+  // and bricks the cursor until manual repair.
+  const memoryDir = makeMemoryDir(t);
+  await assert.rejects(
+    () =>
+      writeConnectorState(memoryDir, "drive", {
+        id: "drive",
+        cursor: null,
+        lastSyncAt: null,
+        // Bypass TypeScript to exercise the runtime guard the way an
+        // untyped JS caller would.
+        lastSyncStatus: "BOGUS" as unknown as ConnectorSyncStatus,
+        totalDocsImported: 0,
+      } as unknown as Parameters<typeof writeConnectorState>[2]),
+    /lastSyncStatus must be one of/,
+  );
+  // And the file must NOT have been written.
+  const after = await readConnectorState(memoryDir, "drive");
+  assert.equal(after, null);
+});
+
+test("state store: rejects malformed cursor at boundary (PR #724 review)", async (t) => {
+  const memoryDir = makeMemoryDir(t);
+  await assert.rejects(
+    () =>
+      writeConnectorState(memoryDir, "drive", {
+        id: "drive",
+        // Missing `value` and `updatedAt`.
+        cursor: { kind: "pageToken" } as unknown as ConnectorCursor,
+        lastSyncAt: new Date().toISOString(),
+        lastSyncStatus: "success",
+        totalDocsImported: 0,
+      }),
+    /cursor must have string/,
+  );
+});
+
+test("state store: listConnectorStates skips corrupt files but rethrows EACCES (PR #724 review)", async (t) => {
+  // P2 review: only ConnectorStateCorruptionError should be swallowed.
+  // Genuine I/O failures must propagate so the scheduler / CLI sees them.
+  const memoryDir = makeMemoryDir(t);
+  // Write one good file.
+  await writeConnectorState(memoryDir, "good", {
+    id: "good",
+    cursor: null,
+    lastSyncAt: null,
+    lastSyncStatus: "never",
+    totalDocsImported: 0,
+  });
+  // Drop a corrupt file.
+  const dir = path.join(memoryDir, "state", "connectors");
+  fs.writeFileSync(path.join(dir, "corrupt.json"), "{ not valid json");
+  // Listing succeeds, returning only the good record.
+  const states = await listConnectorStates(memoryDir);
+  assert.deepEqual(states.map((s) => s.id), ["good"]);
+
+  // Now make one of the files unreadable (EACCES). On platforms that respect
+  // chmod for the current user (POSIX, when not running as root), this
+  // produces EACCES which must propagate. Skip the assertion when running as
+  // root or on Windows where chmod 0 is a no-op.
+  const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+  if (process.platform !== "win32" && !isRoot) {
+    const goodPath = path.join(dir, "good.json");
+    fs.chmodSync(goodPath, 0o000);
+    t.after(() => {
+      try {
+        fs.chmodSync(goodPath, 0o600);
+      } catch {
+        // ignore
+      }
+    });
+    await assert.rejects(
+      () => listConnectorStates(memoryDir),
+      (err: NodeJS.ErrnoException) => err.code === "EACCES" || err.code === "EPERM",
+    );
+  }
 });
 
 test("state store: rejects negative totalDocsImported", async (t) => {

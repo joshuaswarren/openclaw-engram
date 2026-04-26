@@ -67,6 +67,24 @@ export interface ConnectorState {
 const STATE_DIR_NAME = "state";
 const CONNECTORS_DIR_NAME = "connectors";
 const MAX_ERROR_LENGTH = 1024;
+const VALID_SYNC_STATUSES: ReadonlySet<ConnectorSyncStatus> = new Set([
+  "success",
+  "error",
+  "never",
+]);
+
+/**
+ * Internal error thrown when a state file's JSON is unparseable or its shape
+ * doesn't match `ConnectorState`. Used by `listConnectorStates` to distinguish
+ * "skip this corrupt file" cases from genuine I/O failures (`EACCES`, `EIO`)
+ * that the caller must see.
+ */
+class ConnectorStateCorruptionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConnectorStateCorruptionError";
+  }
+}
 
 /**
  * Resolve `<memoryDir>/state/connectors/`, expanding `~` per CLAUDE.md #17.
@@ -140,17 +158,17 @@ export async function readConnectorState(
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new Error(
+    throw new ConnectorStateCorruptionError(
       `connector state at ${filePath} is not valid JSON: ${(err as Error).message}`,
     );
   }
   if (!isConnectorStateShape(parsed)) {
-    throw new Error(
+    throw new ConnectorStateCorruptionError(
       `connector state at ${filePath} does not match ConnectorState shape`,
     );
   }
   if (parsed.id !== id) {
-    throw new Error(
+    throw new ConnectorStateCorruptionError(
       `connector state at ${filePath} has mismatched id ${JSON.stringify(parsed.id)}; expected ${JSON.stringify(id)}`,
     );
   }
@@ -178,6 +196,34 @@ export async function writeConnectorState(
     throw new Error(
       `writeConnectorState(): state.id ${JSON.stringify(state.id)} does not match id argument ${JSON.stringify(id)}`,
     );
+  }
+  // Full boundary validation. Persisting an out-of-shape record would brick
+  // the connector's cursor file: subsequent `readConnectorState` calls would
+  // throw `ConnectorStateCorruptionError` until manual repair. JS callers
+  // bypassing TS types must be rejected here, not later. (PR #724 review.)
+  if (!VALID_SYNC_STATUSES.has(state.lastSyncStatus as ConnectorSyncStatus)) {
+    throw new Error(
+      `writeConnectorState(): lastSyncStatus must be one of ${[...VALID_SYNC_STATUSES].join(", ")}, got ${JSON.stringify(state.lastSyncStatus)}`,
+    );
+  }
+  if (state.lastSyncAt !== null && typeof state.lastSyncAt !== "string") {
+    throw new Error(
+      `writeConnectorState(): lastSyncAt must be a string or null, got ${typeof state.lastSyncAt}`,
+    );
+  }
+  if (state.cursor !== null) {
+    if (typeof state.cursor !== "object") {
+      throw new Error(`writeConnectorState(): cursor must be an object or null`);
+    }
+    if (
+      typeof state.cursor.kind !== "string" ||
+      typeof state.cursor.value !== "string" ||
+      typeof state.cursor.updatedAt !== "string"
+    ) {
+      throw new Error(
+        `writeConnectorState(): cursor must have string kind, value, and updatedAt`,
+      );
+    }
   }
   if (!Number.isFinite(state.totalDocsImported) || state.totalDocsImported < 0) {
     throw new Error(
@@ -230,9 +276,15 @@ export async function writeConnectorState(
  *
  * Files that do not match the `<id>.json` naming rule are skipped — this
  * keeps stray editor backups (`.json~`, `.swp`) from breaking enumeration.
- * Files whose contents fail validation are also skipped, with the caller
- * receiving the successfully parsed subset; this preserves availability
- * when one connector's state is corrupted.
+ *
+ * Corruption (unparseable JSON, shape mismatch, id mismatch) is also
+ * skipped so one bad file doesn't take down the listing. Operators
+ * inspecting `state/connectors/` can still see the offending file by hand.
+ *
+ * **Genuine I/O failures (`EACCES`, `EIO`, etc.) are NOT swallowed** —
+ * silently returning an incomplete state set would make active connectors
+ * appear missing and trigger duplicate ingestion on the next scheduler tick.
+ * (PR #724 review.)
  */
 export async function listConnectorStates(memoryDir: string): Promise<ConnectorState[]> {
   const dir = resolveConnectorsDir(memoryDir);
@@ -251,10 +303,14 @@ export async function listConnectorStates(memoryDir: string): Promise<ConnectorS
     try {
       const state = await readConnectorState(memoryDir, id);
       if (state !== null) out.push(state);
-    } catch {
-      // Skip corrupted state files rather than failing the whole listing.
-      // Operators inspecting `state/connectors/` will still see the file.
-      continue;
+    } catch (err) {
+      if (err instanceof ConnectorStateCorruptionError) {
+        // Skip corrupt files; preserve availability of the rest.
+        continue;
+      }
+      // Anything else (EACCES, EIO, ENOTDIR, ...) is a real operational
+      // failure. Fail loudly so the scheduler / CLI can surface it.
+      throw err;
     }
   }
   out.sort((a, b) => a.id.localeCompare(b.id));
