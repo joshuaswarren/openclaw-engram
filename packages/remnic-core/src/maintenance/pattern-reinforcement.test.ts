@@ -683,7 +683,12 @@ test("runPatternReinforcement: refreshes canonical provenance when cluster membe
     [...(canonicalWrite!.patch.derived_from ?? [])].sort(),
     ["m-canon", "m-new-active", "m-old-superseded"],
   );
-  assert.equal(canonicalWrite!.patch.last_reinforced_at, FROZEN_NOW.toISOString());
+  // On a provenance-only refresh (count unchanged), `last_reinforced_at`
+  // is preserved from the existing value — it must NOT be re-stamped to
+  // the current run time, keeping the field monotonic (PR #730, Codex P2).
+  assert.equal(canonicalWrite!.patch.last_reinforced_at, "2026-03-01T00:00:00.000Z");
+  // Similarly, `reinforcement_count` is carried forward unchanged.
+  assert.equal(canonicalWrite!.patch.reinforcement_count, 3);
 });
 
 test("runPatternReinforcement: canonical growth still refreshes provenance and bumps count", async () => {
@@ -743,5 +748,128 @@ test("runPatternReinforcement: canonical growth still refreshes provenance and b
   assert.deepEqual(
     [...(canonicalWrite!.patch.derived_from ?? [])].sort(),
     ["m-canon", "m-new1", "m-new2", "m-old1", "m-old2"],
+  );
+});
+
+// ─── PR #730 thread fixes ─────────────────────────────────────────────────────
+
+test("runPatternReinforcement: cluster count metric matches filtered sourceIds length (PR #730 Thread 1)", async () => {
+  // When some cluster members lack a valid string ID (e.g. id is undefined
+  // or empty), the raw `cluster.length` diverges from `sourceIds.length`.
+  // The telemetry `count` field and `reinforcement_count` on disk must both
+  // reflect the filtered valid-ID set — not the unfiltered cluster array.
+  const dupContent = "cluster count alignment test";
+  const memories = [
+    makeMemory({ id: "m-1", content: dupContent, updated: "2026-01-01T00:00:00Z" }),
+    makeMemory({ id: "m-2", content: dupContent, updated: "2026-02-01T00:00:00Z" }),
+    makeMemory({ id: "m-3", content: dupContent, updated: "2026-03-01T00:00:00Z" }),
+    // A member whose ID is explicitly undefined — it must still be eligible
+    // (has valid category/status) but must NOT appear in sourceIds.
+    {
+      path: "/tmp/mem/no-id.md",
+      content: dupContent,
+      frontmatter: {
+        id: undefined as unknown as string,
+        category: "preference" as MemoryFrontmatter["category"],
+        created: "2026-04-01T00:00:00Z",
+        updated: "2026-04-01T00:00:00Z",
+        source: "test",
+        confidence: 0.9,
+        confidenceTier: "high" as MemoryFrontmatter["confidenceTier"],
+        tags: [],
+      } as MemoryFrontmatter,
+    } as MemoryFile,
+  ];
+  const { stub } = makeStorageStub(memories);
+
+  const result = await runPatternReinforcement(stub, {
+    categories: ["preference"],
+    minCount: 3,
+    now: frozenNow,
+  });
+
+  assert.equal(result.clustersFound, 1);
+  const cluster = result.clusters[0];
+  assert.ok(cluster);
+  // sourceIds excludes the id-less member — only 3 valid IDs.
+  assert.deepEqual(cluster.sourceIds.slice().sort(), ["m-1", "m-2", "m-3"]);
+  // count must align with sourceIds.length, NOT the raw cluster array
+  // length (which would be 4).
+  assert.equal(cluster.count, cluster.sourceIds.length);
+  assert.equal(cluster.count, 3);
+});
+
+test("runPatternReinforcement: provenance-only refresh preserves reinforcement_count + last_reinforced_at (PR #730 Thread 2)", async () => {
+  // Models the scenario where cluster membership rotates (one member
+  // archived externally, a new duplicate arrived) but the total count
+  // stays the same.  On this provenance-only refresh the canonical's
+  // `reinforcement_count` and `last_reinforced_at` must be carried
+  // forward unchanged — only `derived_from` (and `derived_via`) should
+  // be updated.  Previously the code wrote `last_reinforced_at: nowIso`
+  // unconditionally, resetting the field on every provenance refresh
+  // (PR #730 review, Codex P2).
+  const dupContent = "provenance monotonic test";
+  const EXISTING_REINFORCED_AT = "2026-01-15T08:00:00.000Z";
+  const EXISTING_COUNT = 3;
+  const memories = [
+    makeMemory({
+      id: "m-canon",
+      content: dupContent,
+      updated: "2026-04-01T00:00:00Z",
+      reinforcement_count: EXISTING_COUNT,
+      last_reinforced_at: EXISTING_REINFORCED_AT,
+      derived_via: "pattern-reinforcement",
+      // Stale provenance: includes m-gone (no longer in corpus).
+      derived_from: ["m-canon", "m-gone", "m-old"],
+    }),
+    // m-gone has been archived out-of-band — omitted from corpus.
+    makeMemory({
+      id: "m-old",
+      content: dupContent,
+      updated: "2026-02-01T00:00:00Z",
+      status: "superseded",
+      supersededBy: "m-canon",
+    }),
+    // m-new arrived in this run — same total cluster size (3), different
+    // membership.
+    makeMemory({
+      id: "m-new",
+      content: dupContent,
+      updated: "2026-03-10T00:00:00Z",
+    }),
+  ];
+  const { stub, writes } = makeStorageStub(memories);
+
+  const result = await runPatternReinforcement(stub, {
+    categories: ["preference"],
+    minCount: 3,
+    now: frozenNow,
+  });
+
+  assert.equal(result.clustersFound, 1);
+  assert.equal(result.canonicalsUpdated, 1);
+  // Count unchanged — bumped must be false.
+  assert.equal(result.clusters[0]?.reinforcementBumped, false);
+
+  const canonicalWrite = writes.find((w) => w.memoryId === "m-canon");
+  assert.ok(canonicalWrite, "canonical must be patched for membership change");
+
+  // The provenance fields must be updated to reflect the new membership.
+  assert.deepEqual(
+    [...(canonicalWrite!.patch.derived_from ?? [])].sort(),
+    ["m-canon", "m-new", "m-old"],
+  );
+
+  // CRITICAL: `reinforcement_count` and `last_reinforced_at` must be
+  // preserved from the existing values — not reset to nowIso / newCount.
+  assert.equal(
+    canonicalWrite!.patch.reinforcement_count,
+    EXISTING_COUNT,
+    "reinforcement_count must not change on provenance-only refresh",
+  );
+  assert.equal(
+    canonicalWrite!.patch.last_reinforced_at,
+    EXISTING_REINFORCED_AT,
+    "last_reinforced_at must not be re-stamped on provenance-only refresh",
   );
 });

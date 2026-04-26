@@ -431,9 +431,16 @@ export async function runConsolidationProvenanceCheck(options: {
         // `global:fact-abc-123`, but never `/` or `.` — those remain
         // exclusive to snapshot paths (PR #730 review feedback,
         // Codex P1).  For ID-shaped entries we skip the snapshot
-        // file check entirely — pattern-reinforcement does not
-        // produce snapshots.
-        if (DERIVED_FROM_MEMORY_ID_RE.test(entry)) {
+        // file check entirely — but ONLY when the operator is
+        // `pattern-reinforcement`, which is the sole operator that
+        // legitimately stores IDs rather than snapshot references.
+        // Allowing the bypass for split/merge/update would weaken
+        // validation on those existing consolidation paths (PR #730
+        // review, Codex P2).
+        if (
+          derivedVia === "pattern-reinforcement" &&
+          DERIVED_FROM_MEMORY_ID_RE.test(entry)
+        ) {
           continue;
         }
         const resolved = resolveSnapshotPath(memoryDir, sidecarDir, entry);

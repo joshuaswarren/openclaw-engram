@@ -270,8 +270,14 @@ export async function runPatternReinforcement(
       .filter((id): id is string => typeof id === "string" && id.length > 0)
       .sort();
 
+    // Use `sourceIds.length` (the filtered, valid-ID set) as the
+    // canonical cluster count for both the reinforcement bump guard
+    // and the on-disk `reinforcement_count` field.  Using the raw
+    // `cluster.length` would inflate the metric whenever any member
+    // lacks a valid string ID, causing telemetry to diverge from
+    // what is actually being reinforced (PR #730 review, Cursor).
     const previousCount = canonical.frontmatter.reinforcement_count ?? 0;
-    const newCount = cluster.length;
+    const newCount = sourceIds.length;
     const reinforcementBumped = newCount > previousCount;
 
     // Refresh provenance on the canonical whenever cluster membership
@@ -298,14 +304,28 @@ export async function runPatternReinforcement(
     // a different operator.  Idempotent re-runs on a stable corpus
     // (same size, same members, same operator) still produce zero
     // writes.
+    //
+    // On a provenance-only refresh (membership rotated but count
+    // unchanged), preserve the existing `reinforcement_count` and
+    // `last_reinforced_at` so they remain monotonic and only advance
+    // on genuine reinforcement events (PR #730 review, Codex P2).
     if (canonicalNeedsRefresh) {
       const patch: Partial<MemoryFrontmatter> = {
-        reinforcement_count: newCount,
-        last_reinforced_at: nowIso,
         derived_from: sourceIds,
         derived_via: "pattern-reinforcement",
         updated: nowIso,
       };
+      if (reinforcementBumped) {
+        patch.reinforcement_count = newCount;
+        patch.last_reinforced_at = nowIso;
+      } else {
+        // Carry forward the existing values so a provenance-only
+        // refresh does not reset or re-timestamp the counter.
+        patch.reinforcement_count =
+          canonical.frontmatter.reinforcement_count ?? newCount;
+        patch.last_reinforced_at =
+          canonical.frontmatter.last_reinforced_at ?? nowIso;
+      }
       await storage.writeMemoryFrontmatter(canonical, patch);
       result.canonicalsUpdated += 1;
     }
