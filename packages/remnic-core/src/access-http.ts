@@ -1010,6 +1010,99 @@ export class EngramAccessHttpServer {
       return;
     }
 
+    // Graph snapshot (issue #691 PR 2/5) — read-only adjacency view used by
+    // the admin-pane scaffold shipped in PR 1/5.  All filters are query
+    // params so the surface stays cacheable; invalid values yield 400 with
+    // a descriptive body (CLAUDE.md rule 51 — never silently default).
+    if (req.method === "GET" && pathname === "/engram/v1/graph/snapshot") {
+      const limitRaw = parsed.searchParams.get("limit");
+      let limit: number | undefined;
+      if (limitRaw !== null && limitRaw.length > 0) {
+        const parsedLimit = Number(limitRaw);
+        if (
+          !Number.isFinite(parsedLimit)
+          || !Number.isInteger(parsedLimit)
+          || parsedLimit <= 0
+        ) {
+          this.respondJson(res, 400, {
+            error: "invalid_limit",
+            code: "invalid_limit",
+            message: "limit must be a positive integer",
+          });
+          return;
+        }
+        limit = parsedLimit;
+      }
+      const sinceRaw = parsed.searchParams.get("since");
+      let since: string | undefined;
+      if (sinceRaw !== null && sinceRaw.length > 0) {
+        // Validate up-front so the access service can stay focused on the
+        // pure snapshot logic (parser also runs there as a defense in
+        // depth, but rejecting at the boundary preserves the
+        // "invalid_since" error code instead of leaking a generic 500).
+        if (!Number.isFinite(Date.parse(sinceRaw))) {
+          this.respondJson(res, 400, {
+            error: "invalid_since",
+            code: "invalid_since",
+            message: "since must be a parseable ISO timestamp",
+          });
+          return;
+        }
+        since = sinceRaw;
+      }
+      const focusNodeIdRaw = parsed.searchParams.get("focusNodeId");
+      const focusNodeId = focusNodeIdRaw && focusNodeIdRaw.length > 0
+        ? focusNodeIdRaw
+        : undefined;
+      const categoriesRaw = parsed.searchParams.get("categories");
+      let categories: string[] | undefined;
+      if (categoriesRaw !== null && categoriesRaw.length > 0) {
+        categories = categoriesRaw
+          .split(",")
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0);
+        if (categories.length === 0) {
+          this.respondJson(res, 400, {
+            error: "invalid_categories",
+            code: "invalid_categories",
+            message:
+              "categories must be a comma-separated list with at least one non-empty value",
+          });
+          return;
+        }
+      }
+      const namespaceParam = parsed.searchParams.get("namespace");
+      const namespace = this.resolveNamespace(
+        req,
+        namespaceParam && namespaceParam.length > 0 ? namespaceParam : undefined,
+      );
+      try {
+        const snapshot = await this.service.graphSnapshot(
+          {
+            namespace,
+            ...(limit !== undefined ? { limit } : {}),
+            ...(since !== undefined ? { since } : {}),
+            ...(focusNodeId !== undefined ? { focusNodeId } : {}),
+            ...(categories !== undefined ? { categories } : {}),
+          },
+          this.resolveRequestPrincipal(req),
+        );
+        this.respondJson(res, 200, snapshot);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.startsWith("graphSnapshot:")) {
+          this.respondJson(res, 400, {
+            error: "invalid_request",
+            code: "invalid_request",
+            message,
+          });
+          return;
+        }
+        throw err;
+      }
+      return;
+    }
+
     if (req.method === "POST" && pathname === "/engram/v1/contradiction-scan") {
       const body = await this.readJsonBody(req) as Record<string, unknown>;
       const { runContradictionScan } = await import("./contradiction/contradiction-scan.js");
