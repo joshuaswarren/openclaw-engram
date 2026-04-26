@@ -4805,15 +4805,16 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                   }));
                   await orchestrator.ingestBulkImportBatch(turns);
                 },
-                writeCursorFn: async ({ cursor, lastSyncStatus, lastSyncError, totalDocsImported }) =>
-                  writeConnectorState(orchestrator.config.memoryDir, name, {
+                writeCursorFn: async ({ cursor, lastSyncStatus, lastSyncError, totalDocsImported }) => {
+                  await writeConnectorState(orchestrator.config.memoryDir, name, {
                     id: name,
                     cursor,
                     lastSyncAt: new Date().toISOString(),
                     lastSyncStatus,
                     ...(lastSyncError !== undefined ? { lastSyncError } : {}),
                     totalDocsImported,
-                  }),
+                  });
+                },
               });
             } else if (name === NOTION_CONNECTOR_ID) {
               if (!cfg.notion.enabled) {
@@ -4866,15 +4867,16 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                   }));
                   await orchestrator.ingestBulkImportBatch(turns);
                 },
-                writeCursorFn: async ({ cursor, lastSyncStatus, lastSyncError, totalDocsImported }) =>
-                  writeConnectorState(orchestrator.config.memoryDir, name, {
+                writeCursorFn: async ({ cursor, lastSyncStatus, lastSyncError, totalDocsImported }) => {
+                  await writeConnectorState(orchestrator.config.memoryDir, name, {
                     id: name,
                     cursor,
                     lastSyncAt: new Date().toISOString(),
                     lastSyncStatus,
                     ...(lastSyncError !== undefined ? { lastSyncError } : {}),
                     totalDocsImported,
-                  }),
+                  });
+                },
               });
             } else {
               process.stderr.write(
