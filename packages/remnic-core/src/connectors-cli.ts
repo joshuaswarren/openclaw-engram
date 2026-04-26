@@ -109,11 +109,6 @@ export interface ParsedConnectorsStatusOptions {
   format: ConnectorsOutputFormat;
 }
 
-export interface ParsedConnectorsRunOptions {
-  /** Validated connector name (non-empty string). */
-  name: string;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Option parsers (pure, unit-testable)
 // ─────────────────────────────────────────────────────────────────────────────

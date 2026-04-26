@@ -4733,13 +4733,10 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               return;
             }
             // Validate --format early so we can error before doing I/O.
+            // `run` defaults to "text" (same as `list`).
             let format: "text" | "markdown" | "json";
             try {
-              format = parseConnectorsStatusOptions({
-                format: options.format,
-              }).format === "json" && options.format === undefined
-                ? "text"  // run defaults to text, not json
-                : parseConnectorsListOptions({ format: options.format }).format;
+              format = parseConnectorsListOptions({ format: options.format }).format;
             } catch (err) {
               process.stderr.write(
                 `connectors run: ${err instanceof Error ? err.message : String(err)}\n`,
@@ -4785,8 +4782,28 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                   // runtime. Double-cast via unknown to satisfy the interface.
                   config: validatedCfg as unknown as Record<string, unknown>,
                 });
+                // Ingest fetched documents into the memory layer BEFORE
+                // advancing the cursor.  Reversing this order (cursor first,
+                // ingest second) would permanently skip documents on any
+                // failure between the two writes (P1 Codex review).
+                //
+                // Each ConnectorDocument is ingested as an assistant-role
+                // bulk-import turn so the extraction pipeline can distill it
+                // into memories.  The title (when present) is prepended as a
+                // Markdown heading so the extractor can use it as context.
+                if (syncResult.newDocs.length > 0) {
+                  const fetchedAt = new Date().toISOString();
+                  const turns = syncResult.newDocs.map((doc) => ({
+                    role: "assistant" as const,
+                    content: doc.title
+                      ? `# ${doc.title}\n\n${doc.content}`
+                      : doc.content,
+                    timestamp: fetchedAt,
+                  }));
+                  await orchestrator.ingestBulkImportBatch(turns);
+                }
                 runResult = { docsImported: syncResult.newDocs.length };
-                // Persist updated state.
+                // Persist cursor only after docs are safely ingested.
                 const { writeConnectorState } = await import(
                   "./connectors/live/state-store.js"
                 );
@@ -4847,6 +4864,19 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                   // Double-cast via unknown to satisfy the interface boundary.
                   config: validatedCfg as unknown as Record<string, unknown>,
                 });
+                // Ingest fetched documents before advancing cursor (P1 fix).
+                // Same pattern as the Drive block above.
+                if (syncResult.newDocs.length > 0) {
+                  const fetchedAt = new Date().toISOString();
+                  const turns = syncResult.newDocs.map((doc) => ({
+                    role: "assistant" as const,
+                    content: doc.title
+                      ? `# ${doc.title}\n\n${doc.content}`
+                      : doc.content,
+                    timestamp: fetchedAt,
+                  }));
+                  await orchestrator.ingestBulkImportBatch(turns);
+                }
                 runResult = { docsImported: syncResult.newDocs.length };
                 const { writeConnectorState } = await import(
                   "./connectors/live/state-store.js"
