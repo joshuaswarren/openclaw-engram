@@ -174,6 +174,16 @@ function parseSemanticChunkingConfig(
   return out;
 }
 
+// Cursor review on PR #736: the default reasoning model used by the
+// extraction pipeline (`config.model`) and the new peer profile
+// reasoner (`peerProfileReasonerModel`) was hardcoded as `"gpt-5.2"`
+// in two places. Centralize the default so both surfaces — and any
+// future LLM-backed surface — always agree on the same model id.
+// Sibling packages (briefing, active-recall) keep their own constants
+// because they're scoped to those subsystems; this one lives in the
+// config module because it spans extraction + peer-profile.
+export const DEFAULT_REASONING_MODEL = "gpt-5.2";
+
 const VALID_EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high"];
 const VALID_TRIGGERS: TriggerMode[] = ["smart", "every_n", "time_based"];
 const VALID_IDENTITY_INJECTION_MODES: IdentityInjectionMode[] = ["recovery_only", "minimal", "full"];
@@ -376,7 +386,7 @@ export function parseConfig(raw: unknown): PluginConfig {
   const model =
     typeof cfg.model === "string" && cfg.model.length > 0
       ? cfg.model
-      : "gpt-5.2";
+      : DEFAULT_REASONING_MODEL;
   const captureMode =
     cfg.captureMode === "explicit" || cfg.captureMode === "hybrid"
       ? cfg.captureMode
@@ -1560,21 +1570,34 @@ export function parseConfig(raw: unknown): PluginConfig {
     // matches and we do NOT silently bump to 1).
     peerProfileReasonerEnabled:
       coerceBool(cfg.peerProfileReasonerEnabled) ?? false,
+    // Cursor M on PR #736: use the routing alias `"auto"` rather than
+    // a hardcoded model identifier. Matches the convention established
+    // by sibling `semanticConsolidationModel`. Operators can still
+    // override via config; the value is logged for telemetry only.
     peerProfileReasonerModel:
       typeof cfg.peerProfileReasonerModel === "string" &&
       cfg.peerProfileReasonerModel.trim().length > 0
         ? cfg.peerProfileReasonerModel.trim()
-        : "gpt-5.2",
-    peerProfileReasonerMinInteractions:
-      typeof cfg.peerProfileReasonerMinInteractions === "number" &&
-      Number.isFinite(cfg.peerProfileReasonerMinInteractions)
-        ? Math.max(0, Math.floor(cfg.peerProfileReasonerMinInteractions))
-        : 5,
-    peerProfileReasonerMaxFieldsPerRun:
-      typeof cfg.peerProfileReasonerMaxFieldsPerRun === "number" &&
-      Number.isFinite(cfg.peerProfileReasonerMaxFieldsPerRun)
-        ? Math.max(0, Math.floor(cfg.peerProfileReasonerMaxFieldsPerRun))
-        : 8,
+        : "auto",
+    // Cursor L on PR #736: numeric config keys must coerce string CLI
+    // values (Gotcha #28 — `--config peerProfileReasonerMaxFieldsPerRun=2`
+    // arrives as the string "2"). Pre-fix `typeof === "number"`
+    // rejected string inputs and silently fell back to defaults. The
+    // shared `coerceNonNegativeInt` helper accepts both forms, throws
+    // on invalid input (Gotcha #51 — reject rather than silently
+    // default), and falls back to the documented default when the
+    // key is absent. 0 is a valid documented disable value here, so
+    // the helper does NOT bump to 1.
+    peerProfileReasonerMinInteractions: coerceNonNegativeInt(
+      cfg.peerProfileReasonerMinInteractions,
+      5,
+      "peerProfileReasonerMinInteractions",
+    ),
+    peerProfileReasonerMaxFieldsPerRun: coerceNonNegativeInt(
+      cfg.peerProfileReasonerMaxFieldsPerRun,
+      8,
+      "peerProfileReasonerMaxFieldsPerRun",
+    ),
     creationMemoryEnabled: cfg.creationMemoryEnabled === true,
     memoryUtilityLearningEnabled: cfg.memoryUtilityLearningEnabled === true,
     promotionByOutcomeEnabled: cfg.promotionByOutcomeEnabled === true,
@@ -2530,6 +2553,40 @@ function parseBriefingConfig(raw: unknown): import("./types.js").BriefingConfig 
 function clampNonNegativeNumber(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return Math.max(0, Math.floor(value));
+}
+
+/**
+ * Cursor L on PR #736: numeric config keys must accept BOTH numbers
+ * and CLI-string forms (`--config peerProfileReasonerMinInteractions=10`
+ * arrives as the string `"10"` per CLAUDE.md Gotcha #28). Pre-fix
+ * `typeof === "number"` rejected strings and silently fell back to the
+ * default — operators thought their override applied.
+ *
+ * Behavior:
+ *   - `undefined` / `null` / missing → return `fallback`
+ *   - finite number ≥ 0           → return floor(value)
+ *   - string that parses to finite ≥ 0 → return floor(value)
+ *   - anything else (NaN, ±Infinity, negative, non-numeric string,
+ *     boolean, object) → throw an Error listing the offending key.
+ *
+ * Throwing matches Gotcha #51 — reject invalid input rather than
+ * silently defaulting — and is consistent with how the surprise
+ * knobs validate their inputs.
+ */
+function coerceNonNegativeInt(
+  value: unknown,
+  fallback: number,
+  keyName?: string,
+): number {
+  if (value === undefined || value === null) return fallback;
+  const coerced = coerceNumber(value);
+  if (coerced === undefined || coerced < 0) {
+    const label = keyName ? ` (${keyName})` : "";
+    throw new Error(
+      `config value${label} must be a non-negative finite number; got ${JSON.stringify(value)}`,
+    );
+  }
+  return Math.floor(coerced);
 }
 
 // -----------------------------------------------------------------------------

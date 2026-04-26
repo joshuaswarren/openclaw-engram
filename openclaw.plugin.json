@@ -2922,8 +2922,8 @@
       },
       "peerProfileReasonerModel": {
         "type": "string",
-        "default": "gpt-5.2",
-        "description": "Model identifier used by the peer profile reasoner. Logged for telemetry only — actual dispatch routes through the same FallbackLlmClient used by semantic consolidation."
+        "default": "auto",
+        "description": "Model identifier used by the peer profile reasoner. 'auto' inherits the gateway's primary chain (recommended). Logged for telemetry only — actual dispatch routes through the same FallbackLlmClient used by semantic consolidation."
       },
       "peerProfileReasonerMinInteractions": {
         "type": "number",

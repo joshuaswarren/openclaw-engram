@@ -76,16 +76,19 @@ test("config defaults expose peerProfileReasoner* keys with least-privileged def
     "peerProfileReasonerEnabled must default to false via coerceBool",
   );
   // Numeric clamps must accept 0 (Gotcha #45 — schema documents 0 as
-  // a disable value, code path must honour it).
+  // a disable value, code path must honour it). After cursor L #736
+  // we route via the shared `coerceNonNegativeInt` helper so string
+  // CLI values are coerced uniformly with sibling numeric keys
+  // (Gotcha #28).
   assert.match(
     src,
-    /peerProfileReasonerMinInteractions:[\s\S]*Math\.max\(0,/,
-    "min-interactions clamp must accept 0",
+    /peerProfileReasonerMinInteractions:\s*coerceNonNegativeInt\(\s*cfg\.peerProfileReasonerMinInteractions,/,
+    "min-interactions must route via coerceNonNegativeInt for string CLI coercion",
   );
   assert.match(
     src,
-    /peerProfileReasonerMaxFieldsPerRun:[\s\S]*Math\.max\(0,/,
-    "max-fields clamp must accept 0",
+    /peerProfileReasonerMaxFieldsPerRun:\s*coerceNonNegativeInt\(\s*cfg\.peerProfileReasonerMaxFieldsPerRun,/,
+    "max-fields must route via coerceNonNegativeInt for string CLI coercion",
   );
 });
 
@@ -103,10 +106,13 @@ test("plugin manifest exposes peerProfileReasoner* keys with matching defaults",
       false,
       `${rel}: peerProfileReasonerEnabled default must be false`,
     );
+    // Cursor M #736: model default must be the routing alias "auto",
+    // not a hardcoded model identifier. Matches sibling
+    // semanticConsolidationModel convention.
     assert.equal(
       cfg.peerProfileReasonerModel?.default,
-      "gpt-5.2",
-      `${rel}: peerProfileReasonerModel default must be "gpt-5.2"`,
+      "auto",
+      `${rel}: peerProfileReasonerModel default must be "auto"`,
     );
     assert.equal(
       cfg.peerProfileReasonerMinInteractions?.default,

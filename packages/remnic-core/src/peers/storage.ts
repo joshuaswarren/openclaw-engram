@@ -720,11 +720,23 @@ function formatLogEntry(entry: PeerInteractionLogEntry): string {
   // session id, summary. ALL fields are passed through `sanitizeLogField`
   // so a stray newline anywhere can't shatter the append-only invariant
   // (cursor Medium on PR #723).
+  //
+  // Cursor Low on PR #736: the previous bare `session=<id>` token was
+  // ambiguous with summaries that literally start with `session=`
+  // (e.g. summary `"session=foo bar"` round-tripped to
+  // `{sessionId: "foo", summary: "bar"}`). New entries wrap the
+  // session marker in square brackets — `[session=<id>]` — which a
+  // sanitized summary can never start with (sanitizeLogField never
+  // emits `[` as the first character of a summary that originally
+  // started with `session=`, and bracketed metadata is unambiguously
+  // distinct from `session=` text). Old entries written by previous
+  // code remain parseable through the legacy fallback in
+  // `parseLogLine`.
   const ts = sanitizeLogField(entry.timestamp);
   const kind = sanitizeLogField(entry.kind);
   const summary = sanitizeLogField(entry.summary);
   const session = entry.sessionId
-    ? ` session=${sanitizeLogField(entry.sessionId)}`
+    ? ` [session=${sanitizeLogField(entry.sessionId)}]`
     : "";
   return `- [${ts}] (${kind})${session} ${summary}`;
 }
@@ -1070,10 +1082,20 @@ export async function readInteractionLogRaw(
  * callers can keep the rest of the log even when a single entry was
  * hand-edited or partially written.
  *
- * Format (must match `formatLogEntry` exactly):
+ * Formats accepted (must match `formatLogEntry`):
  *
- *   - [TS] (KIND) session=SID SUMMARY
- *   - [TS] (KIND) SUMMARY                  // session optional
+ *   - [TS] (KIND) [session=SID] SUMMARY     // canonical (PR #736)
+ *   - [TS] (KIND) SUMMARY                   // session optional
+ *
+ * The unbracketed `session=SID` form (which would have been written
+ * by an earlier draft of #679 PR 2/5) is intentionally NOT parsed —
+ * the cursor #736 finding showed it was indistinguishable from a
+ * summary that legitimately starts with `session=`. Since #679 PR
+ * 2/5 is the first shipped writer for `sessionId` AND ships the
+ * bracketed canonical form simultaneously, there is no real legacy
+ * data on disk to support. A summary like `session=foo bar` thus
+ * round-trips verbatim into `summary` rather than being mis-claimed
+ * as a session id.
  *
  * Whitespace inside SUMMARY is preserved verbatim. The parser is
  * deliberately strict — anything that doesn't start with `- [` is
@@ -1097,18 +1119,38 @@ function parseLogLine(line: string): PeerInteractionLogEntry | null {
   if (kind === "") return null;
   cursor = kindClose + 1;
   let sessionId: string | undefined;
-  // Optional ` session=<id>` token. We tolerate any leading whitespace
+  // Optional session id token. We tolerate any leading whitespace
   // count; `formatLogEntry` always emits exactly one space, but
   // operator-edited logs may diverge.
   while (cursor < line.length && line[cursor] === " ") cursor += 1;
-  if (line.slice(cursor, cursor + "session=".length) === "session=") {
-    cursor += "session=".length;
-    const space = line.indexOf(" ", cursor);
-    const end = space === -1 ? line.length : space;
-    const sid = line.slice(cursor, end).trim();
-    if (sid.length > 0) sessionId = sid;
-    cursor = end;
+  // Canonical form (PR #736): `[session=<id>]`. Unambiguous because
+  // a sanitized summary cannot start with `[session=` followed by a
+  // closing bracket and a space — sanitization preserves user content
+  // verbatim except for newlines/CR/tab, so a summary that literally
+  // begins `[session=foo]` would imply the OPERATOR wrote a real
+  // session marker, which is acceptable as session attribution.
+  if (line.startsWith("[session=", cursor)) {
+    const close = line.indexOf("]", cursor + "[session=".length);
+    // A `[session=...]` with no closing bracket on the same line is
+    // malformed metadata; treat the whole tail as summary instead of
+    // misclaiming a session id.
+    if (close > -1) {
+      const sid = line.slice(cursor + "[session=".length, close).trim();
+      if (sid.length > 0) sessionId = sid;
+      cursor = close + 1;
+    }
   }
+  // NOTE: the legacy unbracketed `session=<id>` form is intentionally
+  // NOT parsed. The cursor #736 finding is fundamentally a format
+  // ambiguity: `- [TS] (KIND) session=foo bar` is indistinguishable
+  // from a real session token vs. a summary that begins with the
+  // literal text `session=foo bar`. Since #679 PR 2/5 is the first
+  // PR that writes `sessionId` to the log AND ships the bracketed
+  // canonical form simultaneously, there is no production legacy
+  // data to support. Old `session=`-style summaries — both real
+  // operator notes and hypothetical legacy entries — round-trip
+  // verbatim into `summary` rather than being silently mis-claimed
+  // as a session id.
   // Remaining tail is the summary (possibly empty if the log was
   // hand-edited; we still accept "" because `formatLogEntry` itself
   // accepts an empty summary string).

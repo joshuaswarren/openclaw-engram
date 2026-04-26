@@ -420,12 +420,20 @@ export async function runPeerProfileReasoner(
       continue;
     }
     try {
-      const recentLog = await readPeerInteractionLog(
+      // Codex P2 review on PR #736: the min-interactions threshold
+      // must reflect the FULL log of new activity, not the
+      // `maxLogPerPeer`-truncated slice. Otherwise a peer with a
+      // genuinely active conversation history can be permanently
+      // marked `skipped_below_min_interactions` whenever
+      // `peerProfileReasonerMinInteractions > maxLogEntriesPerPeer`,
+      // because the slice will never include enough new entries.
+      // Read the full log first to compute the gate, then truncate
+      // for prompt construction below.
+      const fullLog = await readPeerInteractionLog(
         options.memoryDir,
         peer.id,
-        { limit: maxLogPerPeer },
       );
-      if (recentLog.length === 0) {
+      if (fullLog.length === 0) {
         result.perPeer.push({
           peerId: peer.id,
           status: "skipped_no_log",
@@ -438,13 +446,13 @@ export async function runPeerProfileReasoner(
       // Count interactions since the last reasoner-run marker, so
       // dormant peers don't trigger another LLM call until enough
       // new signal accumulates. Run markers themselves don't count.
-      const lastRun = lastRunTimestamp(recentLog);
-      const sinceLastRun = lastRun
-        ? recentLog.filter(
+      const lastRun = lastRunTimestamp(fullLog);
+      const sinceLastRunFull = lastRun
+        ? fullLog.filter(
             (e) => e.timestamp > lastRun && e.kind !== RUN_MARKER_KIND,
           )
-        : recentLog.filter((e) => e.kind !== RUN_MARKER_KIND);
-      if (sinceLastRun.length < minInteractions) {
+        : fullLog.filter((e) => e.kind !== RUN_MARKER_KIND);
+      if (sinceLastRunFull.length < minInteractions) {
         result.perPeer.push({
           peerId: peer.id,
           status: "skipped_below_min_interactions",
@@ -454,6 +462,14 @@ export async function runPeerProfileReasoner(
         });
         continue;
       }
+      // Truncate ONLY for prompt construction so the LLM context
+      // stays bounded. Use the most recent `maxLogPerPeer` entries
+      // from the full since-last-run set so the prompt prefers fresh
+      // signal over older entries.
+      const sinceLastRun =
+        sinceLastRunFull.length > maxLogPerPeer
+          ? sinceLastRunFull.slice(sinceLastRunFull.length - maxLogPerPeer)
+          : sinceLastRunFull;
 
       const existingProfile = await readPeerProfile(options.memoryDir, peer.id);
 
@@ -539,11 +555,25 @@ export async function runPeerProfileReasoner(
         }
       }
 
+      // Codex P1 review on PR #736: the global `fieldsAppliedTotal`
+      // counter must NOT be incremented until the profile write
+      // actually succeeds. Otherwise a transient I/O error here
+      // poisons the per-run cap for every subsequent peer — they get
+      // marked `skipped_cap_reached` for fields that were never
+      // persisted. Track the candidate count locally and only
+      // commit it to the run-wide budget after `writePeerProfile`
+      // returns successfully (Gotcha #25 — don't destroy old state
+      // before confirming new state succeeds).
       const appliedFieldsForPeer: string[] = [];
       let droppedDueToCap = 0;
       let invalidProposalSeen = false;
       for (const proposal of proposals) {
-        if (fieldsAppliedTotal >= maxFields) {
+        // Use a candidate-budget projection so we never propose more
+        // than the run-wide cap allows even before we know the write
+        // will succeed.
+        const candidateBudget =
+          maxFields - fieldsAppliedTotal - appliedFieldsForPeer.length;
+        if (candidateBudget <= 0) {
           droppedDueToCap += 1;
           continue;
         }
@@ -582,7 +612,9 @@ export async function runPeerProfileReasoner(
         list.push(provEntry);
         baseProvenance[proposal.field] = list;
         appliedFieldsForPeer.push(proposal.field);
-        fieldsAppliedTotal += 1;
+        // NOTE: fieldsAppliedTotal is NOT incremented here — see the
+        // P1 comment above. We commit the budget after the write
+        // succeeds.
       }
 
       if (appliedFieldsForPeer.length === 0) {
@@ -607,6 +639,11 @@ export async function runPeerProfileReasoner(
         provenance: baseProvenance,
       };
       await writePeerProfile(options.memoryDir, merged);
+      // Write succeeded — NOW commit the budget. A throw above
+      // bubbles to the outer catch, where the peer is recorded as
+      // `error` and the global cap remains intact for subsequent
+      // peers (Codex P1 fix on PR #736).
+      fieldsAppliedTotal += appliedFieldsForPeer.length;
 
       // Append a run marker so the next reasoner pass can compute
       // "interactions since last run" without a dedicated state
