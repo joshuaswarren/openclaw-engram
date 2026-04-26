@@ -894,12 +894,12 @@ function findLastDayContext(
       tokens,
       index - 1,
     );
-    if (previousStandaloneDayContext !== undefined) {
-      return previousStandaloneDayContext;
-    }
     const standaloneDayContext = buildStandalonePlanDayContext(tokens, index);
     if (standaloneDayContext !== undefined) {
       return standaloneDayContext;
+    }
+    if (previousStandaloneDayContext !== undefined) {
+      return previousStandaloneDayContext;
     }
     const precedingExplicitDayContext = extractPrecedingExplicitPlanDayContext(
       tokens,
@@ -958,13 +958,17 @@ function buildStandalonePlanDayContext(
     tokens,
     index,
   );
+  const pairedExplicitDayContext =
+    precedingExplicitDayContext?.endIndex === index - 1
+      ? precedingExplicitDayContext
+      : undefined;
   return {
-    startIndex: precedingExplicitDayContext?.startIndex ?? index,
+    startIndex: pairedExplicitDayContext?.startIndex ?? index,
     dayTokens: [standaloneDayToken],
     alternateDayTokens:
-      precedingExplicitDayContext === undefined
+      pairedExplicitDayContext === undefined
         ? undefined
-        : [precedingExplicitDayContext.dayTokens],
+        : [pairedExplicitDayContext.dayTokens],
   };
 }
 
@@ -1021,7 +1025,7 @@ function extractTrailingPlanDayContext(
 function extractPrecedingExplicitPlanDayContext(
   tokens: string[],
   beforeIndex: number,
-): { startIndex: number; dayTokens: string[] } | undefined {
+): { startIndex: number; endIndex: number; dayTokens: string[] } | undefined {
   const searchStart = Math.max(0, beforeIndex - 4);
   for (let index = beforeIndex - 2; index >= searchStart; index -= 1) {
     if (
@@ -1032,6 +1036,7 @@ function extractPrecedingExplicitPlanDayContext(
       if (dayToken !== undefined) {
         return {
           startIndex: index,
+          endIndex: index + 1,
           dayTokens: [dayToken],
         };
       }
