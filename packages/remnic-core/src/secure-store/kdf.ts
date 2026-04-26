@@ -103,8 +103,17 @@ export function validateScryptParams(params: ScryptParams): void {
   if (!Number.isInteger(N) || N < 2) {
     throw new Error(`scrypt N must be an integer ≥ 2, got ${N}`);
   }
-  // N must be a power of 2: only one bit set.
-  if ((N & (N - 1)) !== 0) {
+  // Cursor Low + codex P2: a `(N & (N - 1)) !== 0` check truncates
+  // to 32-bit semantics for `N >= 2**31`, so values like `5 * 2**30`
+  // would pass even though they are not powers of two, and absurdly
+  // large values like `2**33` would silently lock up the KDF. Use
+  // Math.log2-based detection plus an explicit upper bound at 2**30
+  // (already orders of magnitude past any practical memory budget)
+  // so out-of-range or non-power-of-two values are rejected loudly.
+  if (N > 2 ** 30) {
+    throw new Error(`scrypt N is unreasonably large (max 2^30), got ${N}`);
+  }
+  if (!Number.isInteger(Math.log2(N))) {
     throw new Error(`scrypt N must be a power of 2, got ${N}`);
   }
   if (!Number.isInteger(r) || r < 1) {

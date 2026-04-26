@@ -332,8 +332,19 @@ export function validateMetadata(meta: SecureStoreMetadata): void {
   hexToBytes(meta.kdf.salt, KDF_SALT_LENGTH);
   if (meta.kdf.algorithm === "scrypt") {
     const { N, r, p, keyLength, maxmem } = meta.kdf.params;
-    if (!Number.isInteger(N) || N < 2 || (N & (N - 1)) !== 0) {
-      throw new Error("metadata.kdf.params.N must be a power of 2 ≥ 2");
+    // Cursor Low + codex P2: bitwise `(N & (N - 1))` truncates to
+    // 32-bit signed in JS, so for N >= 2**31 the check silently
+    // wraps and accepts non-powers-of-two like `5 * 2**30`. Use
+    // Math.log2 plus an upper bound at 2**30 so out-of-range
+    // values are rejected loudly at metadata-load time rather than
+    // locking up the KDF later.
+    if (
+      !Number.isInteger(N) ||
+      N < 2 ||
+      N > 2 ** 30 ||
+      !Number.isInteger(Math.log2(N))
+    ) {
+      throw new Error("metadata.kdf.params.N must be a power of 2 in [2, 2^30]");
     }
     if (!Number.isInteger(r) || r < 1) {
       throw new Error("metadata.kdf.params.r must be a positive integer");
