@@ -1216,3 +1216,173 @@ test("seenIds check gates on (id + timestamp), not id alone", async () => {
     "imported document must contain the new body",
   );
 });
+
+// ---------------------------------------------------------------------------
+// Regression: skipped items at watermark second must be recorded in seenIds
+// Fix: Cursor Medium finding (PRRT_kwDORJXyws59slIv) — boundary items re-fetched
+// ---------------------------------------------------------------------------
+
+test("skipped (wrong-author) items at watermark second are recorded in seenIds", async () => {
+  // A wrong-author comment at exactly the watermark second. With the `<` filter
+  // it passes through each poll but gets skipped. Without seenIds recording it
+  // would be re-fetched and re-skipped on every subsequent poll indefinitely.
+  const ts = "2026-04-26T14:00:00.000Z";
+  const wrongAuthorComment = makeComment(99, "other-user", "not mine", ts);
+
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes("/issues/comments"),
+      respond: () => ({ status: 200, data: [wrongAuthorComment] }),
+    },
+    {
+      match: (url) => url.includes("/pulls/comments"),
+      respond: () => ({ status: 200, data: [] }),
+    },
+  ]);
+
+  const connector = createGitHubConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CONFIG });
+  // Watermark is at ts; seenIds is empty — comment will be skipped by author filter.
+  const cursor: import("./framework.js").ConnectorCursor = {
+    kind: GITHUB_CURSOR_KIND,
+    value: JSON.stringify({
+      watermarks: { [`${REPO_A}/issue-comment`]: ts },
+      seenIds: {},
+      startRepoIndex: 0,
+    }),
+    updatedAt: ts,
+  };
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GitHubSyncResult;
+  assert.equal(result.newDocs.length, 0, "wrong-author comment must not be ingested");
+  assert.equal(result.skippedOtherAuthor, 1);
+
+  // The skipped comment must be recorded in the next cursor's seenIds so
+  // subsequent polls don't re-process it.
+  const payload = JSON.parse(result.nextCursor.value) as {
+    seenIds: Record<string, string>;
+  };
+  assert.ok(
+    payload.seenIds[`${REPO_A}/issue-comment/99`] === ts,
+    "skipped wrong-author comment must be in seenIds with its updated_at",
+  );
+});
+
+test("skipped (empty-body) items at watermark second are recorded in seenIds", async () => {
+  const ts = "2026-04-26T14:01:00.000Z";
+  const emptyComment = makeComment(101, SYNTHETIC_LOGIN, "", ts);
+
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes("/issues/comments"),
+      respond: () => ({ status: 200, data: [emptyComment] }),
+    },
+    {
+      match: (url) => url.includes("/pulls/comments"),
+      respond: () => ({ status: 200, data: [] }),
+    },
+  ]);
+
+  const connector = createGitHubConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CONFIG });
+  const cursor: import("./framework.js").ConnectorCursor = {
+    kind: GITHUB_CURSOR_KIND,
+    value: JSON.stringify({
+      watermarks: { [`${REPO_A}/issue-comment`]: ts },
+      seenIds: {},
+      startRepoIndex: 0,
+    }),
+    updatedAt: ts,
+  };
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GitHubSyncResult;
+  assert.equal(result.newDocs.length, 0);
+  assert.equal(result.skippedEmpty, 1);
+
+  const payload = JSON.parse(result.nextCursor.value) as { seenIds: Record<string, string> };
+  assert.ok(
+    payload.seenIds[`${REPO_A}/issue-comment/101`] === ts,
+    "skipped empty-body comment must be in seenIds",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Regression: case-insensitive login comparison
+// Fix: Codex P2 finding (PRRT_kwDORJXyws59slOB)
+// ---------------------------------------------------------------------------
+
+test("author filter is case-insensitive for login comparison", async () => {
+  // The API returns "Synthetic-User" (different casing than configured login).
+  const comment = makeComment(55, "Synthetic-User", "hello", "2026-04-26T15:00:00.000Z");
+
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes("/issues/comments"),
+      respond: () => ({ status: 200, data: [comment] }),
+    },
+    {
+      match: (url) => url.includes("/pulls/comments"),
+      respond: () => ({ status: 200, data: [] }),
+    },
+  ]);
+
+  const connector = createGitHubConnector({ fetchFn });
+  // Config uses lowercase "synthetic-user"; API returns "Synthetic-User".
+  const config = connector.validateConfig({ ...SYNTHETIC_CONFIG });
+  const cursor = makeGitHubCursor({});
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GitHubSyncResult;
+  assert.equal(
+    result.newDocs.length,
+    1,
+    "comment with different-cased login must still be ingested",
+  );
+  assert.equal(result.skippedOtherAuthor, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Regression: round-robin repo rotation
+// Fix: Codex P1 finding (PRRT_kwDORJXyws59slN-) — repo starvation
+// ---------------------------------------------------------------------------
+
+test("startRepoIndex rotates to give later repos a chance on next pass", async () => {
+  // Set startRepoIndex=0; after a pass over 2 repos the next cursor must have
+  // startRepoIndex=1 so that REPO_B is processed first on the next pass.
+  const commentA = makeComment(1, SYNTHETIC_LOGIN, "in A", "2026-04-26T16:00:00.000Z");
+  const commentB = makeComment(2, SYNTHETIC_LOGIN, "in B", "2026-04-26T16:00:01.000Z");
+
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes(`${REPO_A}/issues/comments`),
+      respond: () => ({ status: 200, data: [commentA] }),
+    },
+    {
+      match: (url) => url.includes(`${REPO_A}/pulls/comments`),
+      respond: () => ({ status: 200, data: [] }),
+    },
+    {
+      match: (url) => url.includes(`${REPO_B}/issues/comments`),
+      respond: () => ({ status: 200, data: [commentB] }),
+    },
+    {
+      match: (url) => url.includes(`${REPO_B}/pulls/comments`),
+      respond: () => ({ status: 200, data: [] }),
+    },
+  ]);
+
+  const connector = createGitHubConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CONFIG, repos: [REPO_A, REPO_B] });
+  const cursor: import("./framework.js").ConnectorCursor = {
+    kind: GITHUB_CURSOR_KIND,
+    value: JSON.stringify({ watermarks: {}, seenIds: {}, startRepoIndex: 0 }),
+    updatedAt: "2026-04-26T00:00:00.000Z",
+  };
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GitHubSyncResult;
+  // Both repos should be processed.
+  assert.equal(result.newDocs.length, 2);
+
+  // Next cursor must rotate startRepoIndex to 1 (REPO_B gets first shot next pass).
+  const payload = JSON.parse(result.nextCursor.value) as { startRepoIndex: number };
+  assert.equal(payload.startRepoIndex, 1, "startRepoIndex must advance to 1 after a pass starting at 0");
+});

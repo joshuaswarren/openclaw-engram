@@ -132,10 +132,20 @@ interface GitHubCursorPayload {
    * boundary. Prevents re-importing comments whose `updated_at` matches the
    * watermark exactly — GitHub's `since=` filter is inclusive, so comments at
    * the exact watermark timestamp are re-returned on every subsequent poll.
+   * Skipped items (wrong author, empty/oversized body) are also recorded here
+   * so they are not re-fetched indefinitely after the watermark second.
    *
    * Mirrors the Gmail connector's `seenIds` pattern from #745.
    */
   seenIds: Record<string, string>;
+  /**
+   * Index into `config.repos` at which the next pass starts scanning.
+   * Rotated by one each pass to give all repos an equal chance to be
+   * processed when `MAX_ITEMS_PER_PASS` is hit before all repos are covered
+   * (round-robin fairness, prevents the first repo from permanently starving
+   * later ones).
+   */
+  startRepoIndex: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -331,7 +341,11 @@ function parseCursorPayload(cursor: ConnectorCursor): GitHubCursorPayload {
     typeof p.seenIds === "object" && p.seenIds !== null && !Array.isArray(p.seenIds)
       ? (p.seenIds as Record<string, string>)
       : {};
-  return { watermarks, seenIds };
+  // startRepoIndex: tolerate missing key (old cursors lack it); default to 0.
+  const startRepoIndex = typeof p.startRepoIndex === "number" && p.startRepoIndex >= 0
+    ? Math.floor(p.startRepoIndex)
+    : 0;
+  return { watermarks, seenIds, startRepoIndex };
 }
 
 function watermarkKey(repo: string, kind: string): string {
@@ -520,7 +534,7 @@ export function createGitHubConnector(
 
       // Short-circuit: nothing to do if no repos are configured.
       if (config.repos.length === 0) {
-        const emptyPayload: GitHubCursorPayload = { watermarks: {}, seenIds: {} };
+        const emptyPayload: GitHubCursorPayload = { watermarks: {}, seenIds: {}, startRepoIndex: 0 };
         const result: GitHubSyncResult = {
           newDocs: [],
           nextCursor: makeCursor(emptyPayload),
@@ -534,7 +548,7 @@ export function createGitHubConnector(
       // Parse or seed cursor.
       const isFirstSync = args.cursor === null;
       const payload: GitHubCursorPayload = isFirstSync
-        ? { watermarks: {}, seenIds: {} }
+        ? { watermarks: {}, seenIds: {}, startRepoIndex: 0 }
         : parseCursorPayload(args.cursor);
 
       if (isFirstSync) {
@@ -623,7 +637,7 @@ async function seedWatermarks(
     }
   }
 
-  return { watermarks, seenIds: {} };
+  return { watermarks, seenIds: {}, startRepoIndex: 0 };
 }
 
 /**
@@ -671,7 +685,17 @@ async function incrementalSync(
   // Accumulate seenIds updates for each resource; merged into nextSeenIds below.
   const updatedSeenIds: Record<string, string> = { ...payload.seenIds };
 
-  for (const repo of config.repos) {
+  // Round-robin repo ordering: start from the repo after the last one that
+  // reached the budget cap, so no single repo permanently starves later repos.
+  const repoCount = config.repos.length;
+  const startIdx = repoCount > 0 ? payload.startRepoIndex % repoCount : 0;
+  const orderedRepos = repoCount > 0
+    ? [...config.repos.slice(startIdx), ...config.repos.slice(0, startIdx)]
+    : [];
+  // Next pass starts one step further, cycling through all repos fairly.
+  const nextStartRepoIndex = repoCount > 0 ? (startIdx + 1) % repoCount : 0;
+
+  for (const repo of orderedRepos) {
     if (totalConsumed >= MAX_ITEMS_PER_PASS) break;
     throwIfAborted(signal);
 
@@ -772,7 +796,7 @@ async function incrementalSync(
         const result = await fetchAndFilterComments(
           fetchFn,
           config.token,
-          buildDiscussionsUrl(repo, since),
+          buildDiscussionsUrl(repo),
           repo,
           "discussion",
           config.userLogin,
@@ -808,7 +832,11 @@ async function incrementalSync(
 
   return {
     newDocs,
-    nextCursor: makeCursor({ watermarks: updatedWatermarks, seenIds: updatedSeenIds }),
+    nextCursor: makeCursor({
+      watermarks: updatedWatermarks,
+      seenIds: updatedSeenIds,
+      startRepoIndex: nextStartRepoIndex,
+    }),
     skippedOtherAuthor,
     skippedEmpty,
     skippedTooLarge,
@@ -838,11 +866,12 @@ function buildPrReviewCommentsUrl(repo: string, since?: string): string {
   return since ? `${base}&since=${encodeURIComponent(since)}` : base;
 }
 
-function buildDiscussionsUrl(repo: string, since?: string): string {
+function buildDiscussionsUrl(repo: string): string {
   // GitHub Discussions REST API (available for repos with discussions enabled).
   // No server-side `since` filter exists, so we page and filter client-side.
-  const base = `${GITHUB_API_BASE}/repos/${repo}/discussions?sort=updated&direction=asc&per_page=${GITHUB_PAGE_SIZE}`;
-  return since ? `${base}&since=${encodeURIComponent(since)}` : base;
+  // Do NOT append `since=` here — the parameter is not supported and would be
+  // either silently ignored or cause a request error.
+  return `${GITHUB_API_BASE}/repos/${repo}/discussions?sort=updated&direction=asc&per_page=${GITHUB_PAGE_SIZE}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -945,14 +974,20 @@ async function fetchAndFilterComments(
 
       // Author filter (client-side). Not counted against budget —
       // P1 fix `PRRT_kwDORJXyws59sfBs`: only ingested records consume budget.
-      const authorLogin = comment.user?.login ?? null;
-      if (authorLogin !== userLogin) {
+      // GitHub logins are case-insensitive; normalize both sides to lowercase
+      // before comparing to avoid silently dropping valid comments when the
+      // configured userLogin differs in casing from the API response.
+      const authorLogin = (comment.user?.login ?? "").toLowerCase();
+      if (authorLogin !== userLogin.toLowerCase()) {
         skippedOtherAuthor++;
         // Still track watermark for non-matching items to prevent re-fetching
         // them on every subsequent poll.
         if (!latestWatermark || comment.updated_at > latestWatermark) {
           latestWatermark = comment.updated_at;
         }
+        // Add to newSeenIds so same-second skipped items aren't re-fetched
+        // indefinitely (see Fix 1 below for details on empty/large body items).
+        newSeenIds[seenKey] = comment.updated_at;
         continue;
       }
 
@@ -964,6 +999,11 @@ async function fetchAndFilterComments(
         if (!latestWatermark || comment.updated_at > latestWatermark) {
           latestWatermark = comment.updated_at;
         }
+        // Add to newSeenIds: a skipped item at the watermark second must be
+        // recorded so that the strict `<` watermark filter doesn't re-return it
+        // on every subsequent poll. Without this, GitHub's inclusive `since=`
+        // re-returns boundary-second items indefinitely.
+        newSeenIds[seenKey] = comment.updated_at;
         continue;
       }
       if (trimmed.length > MAX_BODY_BYTES) {
@@ -971,6 +1011,8 @@ async function fetchAndFilterComments(
         if (!latestWatermark || comment.updated_at > latestWatermark) {
           latestWatermark = comment.updated_at;
         }
+        // Same reason as empty-body: record in seenIds to avoid infinite re-fetch.
+        newSeenIds[seenKey] = comment.updated_at;
         continue;
       }
 
