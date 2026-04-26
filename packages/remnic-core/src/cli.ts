@@ -7321,6 +7321,35 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log(`  Queued: ${result.queued}`);
           console.log(`  Cooled down: ${result.cooledDown}`);
         });
+
+      // ── Console subcommand (issue #688 PR 1/3) ──────────────────────────
+      // Structured engine-state aggregator. PR 1/3 ships only the
+      // `--state-only` flag which prints the snapshot as JSON. The
+      // interactive TUI (PR 2/3), HTTP `/console/state`, MCP
+      // `engram.console_state`, and trace replay (PR 3/3) land in
+      // follow-ups.
+      cmd
+        .command("console")
+        .description(
+          "Operator console (issue #688). PR 1/3 ships --state-only, which emits a structured engine-state snapshot as JSON. The interactive TUI lands in PR 2/3.",
+        )
+        .option(
+          "--state-only",
+          "Print a single console-state snapshot as JSON and exit",
+        )
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          if (options.stateOnly !== true) {
+            console.error(
+              "remnic console: interactive TUI not yet available (issue #688 PR 2/3). Pass --state-only to print a JSON snapshot.",
+            );
+            process.exitCode = 1;
+            return;
+          }
+          const { gatherConsoleState } = await import("./console/state.js");
+          const snapshot = await gatherConsoleState(orchestrator);
+          console.log(JSON.stringify(snapshot, null, 2));
+        });
     },
     { commands: ["engram"] },
   );
