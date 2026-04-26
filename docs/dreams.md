@@ -122,9 +122,11 @@ existing top-level keys readable for backward compatibility.
 (Note: `summaryRecallHours` and `summaryModel` are *not* REM-phase
 gates — they configure the recall summaries path in
 `orchestrator.ts`, not `runSemanticConsolidation`. Summary
-snapshotting that runs alongside REM is gated by the
-`semanticConsolidation*` keys above and by `summary-snapshot.ts`
-internally.)
+snapshots themselves are written from a separate flow:
+`HourlySummarizer.saveSummary` / `runHourly` in `summarizer.ts`
+calls `summary-snapshot.ts`. That flow is *not* gated by the
+`semanticConsolidation*` keys; do not expect tuning REM settings
+to change snapshot behaviour.)
 
 ### Deep sleep gates (today)
 
@@ -133,10 +135,15 @@ internally.)
   `fileHygiene.rotateEnabled`, `fileHygiene.rotateMaxBytes`,
   `fileHygiene.warningsLogPath`, etc.) — drives archive and warning
   emission for files that exceed size thresholds.
+- `versioningEnabled` (default `false`) — master switch for
+  page-version snapshots. `StorageManager.snapshotBeforeWrite`
+  exits early when this flag is not set, so deep-sleep
+  snapshotting is a no-op without it. Operators must enable this
+  *before* tuning the retention key below.
 - `versioningMaxPerPage` (top-level config key, consumed by
   `page-versioning.ts` as `maxVersionsPerPage`) — retention for the
-  snapshot history that every memory file overwrite produces. `0`
-  disables pruning.
+  snapshot history that every memory file overwrite produces once
+  `versioningEnabled` is `true`. `0` disables pruning.
 - The `engram-nightly-governance` cron registered in
   `maintenance/memory-governance-cron.ts` — orchestrates the deep
   sleep pass on a schedule. The same module registers exactly four
