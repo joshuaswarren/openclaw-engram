@@ -278,6 +278,9 @@ function parseAMemGymChoice(
     }
     return undefined;
   }
+  let fallbackAnswer = rawAnswer;
+  let forceTextFallback = false;
+  let blockTextFallbackSelection = false;
   const plainTextOption = parseAMemGymPlainTextOptionNumber(trimmed);
   if (plainTextOption !== undefined) {
     const index = plainTextOption.selectedNumber - 1;
@@ -285,27 +288,31 @@ function parseAMemGymChoice(
     if (!choice) {
       return undefined;
     }
+    const hasConflictingOptionNumber = mentionsConflictingOptionNumber(
+      plainTextOption.choiceText,
+      plainTextOption.selectedNumber,
+    );
     if (
-      mentionsConflictingOptionNumber(
-        plainTextOption.choiceText,
-        plainTextOption.selectedNumber,
-      )
-    ) {
-      return undefined;
-    }
-    if (
+      !hasConflictingOptionNumber
+      &&
       plainOptionTextMatchesChoice(plainTextOption.choiceText, choice.answer)
     ) {
       return { index, choice };
     }
+    if (hasConflictingOptionNumber) {
+      fallbackAnswer = plainTextOption.choiceText;
+      forceTextFallback = true;
+      blockTextFallbackSelection = true;
+    }
   }
-  const normalizedAnswer = normalizeForChoiceMatch(rawAnswer);
+  const normalizedAnswer = normalizeForChoiceMatch(fallbackAnswer);
   const normalizedChoices = qa.answer_choices.map((choice, index) => ({
     index,
     choice,
     normalized: normalizeForChoiceMatch(choice.answer),
   }));
-  const numericChoiceNumberAttempt = looksLikeChoiceNumberAttempt(trimmed);
+  const numericChoiceNumberAttempt = !forceTextFallback
+    && looksLikeChoiceNumberAttempt(trimmed);
   const numericAttemptPrefix = leadingNumericToken(normalizedAnswer);
 
   const exactMatches = normalizedChoices.filter(
@@ -316,8 +323,11 @@ function parseAMemGymChoice(
   if (exactMatches.length === 1) {
     const exactMatch = exactMatches[0]!;
     if (
-      !numericChoiceNumberAttempt
-      || numericPrefixesAgree(numericAttemptPrefix, exactMatch.normalized)
+      !blockTextFallbackSelection
+      && (
+        !numericChoiceNumberAttempt
+        || numericPrefixesAgree(numericAttemptPrefix, exactMatch.normalized)
+      )
     ) {
       return { index: exactMatch.index, choice: exactMatch.choice };
     }
@@ -349,7 +359,7 @@ function parseAMemGymChoice(
   const uniqueMatch = bestSubstringMatches.length === 1
     ? bestSubstringMatches[0]
     : undefined;
-  return uniqueMatch
+  return uniqueMatch && !blockTextFallbackSelection
     ? { index: uniqueMatch.index, choice: uniqueMatch.choice }
     : undefined;
 }
@@ -461,6 +471,13 @@ function mentionsConflictingOptionNumber(
 ): boolean {
   const trimmed = value.trim();
   for (const match of trimmed.matchAll(/\b(?:option|choice|answer)\s*#?\s*(\d+)\b/gi)) {
+    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+      return true;
+    }
+  }
+  for (const match of trimmed.matchAll(
+    /#\s*(\d+)\b(?=[^#]*(?:might|may|could|would|should|right|correct|valid|answer|option|choice)\b)/gi,
+  )) {
     if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
       return true;
     }

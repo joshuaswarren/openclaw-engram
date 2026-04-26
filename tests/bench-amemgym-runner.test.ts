@@ -671,6 +671,29 @@ test("runBenchmark rejects amemgym option-number rationales with bare conflictin
   assert.equal(task.details?.scoredAnswer, "1 because 2 might be right.");
 });
 
+test("runBenchmark rejects amemgym option-number rationales with hash conflicting choices", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-hash-conflicting-choice-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("1 because #2 might also be right."));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(createDatasetProfile()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.qa_accuracy, 0);
+  assert.equal(task.details?.selectedChoiceIndex, null);
+  assert.equal(task.details?.scoredAnswer, "1 because #2 might also be right.");
+});
+
 test("runBenchmark rejects amemgym option-number rationales with hedged conflicting choices", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-hedged-conflicting-choice-"));
   const datasetDir = path.join(tmpDir, "datasets", "amemgym");
