@@ -419,16 +419,15 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
     throw new Error(`MemBench case ${location} must include a non-empty question string.`);
   }
 
-  if (typeof answer !== "string" || answer.length === 0) {
-    throw new Error(`MemBench case ${location} must include a non-empty answer string.`);
-  }
-
   if (!Array.isArray(turns) || turns.length === 0) {
     throw new Error(`MemBench case ${location} must include a non-empty turns array.`);
   }
 
   const parsedChoices = parseChoices(choices, location);
-  const parsedCorrectChoice = parseCorrectChoice(correctChoice, answer, parsedChoices, location);
+  const rawAnswer = typeof answer === "string" && answer.length > 0
+    ? answer
+    : undefined;
+  const parsedCorrectChoice = parseCorrectChoice(correctChoice, rawAnswer, parsedChoices, location);
   const flatCoordinateIndex = buildFlatCoordinateIndex(turns.length);
   const idRefs = parseTargetStepRefs(targetStepIds, flatCoordinateIndex);
   const coordinateRefs = parseTargetStepRefs(targetStepCoordinates, flatCoordinateIndex, {
@@ -440,7 +439,10 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
   };
   const parsedAnswer = parsedChoices && parsedCorrectChoice
     ? parsedChoices[parsedCorrectChoice]
-    : answer;
+    : rawAnswer;
+  if (!parsedAnswer) {
+    throw new Error(`MemBench case ${location} must include a non-empty answer string or choices with a correct choice.`);
+  }
 
   return {
     id,
@@ -551,7 +553,10 @@ function normalizeFlatCase(
   hints: MemBenchHints,
   location: string,
 ): MemBenchCase | null {
-  if (!("turns" in record) || !("question" in record) || !("answer" in record)) {
+  const hasAnswer = "answer" in record;
+  const hasChoiceAnswer = ("choices" in record || "options" in record)
+    && ("correctChoice" in record || "correct_choice" in record);
+  if (!("turns" in record) || !("question" in record) || (!hasAnswer && !hasChoiceAnswer)) {
     return null;
   }
 
@@ -564,7 +569,7 @@ function normalizeFlatCase(
       turns: record.turns,
       question: record.question,
       answer: record.answer,
-      choices: record.choices,
+      choices: record.choices ?? record.options,
       correctChoice: record.correctChoice ?? record.correct_choice,
       questionTime: record.questionTime ?? record.question_time ?? record.time,
       targetStepIds: record.targetStepIds ?? record.target_step_ids ?? record.target_step_id,
@@ -807,6 +812,7 @@ function normalizeQaPairs(
       ...parseTargetStepRefs(targetRefSource?.value, coordinateIndex, {
         treatSingleArrayAsCoordinate: targetRefSource?.kind === "coordinates"
           || targetRefSource?.treatSingleArrayAsCoordinate === true,
+        fallbackArrayTupleToIds: targetRefSource?.fallbackArrayTupleToIds === true,
       }),
     });
   }
@@ -820,12 +826,14 @@ function resolveTargetRefSource(
   value: unknown;
   kind: "ids" | "coordinates";
   treatSingleArrayAsCoordinate?: boolean;
+  fallbackArrayTupleToIds?: boolean;
 } | undefined {
   if (hasUsableTargetIdRef(item.target_step_id)) {
     return {
       value: item.target_step_id,
       kind: "ids",
       treatSingleArrayAsCoordinate: Array.isArray(item.target_step_id),
+      fallbackArrayTupleToIds: true,
     };
   }
   if (hasUsableTargetIdRef(item.target_step_ids)) {
@@ -1190,7 +1198,10 @@ function normalizeComparable(value: string): string {
 function parseTargetStepRefs(
   value: unknown,
   coordinateIndex?: Map<string, number>,
-  options: { treatSingleArrayAsCoordinate?: boolean } = {},
+  options: {
+    treatSingleArrayAsCoordinate?: boolean;
+    fallbackArrayTupleToIds?: boolean;
+  } = {},
 ): {
   targetStepIds?: number[];
   targetStepCoordinates?: number[][];
@@ -1221,6 +1232,8 @@ function parseTargetStepRefs(
         const mapped = coordinateIndex?.get(coordinateKey(numeric));
         if (mapped !== undefined) {
           candidates.add(mapped);
+        } else if (options.fallbackArrayTupleToIds) {
+          numeric.forEach((part) => candidates.add(part));
         }
       } else if (numeric.length === 1) {
         const mapped = coordinateIndex?.get(coordinateKey(numeric));

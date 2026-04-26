@@ -233,6 +233,12 @@ function createOfficialPairedCoordinateDataset() {
               answer: "B",
               target_step_id: [0, 1],
             },
+            {
+              question: "Which target ids should remain scalar ids?",
+              choices: ["blue mug", "green notebook", "yellow folder", "silver watch"],
+              answer: "B",
+              target_step_id: [3, 7],
+            },
           ],
         },
       ],
@@ -279,6 +285,32 @@ function createLetterAnswerNonChoiceDataset() {
       ],
       question: "What single-letter code did I give?",
       answer: "A",
+    },
+  ];
+}
+
+function createFlatChoiceOnlyDataset() {
+  return [
+    {
+      id: "flat-choice-only",
+      memoryType: "factual",
+      scenario: "observation",
+      level: "low_level",
+      turns: [
+        {
+          role: "user",
+          content: "Avery now lives in Porto near the river walk.",
+        },
+      ],
+      question: "Where does Avery live?",
+      choices: {
+        A: "Lisbon",
+        B: "Porto",
+        C: "Madrid",
+        D: "Seville",
+      },
+      correctChoice: "B",
+      targetStepIds: [0],
     },
   ];
 }
@@ -511,7 +543,7 @@ test("runBenchmark maps singular and paired MemBench coordinate tuples without c
     system: adapter,
   });
 
-  assert.equal(result.results.tasks.length, 3);
+  assert.equal(result.results.tasks.length, 4);
   assert.deepEqual(result.results.tasks[0]?.details?.targetStepCoordinates, [[0, 0, 1]]);
   assert.deepEqual(result.results.tasks[0]?.details?.targetStepIds, [1]);
   assert.equal(result.results.tasks[0]?.scores.membench_recall_at_10, 1);
@@ -521,6 +553,40 @@ test("runBenchmark maps singular and paired MemBench coordinate tuples without c
   assert.deepEqual(result.results.tasks[2]?.details?.targetStepCoordinates, [[0, 1]]);
   assert.deepEqual(result.results.tasks[2]?.details?.targetStepIds, [2]);
   assert.equal(result.results.tasks[2]?.scores.membench_recall_at_10, 0);
+  assert.deepEqual(result.results.tasks[3]?.details?.targetStepIds, [3, 7]);
+});
+
+test("runBenchmark accepts flat MCQ cases with choices and correctChoice only", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-membench-flat-choice-"));
+  const datasetDir = path.join(tmpDir, "datasets", "membench");
+  const adapter = new FakeMemoryAdapter();
+  adapter.responder = {
+    async respond() {
+      return {
+        text: "B",
+        tokens: { input: 3, output: 1 },
+        latencyMs: 2,
+        model: "fake-choice-model",
+      };
+    },
+  };
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "membench.json"),
+    JSON.stringify(createFlatChoiceOnlyDataset()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("membench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.expected, "B");
+  assert.equal(task.details?.correctAnswer, "Porto");
+  assert.equal(task.scores.membench_accuracy, 1);
 });
 
 test("runBenchmark keeps flat aliases from overwriting nested MemBench coordinates", async () => {
