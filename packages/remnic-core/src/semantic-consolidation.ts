@@ -25,14 +25,18 @@ export { resolveExtensionsRoot } from "./memory-extension-host/index.js";
 export {
   CONSOLIDATION_OPERATORS,
   isConsolidationOperator,
+  isSemanticConsolidationLlmOperator,
   isValidDerivedFromEntry,
   type ConsolidationOperator,
+  type SemanticConsolidationLlmOperator,
 } from "./consolidation-operator.js";
 
 import {
   CONSOLIDATION_OPERATORS as _CONSOLIDATION_OPERATORS,
   isConsolidationOperator as _isConsolidationOperator,
+  isSemanticConsolidationLlmOperator as _isSemanticConsolidationLlmOperator,
   type ConsolidationOperator as _ConsolidationOperator,
+  type SemanticConsolidationLlmOperator as _SemanticConsolidationLlmOperator,
 } from "./consolidation-operator.js";
 
 export interface ConsolidationCluster {
@@ -178,7 +182,10 @@ export function parseConsolidationResponse(response: string): string {
  *   returns).  Callers persist this as the body of the new memory.
  */
 export interface OperatorAwareConsolidationResult {
-  operator: _ConsolidationOperator;
+  // Restricted to the LLM-allowed subset (Cursor Bugbot, PR #730):
+  // `pattern-reinforcement` is reserved for the maintenance job and
+  // must never reach this struct from a consolidation LLM response.
+  operator: _SemanticConsolidationLlmOperator;
   output: string;
 }
 
@@ -203,7 +210,7 @@ export interface OperatorAwareConsolidationResult {
  */
 export function chooseConsolidationOperator(
   cluster: ConsolidationCluster,
-): _ConsolidationOperator {
+): _SemanticConsolidationLlmOperator {
   if (cluster.memories.length <= 1) return "update";
   return "merge";
 }
@@ -299,7 +306,13 @@ export function parseOperatorAwareConsolidationResponse(
   const rawOperator = typeof obj.operator === "string" ? obj.operator.trim().toLowerCase() : "";
   const rawOutput = typeof obj.output === "string" ? obj.output : "";
 
-  const operator = _isConsolidationOperator(rawOperator)
+  // Narrow gate (Cursor Bugbot review on PR #730 head `aa1c2a8`):
+  // accept ONLY the legacy split/merge/update LLM vocabulary here.
+  // `pattern-reinforcement` joined the broader `ConsolidationOperator`
+  // type in #687 PR 2/4 but is reserved for the maintenance job — if
+  // an LLM hallucinates that operator we must NOT promote it onto
+  // `derived_via`.
+  const operator = _isSemanticConsolidationLlmOperator(rawOperator)
     ? rawOperator
     : chooseConsolidationOperator(cluster);
   const output = rawOutput.trim().length > 0 ? rawOutput.trim() : response.trim();

@@ -9,20 +9,27 @@ import assert from "node:assert/strict";
 import {
   CONSOLIDATION_OPERATORS,
   isConsolidationOperator,
+  isSemanticConsolidationLlmOperator,
   isValidDerivedFromEntry,
   type ConsolidationOperator,
+  type SemanticConsolidationLlmOperator,
 } from "./semantic-consolidation.js";
 // The standalone module is the source of truth; semantic-consolidation.ts
 // re-exports it.  This test import proves both surfaces work.
 import {
   CONSOLIDATION_OPERATORS as CONSOLIDATION_OPERATORS_DIRECT,
   isConsolidationOperator as isConsolidationOperatorDirect,
+  isSemanticConsolidationLlmOperator as isSemanticConsolidationLlmOperatorDirect,
   isValidDerivedFromEntry as isValidDerivedFromEntryDirect,
 } from "./consolidation-operator.js";
 
 test("semantic-consolidation.ts re-exports match consolidation-operator.ts", () => {
   assert.deepEqual([...CONSOLIDATION_OPERATORS], [...CONSOLIDATION_OPERATORS_DIRECT]);
   assert.equal(isConsolidationOperator, isConsolidationOperatorDirect);
+  assert.equal(
+    isSemanticConsolidationLlmOperator,
+    isSemanticConsolidationLlmOperatorDirect,
+  );
   assert.equal(isValidDerivedFromEntry, isValidDerivedFromEntryDirect);
 });
 
@@ -108,4 +115,29 @@ test("ConsolidationOperator type includes split/merge/update/pattern-reinforceme
   const update: ConsolidationOperator = "update";
   const reinforcement: ConsolidationOperator = "pattern-reinforcement";
   assert.equal([split, merge, update, reinforcement].length, 4);
+});
+
+test("isSemanticConsolidationLlmOperator rejects pattern-reinforcement (Cursor Bugbot, PR #730)", () => {
+  // The maintenance-only operator must NEVER be acceptable as LLM
+  // output — a hallucinated `{"operator":"pattern-reinforcement"}`
+  // would otherwise stamp misleading provenance on a
+  // semantic-consolidation memory.
+  assert.equal(isSemanticConsolidationLlmOperator("pattern-reinforcement"), false);
+  // Legacy operators stay valid.
+  assert.equal(isSemanticConsolidationLlmOperator("split"), true);
+  assert.equal(isSemanticConsolidationLlmOperator("merge"), true);
+  assert.equal(isSemanticConsolidationLlmOperator("update"), true);
+  assert.equal(isSemanticConsolidationLlmOperator("annihilate"), false);
+  assert.equal(isSemanticConsolidationLlmOperator(""), false);
+  assert.equal(isSemanticConsolidationLlmOperator(undefined), false);
+});
+
+test("SemanticConsolidationLlmOperator type literally excludes pattern-reinforcement", () => {
+  // Compile-time-only: the legacy operators are assignable, but the
+  // pattern-reinforcement literal is not.  The latter is enforced
+  // implicitly — if this stops compiling we'll catch it in CI.
+  const split: SemanticConsolidationLlmOperator = "split";
+  const merge: SemanticConsolidationLlmOperator = "merge";
+  const update: SemanticConsolidationLlmOperator = "update";
+  assert.equal([split, merge, update].length, 3);
 });

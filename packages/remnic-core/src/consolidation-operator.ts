@@ -98,3 +98,36 @@ export function isConsolidationOperator(value: unknown): value is ConsolidationO
     (CONSOLIDATION_OPERATORS as readonly string[]).includes(value)
   );
 }
+
+/**
+ * Narrow operator vocabulary for the LLM-driven semantic-consolidation
+ * pass (issue #561 PR 3).  This explicitly excludes
+ * `"pattern-reinforcement"` (issue #687 PR 2/4), which is reserved for
+ * the maintenance job and must NEVER be emitted by the consolidation
+ * LLM.  Without this narrow gate, a hallucinated
+ * `{"operator":"pattern-reinforcement"}` response from the LLM would
+ * write misleading provenance on a semantic-consolidation memory
+ * (Cursor Bugbot review, PR #730 head `aa1c2a8`).
+ */
+export type SemanticConsolidationLlmOperator = "split" | "merge" | "update";
+
+const SEMANTIC_CONSOLIDATION_LLM_OPERATORS: readonly SemanticConsolidationLlmOperator[] = [
+  "split",
+  "merge",
+  "update",
+] as const;
+
+/**
+ * Type guard restricted to the operator subset the
+ * semantic-consolidation LLM is allowed to emit.  Use this in any
+ * code path that validates LLM output — `isConsolidationOperator` is
+ * for validating values that came from disk / internal callers.
+ */
+export function isSemanticConsolidationLlmOperator(
+  value: unknown,
+): value is SemanticConsolidationLlmOperator {
+  return (
+    typeof value === "string" &&
+    (SEMANTIC_CONSOLIDATION_LLM_OPERATORS as readonly string[]).includes(value)
+  );
+}

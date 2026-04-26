@@ -249,7 +249,7 @@ import {
   chooseConsolidationOperator,
   buildExtensionsBlockForConsolidation,
   materializeAfterSemanticConsolidation,
-  type ConsolidationOperator,
+  type SemanticConsolidationLlmOperator,
   type SemanticConsolidationResult,
 } from "./semantic-consolidation.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
@@ -2983,14 +2983,14 @@ export class Orchestrator {
 
         // Operator-aware parse (issue #561 PR 3).  In legacy mode we fall
         // back to the plain-text parser and derive the operator from the
-        // cluster-shape heuristic so `derived_via` still lands.  The
-        // operator vocabulary widened in #687 PR 2/4 to include
-        // `"pattern-reinforcement"` (used by a separate maintenance job),
-        // so this path uses the full `ConsolidationOperator` type even
-        // though semantic-consolidation only ever produces the original
-        // split / merge / update values.
+        // cluster-shape heuristic so `derived_via` still lands.
+        // Restricted to `SemanticConsolidationLlmOperator`
+        // (split/merge/update) — `pattern-reinforcement` joined the
+        // wider `ConsolidationOperator` type in #687 PR 2/4 but is
+        // reserved for the maintenance job and must never be assignable
+        // here (Cursor Bugbot review, PR #730).
         let canonicalContent: string;
-        let operator: ConsolidationOperator;
+        let operator: SemanticConsolidationLlmOperator;
         if (operatorAwareEnabled) {
           const parsed = parseOperatorAwareConsolidationResponse(
             response.content,
