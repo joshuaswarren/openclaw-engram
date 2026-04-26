@@ -97,31 +97,51 @@ export function runConsoleTui(
   const tick = async () => {
     if (stopped || inFlight) return;
     inFlight = true;
-    let snapshot: ConsoleStateSnapshot | null = null;
-    let renderError: string | null = null;
+    // Cursor Low: wrap the entire body in try/finally so a thrown
+    // `renderFrame` (or any other unexpected sync failure after the
+    // gatherConsoleState try/catch) still releases the `inFlight`
+    // latch. Without this guard, a single render-time exception
+    // permanently freezes the loop because every subsequent tick
+    // hits `if (inFlight) return`. Honors the file's design contract
+    // ("a thrown error in one refresh cycle must NOT crash the loop").
     try {
-      snapshot = await gatherConsoleState(orchestrator);
-    } catch (err) {
-      renderError = describeError(err);
-    }
-    if (stopped) {
+      let snapshot: ConsoleStateSnapshot | null = null;
+      let renderError: string | null = null;
+      try {
+        snapshot = await gatherConsoleState(orchestrator);
+      } catch (err) {
+        renderError = describeError(err);
+      }
+      if (stopped) return;
+      let frame: string;
+      try {
+        frame = renderFrame({ snapshot, renderError, now });
+      } catch (err) {
+        // If the renderer itself throws (e.g. an invalid clock
+        // injection produced `NaN`), fall back to a minimal error
+        // frame instead of letting the exception escape and reject
+        // the void-floated promise (which would also be unhandled).
+        frame = `remnic console: render failed: ${describeError(err)}\n`;
+      }
+      safeWrite(output, ANSI_CLEAR_HOME);
+      safeWrite(output, frame);
+    } finally {
       inFlight = false;
-      return;
     }
-    const frame = renderFrame({ snapshot, renderError, now });
-    safeWrite(output, ANSI_CLEAR_HOME);
-    safeWrite(output, frame);
-    inFlight = false;
   };
 
   // Kick off an immediate first paint, then schedule the interval.
-  void tick();
+  // Codex P1: do NOT call `handle.unref()`. The CLI path keeps the
+  // process alive by `await`-ing `handle.done`, but a pending promise
+  // alone is not enough to keep Node.js running — the interval timer
+  // is the only ref'd handle that holds the event loop open between
+  // ticks. Unref'ing it caused `remnic console` to render once and
+  // exit immediately. Tests that don't want the process held open
+  // can call `handle.stop()` directly when they're done.
+  void runTickSafely(tick);
   const handle = setInterval(() => {
-    void tick();
+    void runTickSafely(tick);
   }, refreshIntervalMs);
-  // Don't keep the event loop alive solely on the interval. Hosts that
-  // want the process to stay up should `await handle.done`.
-  if (typeof handle.unref === "function") handle.unref();
 
   const sigintHandler = () => {
     stop();
@@ -279,13 +299,17 @@ function formatQmdSummary(snap: ConsoleStateSnapshot): string {
 }
 
 function panelLine(label: string, value: string): string {
-  // ║ <label padded to 13> <value padded to inner-width-15> ║
-  const labelCol = padRight(label, 13);
-  const remaining = FRAME_INNER_WIDTH - 1 - labelCol.length - 1;
-  // -1 for leading space, -1 for trailing space. We deliberately keep
-  // the layout simple — overflow is truncated rather than wrapped.
+  // Layout: ║<space><label padded to LABEL_WIDTH><value padded to fill><space>║
+  // Cursor Medium: the closing ║ must be preceded by a trailing space
+  // so the rendered line width matches the header/footer borders.
+  // Without it, every panel line was 71 chars while the borders were
+  // 72, misaligning the right-hand box edge.
+  const LABEL_WIDTH = 13;
+  const labelCol = padRight(label, LABEL_WIDTH);
+  // Two spaces (leading + trailing) inside the box, consuming 2 cols.
+  const remaining = FRAME_INNER_WIDTH - LABEL_WIDTH - 2;
   const valueCol = padRight(truncate(value, remaining), remaining);
-  return `║ ${labelCol}${valueCol}║`;
+  return `║ ${labelCol}${valueCol} ║`;
 }
 
 function padRight(s: string, width: number): string {
@@ -305,6 +329,22 @@ function ageMsFromIso(iso: string, now: () => number): number | null {
   if (!Number.isFinite(ms)) return null;
   const delta = now() - ms;
   return delta < 0 ? 0 : delta;
+}
+
+/**
+ * Run an async tick function and swallow any rejection so the floated
+ * `void runTickSafely(tick)` call never produces an unhandled-rejection
+ * crash (which Node ≥15 escalates to a process exit). The tick body
+ * itself already wraps everything in try/finally, but this is the
+ * outermost belt-and-suspenders guard.
+ */
+async function runTickSafely(tick: () => Promise<void>): Promise<void> {
+  try {
+    await tick();
+  } catch {
+    // Any error has already been (or will be) surfaced inside the
+    // rendered frame; never let it escape the timer callback.
+  }
 }
 
 function safeWrite(output: Writable, chunk: string): void {

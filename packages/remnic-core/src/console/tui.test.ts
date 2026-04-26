@@ -177,6 +177,60 @@ test("runConsoleTui repaints once on start and survives a snapshot failure", asy
   assert.ok(calls >= 2, `expected >= 2 buffer reads, got ${calls}`);
 });
 
+test("renderFrame produces panel lines aligned with header/footer borders", () => {
+  // Cursor Medium regression: panel lines were 71 chars while
+  // header/footer were 72, misaligning the right-hand ║ column.
+  const frame = renderFrame({
+    snapshot: makeSnapshot(),
+    renderError: null,
+    now: () => Date.parse("2025-01-01T00:00:00.000Z"),
+  });
+  const lines = frame.split("\n").filter((l) => l.length > 0);
+  // First line is the header, last is the footer; everything between
+  // is a panel line. All must be the same visual width.
+  const widths = new Set(lines.map((l) => [...l].length));
+  assert.equal(
+    widths.size,
+    1,
+    `expected uniform line widths, saw ${[...widths].sort().join(", ")}`,
+  );
+});
+
+test("runConsoleTui survives a renderer-side exception without freezing", async () => {
+  // Cursor Low regression: if the render path threw after `inFlight`
+  // was set to true, the latch was never released and every
+  // subsequent tick silently bailed via `if (inFlight) return`. The
+  // try/finally fix should keep the loop ticking even if `now()`
+  // returns NaN (which makes `new Date(NaN).toISOString()` throw).
+  const stream = new CaptureStream();
+  const orchestrator = makeOrchestrator();
+  let nowCalls = 0;
+  const handle = runConsoleTui(orchestrator, {
+    refreshIntervalMs: 30,
+    output: stream,
+    installSigintHandler: false,
+    now: () => {
+      nowCalls += 1;
+      // First two calls poison the renderer; subsequent ticks recover.
+      if (nowCalls <= 2) return Number.NaN;
+      return Date.parse("2025-01-01T00:00:00.000Z");
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  handle.stop();
+  await handle.done;
+
+  // The loop kept ticking through the poisoned renders.
+  assert.ok(
+    nowCalls >= 3,
+    `expected loop to keep ticking past renderer failure, saw ${nowCalls} now() calls`,
+  );
+  // And eventually emitted a healthy frame.
+  const text = stream.textPlain();
+  assert.match(text, /remnic console/);
+});
+
 test("stop() clears the interval and resolves done", async () => {
   const stream = new CaptureStream();
   const orchestrator = makeOrchestrator();
