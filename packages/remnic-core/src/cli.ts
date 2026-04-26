@@ -4107,7 +4107,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
 
           const { mergeCapsule } = await import("./transfer/capsule-merge.js");
           const result = await mergeCapsule({
-            sourceArchive: parsed.archive,
+            sourceArchive: expandTildePath(parsed.archive),
             targetRoot: memoryDir,
             conflictMode: parsed.conflictMode,
           });
@@ -4150,12 +4150,14 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const memoryDir = expandTildePath(orchestrator.config.memoryDir);
           const defaultDir = defaultCapsulesDir(memoryDir);
           const parsed = parseCapsuleListOptions(opts, defaultDir);
+          // Expand tilde in the resolved capsules dir (covers --dir ~/... inputs).
+          const capsulesDir = expandTildePath(parsed.capsulesDir);
 
           // Scan the capsule store directory for *.capsule.json.gz archives.
           const { readdir, readFile, stat } = await import("node:fs/promises");
           let dirEntries: string[];
           try {
-            dirEntries = await readdir(parsed.capsulesDir);
+            dirEntries = await readdir(capsulesDir);
           } catch {
             // Directory does not exist yet — empty list is valid.
             dirEntries = [];
@@ -4171,13 +4173,13 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
 
           const entries: CapsuleListEntry[] = [];
           for (const archiveName of archives) {
-            const archivePath = path.join(parsed.capsulesDir, archiveName);
+            const archivePath = path.join(capsulesDir, archiveName);
             // Capsule id is the filename stem before ".capsule.json.gz[.enc]".
             const id = archiveName
               .replace(/\.capsule\.json\.gz\.enc$/, "")
               .replace(/\.capsule\.json\.gz$/, "");
             const manifestName = `${id}.manifest.json`;
-            const manifestPath = path.join(parsed.capsulesDir, manifestName);
+            const manifestPath = path.join(capsulesDir, manifestName);
 
             let createdAt: string | null = null;
             let pluginVersion: string | null = null;
@@ -4252,8 +4254,18 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const capsulesDir = defaultCapsulesDir(memoryDir);
           const parsed = parseCapsuleInspectOptions(archiveArg, opts);
 
-          // Resolve archive path: if the argument does not look like a file
-          // path, treat it as a capsule id and look it up in the store.
+          // Resolve archive path.
+          //
+          // Precedence (CLAUDE.md gotcha — bare relative names must not be
+          // misclassified as capsule ids):
+          //   1. If the argument looks like an explicit path (starts with /,
+          //      ./, ../, or contains a path separator) → use as-is after tilde
+          //      expansion.
+          //   2. Otherwise, check whether the argument resolves to an existing
+          //      file relative to cwd.  A bare name like "my-capsule.capsule.json.gz"
+          //      in the working directory must win over a capsule-id lookup.
+          //   3. If the file does not exist at cwd, treat as a capsule id and
+          //      look it up in the capsules store (plain then encrypted variant).
           const { stat } = await import("node:fs/promises");
           let archivePath = expandTildePath(parsed.archive);
           const looksLikePath =
@@ -4263,17 +4275,24 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             archivePath.includes(path.sep);
 
           if (!looksLikePath) {
-            // Treat as a capsule id — find it in the capsules dir.
-            // Try plain archive first, then encrypted variant.
-            const byId = path.join(capsulesDir, `${archivePath}.capsule.json.gz`);
-            const byIdEnc = path.join(capsulesDir, `${archivePath}.capsule.json.gz.enc`);
-            const st = await stat(byId).catch(() => null);
-            if (st && st.isFile()) {
-              archivePath = byId;
+            // Step 2: check for an existing file at cwd before treating as id.
+            const cwdResolved = path.resolve(archivePath);
+            const cwdSt = await stat(cwdResolved).catch(() => null);
+            if (cwdSt && cwdSt.isFile()) {
+              archivePath = cwdResolved;
             } else {
-              const stEnc = await stat(byIdEnc).catch(() => null);
-              if (stEnc && stEnc.isFile()) {
-                archivePath = byIdEnc;
+              // Step 3: Treat as a capsule id — find it in the capsules dir.
+              // Try plain archive first, then encrypted variant.
+              const byId = path.join(capsulesDir, `${archivePath}.capsule.json.gz`);
+              const byIdEnc = path.join(capsulesDir, `${archivePath}.capsule.json.gz.enc`);
+              const st = await stat(byId).catch(() => null);
+              if (st && st.isFile()) {
+                archivePath = byId;
+              } else {
+                const stEnc = await stat(byIdEnc).catch(() => null);
+                if (stEnc && stEnc.isFile()) {
+                  archivePath = byIdEnc;
+                }
               }
             }
           }
@@ -4300,12 +4319,41 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           if (sidecar !== null) {
             manifest = sidecar;
           } else if (isEncrypted) {
-            process.stderr.write(
-              `capsule inspect: encrypted archive has no sidecar manifest. ` +
-                `Decrypt the archive first or supply the sidecar .manifest.json.\n`,
-            );
-            process.exitCode = 1;
-            return;
+            // No sidecar — attempt in-memory decryption if the secure-store is
+            // unlocked.  decryptCapsuleFileInMemory returns the plaintext gzip
+            // bytes; we then gunzip and parse exactly like the plaintext path.
+            const { gunzipSync } = await import("node:zlib");
+            const { parseExportBundle } = await import("./transfer/types.js");
+            let decryptedBuf: Buffer;
+            try {
+              const { decryptCapsuleFileInMemory } = await import(
+                "./transfer/capsule-crypto.js"
+              );
+              decryptedBuf = await decryptCapsuleFileInMemory(archivePath, memoryDir);
+            } catch (decErr) {
+              const msg =
+                decErr instanceof Error ? decErr.message : String(decErr);
+              const isLocked = msg.includes("locked") || msg.includes("no key");
+              process.stderr.write(
+                isLocked
+                  ? `capsule inspect: secure-store is locked — unlock it first ` +
+                      `(remnic secure-store unlock) or provide the sidecar ` +
+                      `.manifest.json to inspect without decrypting.\n`
+                  : `capsule inspect: failed to decrypt archive — ${msg}\n`,
+              );
+              process.exitCode = 1;
+              return;
+            }
+            const json = gunzipSync(decryptedBuf).toString("utf-8");
+            const parsed2 = parseExportBundle(JSON.parse(json));
+            if (parsed2.capsuleVersion !== 2) {
+              process.stderr.write(
+                `capsule inspect: only V2 capsule archives are supported\n`,
+              );
+              process.exitCode = 1;
+              return;
+            }
+            manifest = (parsed2.bundle as { manifest: Record<string, unknown> }).manifest;
           } else {
             const { readFile } = await import("node:fs/promises");
             const { gunzipSync } = await import("node:zlib");
