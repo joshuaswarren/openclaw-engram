@@ -603,6 +603,75 @@ test("runBenchmark accepts numeric alternatives inside extended amemgym option t
   assert.equal(task.details?.scoredAnswer, "1 or 2 years");
 });
 
+test("runBenchmark accepts numeric alternatives inside qualified amemgym option text", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-qualified-or-number-choice-text-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const profile = createDatasetProfile();
+  profile[0]!.state_schema.duration = { type: "string" };
+  profile[0]!.periods[0]!.state.duration = "1 or 2 years";
+  profile[0]!.periods[0]!.updates.duration = "1 or 2 years";
+  profile[0]!.periods[0]!.sessions[0]!.exposed_states.duration = "1 or 2 years";
+  profile[0]!.qas[0]!.required_info = ["duration"];
+  profile[0]!.qas[0]!.answer_choices = [
+    { state: ["1 or 2 years"], answer: "1 or 2 years" },
+    { state: ["3 years"], answer: "3 years" },
+  ];
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("1 about 1 or 2 years depending on visa"),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(profile),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.actual, "1 about 1 or 2 years depending on visa");
+  assert.equal(task.scores.qa_accuracy, 1);
+  assert.equal(task.details?.selectedChoiceIndex, 1);
+  assert.equal(task.details?.scoredAnswer, "1 or 2 years");
+});
+
+test("runBenchmark rejects hash conflicts outside matching amemgym option text", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-hash-choice-with-conflict-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const profile = createDatasetProfile();
+  profile[0]!.state_schema.route = { type: "string" };
+  profile[0]!.periods[0]!.state.route = "Route #66";
+  profile[0]!.periods[0]!.updates.route = "Route #66";
+  profile[0]!.periods[0]!.sessions[0]!.exposed_states.route = "Route #66";
+  profile[0]!.qas[0]!.required_info = ["route"];
+  profile[0]!.qas[0]!.answer_choices = [
+    { state: ["Route #66"], answer: "Route #66" },
+    { state: ["Route #20"], answer: "Route #20" },
+  ];
+  const adapter = new FakeMemoryAdapter(new FixedResponder("1 Route #66 because #2"));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(profile),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.qa_accuracy, 0);
+  assert.equal(task.details?.selectedChoiceIndex, null);
+  assert.equal(task.details?.scoredAnswer, "1 Route #66 because #2");
+});
+
 test("runBenchmark rejects plain amemgym option text that mentions another option", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-plain-conflicting-choice-"));
   const datasetDir = path.join(tmpDir, "datasets", "amemgym");

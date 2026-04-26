@@ -293,17 +293,12 @@ function parseAMemGymChoice(
         plainTextOption.choiceText,
         choice.answer,
       )
-      || plainOptionTextSafelyExtendsChoice(
-        plainTextOption.choiceText,
-        choice.answer,
-      )
     ) {
       return { index, choice };
     }
     const hasConflictingOptionNumber = mentionsConflictingOptionNumber(
-      plainTextOption.choiceText,
+      removeFirstChoiceAnswerText(plainTextOption.choiceText, choice.answer),
       plainTextOption.selectedNumber,
-      { allowBareHashOption: false },
     );
     if (
       !hasConflictingOptionNumber
@@ -428,30 +423,24 @@ function plainOptionTextExactlyMatchesChoice(
     && normalizedChoiceText === normalizedChoiceAnswer;
 }
 
-function plainOptionTextSafelyExtendsChoice(
+function removeFirstChoiceAnswerText(
   choiceText: string,
   choiceAnswer: string,
-): boolean {
-  const normalizedChoiceAnswer = normalizeForChoiceMatch(choiceAnswer);
-  return choiceHasNumericAlternative(normalizedChoiceAnswer)
-    && startsWithNormalizedPhrase(
-      normalizeForChoiceMatch(choiceText),
-      normalizedChoiceAnswer,
-    );
-}
-
-function choiceHasNumericAlternative(normalizedChoiceAnswer: string): boolean {
-  return /\b\d+\s+(?:or|to)\s+\d+\b/.test(normalizedChoiceAnswer)
-    || /\bor\s+\d+\b/.test(normalizedChoiceAnswer);
-}
-
-function startsWithNormalizedPhrase(haystack: string, needle: string): boolean {
-  const haystackTokens = haystack.split(" ").filter((token) => token.length > 0);
-  const needleTokens = needle.split(" ").filter((token) => token.length > 0);
-  if (needleTokens.length === 0 || needleTokens.length > haystackTokens.length) {
-    return false;
+): string {
+  const trimmedChoiceAnswer = choiceAnswer.trim();
+  if (trimmedChoiceAnswer.length === 0) {
+    return choiceText;
   }
-  return needleTokens.every((token, index) => haystackTokens[index] === token);
+  const matchIndex = choiceText
+    .toLowerCase()
+    .indexOf(trimmedChoiceAnswer.toLowerCase());
+  if (matchIndex === -1) {
+    return choiceText;
+  }
+  return [
+    choiceText.slice(0, matchIndex),
+    choiceText.slice(matchIndex + trimmedChoiceAnswer.length),
+  ].join(" ");
 }
 
 function containsNormalizedPhrase(haystack: string, needle: string): boolean {
