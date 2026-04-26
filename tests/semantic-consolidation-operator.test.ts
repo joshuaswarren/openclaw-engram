@@ -275,3 +275,35 @@ test("operatorAwareConsolidationEnabled honors boolean false", async () => {
   const parsed = parseConfig({ operatorAwareConsolidationEnabled: false });
   assert.equal(parsed.operatorAwareConsolidationEnabled, false);
 });
+
+// ─── PR #730 Cursor Bugbot: LLM cannot inject `pattern-reinforcement` ────────
+
+test("parseOperatorAwareConsolidationResponse rejects LLM-emitted pattern-reinforcement operator", () => {
+  // Pattern-reinforcement joined `ConsolidationOperator` in #687 PR 2/4
+  // for the maintenance job, but the consolidation LLM must NEVER be
+  // able to write it onto `derived_via`.  The narrow-gate parser must
+  // fall back to the cluster-shape heuristic when the LLM hallucinates
+  // that operator.
+  const cluster = makeCluster(2);
+  const res = parseOperatorAwareConsolidationResponse(
+    JSON.stringify({ operator: "pattern-reinforcement", output: "canonical" }),
+    cluster,
+  );
+  // Cluster of 2 → heuristic returns "merge".  Crucially NOT
+  // "pattern-reinforcement".
+  assert.equal(res.operator, "merge");
+  assert.notEqual(res.operator, "pattern-reinforcement");
+});
+
+test("isSemanticConsolidationLlmOperator excludes pattern-reinforcement", async () => {
+  const { isSemanticConsolidationLlmOperator } = await import(
+    "../src/consolidation-operator.ts"
+  );
+  assert.equal(isSemanticConsolidationLlmOperator("split"), true);
+  assert.equal(isSemanticConsolidationLlmOperator("merge"), true);
+  assert.equal(isSemanticConsolidationLlmOperator("update"), true);
+  // Reserved for the maintenance job — the LLM must not be able to
+  // emit it through this gate.
+  assert.equal(isSemanticConsolidationLlmOperator("pattern-reinforcement"), false);
+  assert.equal(isSemanticConsolidationLlmOperator("garbage"), false);
+});

@@ -291,11 +291,12 @@ export class EngramMcpServer {
       {
         name: "engram.pattern_reinforcement_run",
         description:
-          "Run the pattern-reinforcement maintenance job (issue #687 PR 2/4). Clusters duplicate non-procedural memories by normalized content, promotes the most-recent member to canonical, and supersedes the older duplicates. Gated on patternReinforcementEnabled.",
+          "Run the pattern-reinforcement maintenance job (issue #687 PR 2/4). Clusters duplicate non-procedural memories by normalized content, promotes the most-recent member to canonical, and supersedes the older duplicates. Gated on patternReinforcementEnabled and the patternReinforcementCadenceMs floor — pass force=true to bypass the cadence for an ad-hoc operator run.",
         inputSchema: {
           type: "object",
           properties: {
             namespace: { type: "string" },
+            force: { type: "boolean" },
           },
           additionalProperties: false,
         },
@@ -1483,6 +1484,7 @@ export class EngramMcpServer {
           {
             namespace: typeof args.namespace === "string" ? args.namespace : undefined,
             authenticatedPrincipal: effectivePrincipal,
+            force: args.force === true,
           },
           effectivePrincipal,
         );

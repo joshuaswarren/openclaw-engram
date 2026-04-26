@@ -1362,9 +1362,11 @@ export class Orchestrator {
   private lastFileHygieneRunAtMs = 0;
   // Pattern-reinforcement cadence gate (issue #687 PR 2/4).  Tracks the
   // last successful run so `runPatternReinforcement` can short-circuit
-  // when the configured cadence has not elapsed.  `undefined` means the
-  // job has never run in this process.
-  private lastPatternReinforcementAt: number | undefined = undefined;
+  // when the configured cadence has not elapsed.  Keyed by namespace
+  // so MCP-triggered runs in tenant A don't suppress runs in tenant B
+  // (PR #730 review feedback, Codex P2).  The default-tenant path
+  // uses the empty-string key.
+  private lastPatternReinforcementAtByNs = new Map<string, number>();
   private lastRecallFailureLogAtMs = 0;
   private lastRecallFailureAtMs = 0;
   private suppressedRecallFailures = 0;
@@ -2681,40 +2683,53 @@ export class Orchestrator {
   /**
    * Run the pattern-reinforcement maintenance job (issue #687 PR 2/4).
    *
-   * Cadence-gated on `patternReinforcementCadenceMs` so callers
-   * (orchestrator cron path, future MCP tool, future CLI) can call
-   * this on a hot loop without burning the corpus.  When the feature
-   * is disabled or the cadence has not elapsed, returns a synthetic
-   * "skipped" result rather than throwing.
+   * Cadence-gated on `patternReinforcementCadenceMs` so every caller
+   * (orchestrator cron path, MCP tool, CLI) shares a single floor —
+   * none can call this on a hot loop and burn the corpus.  When the
+   * feature is disabled or the cadence has not elapsed, returns a
+   * synthetic "skipped" result rather than throwing.
+   *
+   * Cadence tracking is per-namespace so a tenant-scoped MCP run in
+   * one namespace does not silence a cron run in another (PR #730
+   * review feedback, Codex P2).  Pass `force: true` for ad-hoc
+   * operator runs that must bypass the cadence floor — mirrors the
+   * pattern used by other maintenance MCP tools.
    */
   async runPatternReinforcement(options: {
     force?: boolean;
+    namespace?: string;
   } = {}): Promise<{
     ran: boolean;
     skippedReason?: "disabled" | "cadence";
+    namespace: string;
     result?: PatternReinforcementResult;
   }> {
+    const cadenceKey = options.namespace ?? "";
     if (!this.config.patternReinforcementEnabled && !options.force) {
-      return { ran: false, skippedReason: "disabled" };
+      return { ran: false, skippedReason: "disabled", namespace: cadenceKey };
     }
     const cadence = this.config.patternReinforcementCadenceMs;
+    const lastAt = this.lastPatternReinforcementAtByNs.get(cadenceKey);
     if (
       !options.force &&
       cadence > 0 &&
-      this.lastPatternReinforcementAt !== undefined &&
-      Date.now() - this.lastPatternReinforcementAt < cadence
+      lastAt !== undefined &&
+      Date.now() - lastAt < cadence
     ) {
-      return { ran: false, skippedReason: "cadence" };
+      return { ran: false, skippedReason: "cadence", namespace: cadenceKey };
     }
-    const result = await runPatternReinforcement(this.storage, {
+    const storage = options.namespace
+      ? await this.getStorage(options.namespace)
+      : this.storage;
+    const result = await runPatternReinforcement(storage, {
       categories: this.config.patternReinforcementCategories,
       minCount: this.config.patternReinforcementMinCount,
     });
-    this.lastPatternReinforcementAt = Date.now();
+    this.lastPatternReinforcementAtByNs.set(cadenceKey, Date.now());
     log.debug(
-      `pattern reinforcement: clusters=${result.clustersFound} canonicalsUpdated=${result.canonicalsUpdated} duplicatesSuperseded=${result.duplicatesSuperseded}`,
+      `pattern reinforcement [ns=${cadenceKey || "(default)"}]: clusters=${result.clustersFound} canonicalsUpdated=${result.canonicalsUpdated} duplicatesSuperseded=${result.duplicatesSuperseded}`,
     );
-    return { ran: true, result };
+    return { ran: true, result, namespace: cadenceKey };
   }
 
   async applyBehaviorRuntimePolicy(

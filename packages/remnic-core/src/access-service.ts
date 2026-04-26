@@ -28,10 +28,7 @@ import {
   runMemoryGovernance,
 } from "./maintenance/memory-governance.js";
 import { runProcedureMining } from "./procedural/procedure-miner.js";
-import {
-  runPatternReinforcement,
-  type PatternReinforcementResult,
-} from "./maintenance/pattern-reinforcement.js";
+import type { PatternReinforcementResult } from "./maintenance/pattern-reinforcement.js";
 import {
   computeProcedureStats,
   type ProcedureStatsReport,
@@ -2752,17 +2749,25 @@ export class EngramAccessService {
    * Resolves the namespace via the same writable path used by
    * `procedureMiningRun` so cross-tenant writes are impossible
    * (CLAUDE.md rule 42).
+   *
+   * Delegates the run to `orchestrator.runPatternReinforcement` so
+   * the cadence floor (`patternReinforcementCadenceMs`) is enforced
+   * uniformly across cron + MCP paths (PR #730 review feedback,
+   * Codex P2).  Accepts `force: true` for ad-hoc operator runs that
+   * must bypass the cadence floor — mirrors the pattern used by
+   * other maintenance MCP tools.
    */
   async patternReinforcementRun(
     request: {
       namespace?: string;
       authenticatedPrincipal?: string;
+      force?: boolean;
     } = {},
     principal?: string,
   ): Promise<{
     namespace: string;
     ran: boolean;
-    skippedReason?: "disabled";
+    skippedReason?: "disabled" | "cadence";
     clustersFound: number;
     canonicalsUpdated: number;
     duplicatesSuperseded: number;
@@ -2773,21 +2778,21 @@ export class EngramAccessService {
       undefined,
       request.authenticatedPrincipal ?? principal,
     );
-    if (!this.orchestrator.config.patternReinforcementEnabled) {
+    const outcome = await this.orchestrator.runPatternReinforcement({
+      namespace: resolvedNamespace,
+      force: request.force === true,
+    });
+    if (!outcome.ran) {
       return {
         namespace: resolvedNamespace,
         ran: false,
-        skippedReason: "disabled",
+        skippedReason: outcome.skippedReason,
         clustersFound: 0,
         canonicalsUpdated: 0,
         duplicatesSuperseded: 0,
       };
     }
-    const storage = await this.orchestrator.getStorage(resolvedNamespace);
-    const result = await runPatternReinforcement(storage, {
-      categories: this.orchestrator.config.patternReinforcementCategories,
-      minCount: this.orchestrator.config.patternReinforcementMinCount,
-    });
+    const result = outcome.result!;
     return {
       namespace: resolvedNamespace,
       ran: true,

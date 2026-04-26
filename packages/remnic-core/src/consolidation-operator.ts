@@ -64,8 +64,12 @@ const DERIVED_FROM_ENTRY_RE = /^(.+):(\d+)$/;
  * accept that shape.  Memory IDs are alphanumeric with hyphens or
  * underscores — crucially, they MUST NOT contain `:` or `/` so they
  * cannot collide with the `<path>:<version>` form.
+ *
+ * Exported so the consolidation-provenance integrity scanner (PR
+ * #730 review feedback) can recognize bare memory IDs instead of
+ * flagging them as malformed snapshot references.
  */
-const DERIVED_FROM_MEMORY_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+export const DERIVED_FROM_MEMORY_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 /**
  * Validate a `derived_from` entry string.  Returns `true` for either
