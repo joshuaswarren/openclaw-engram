@@ -2330,6 +2330,30 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.graphLateralInhibitionTopM === "number"
         ? Math.max(0, Math.round(cfg.graphLateralInhibitionTopM))
         : 7,
+    // Issue #681 PR 2/3 — graph-edge confidence decay maintenance.
+    // Boolean coerced via shared helper (gotcha #36: string "false" is truthy).
+    graphEdgeDecayEnabled: coerceBooleanLike(cfg.graphEdgeDecayEnabled) ?? false,
+    graphEdgeDecayCadenceMs:
+      typeof cfg.graphEdgeDecayCadenceMs === "number" && Number.isFinite(cfg.graphEdgeDecayCadenceMs)
+        ? Math.max(60_000, Math.floor(cfg.graphEdgeDecayCadenceMs))
+        : 7 * 24 * 60 * 60 * 1000,
+    graphEdgeDecayWindowMs:
+      typeof cfg.graphEdgeDecayWindowMs === "number" && Number.isFinite(cfg.graphEdgeDecayWindowMs)
+        ? Math.max(60_000, Math.floor(cfg.graphEdgeDecayWindowMs))
+        : 90 * 24 * 60 * 60 * 1000,
+    graphEdgeDecayPerWindow:
+      typeof cfg.graphEdgeDecayPerWindow === "number" && Number.isFinite(cfg.graphEdgeDecayPerWindow)
+        ? Math.max(0, Math.min(1, cfg.graphEdgeDecayPerWindow))
+        : 0.1,
+    graphEdgeDecayFloor:
+      typeof cfg.graphEdgeDecayFloor === "number" && Number.isFinite(cfg.graphEdgeDecayFloor)
+        ? Math.max(0, Math.min(1, cfg.graphEdgeDecayFloor))
+        : 0.1,
+    graphEdgeDecayVisibilityThreshold:
+      typeof cfg.graphEdgeDecayVisibilityThreshold === "number" &&
+      Number.isFinite(cfg.graphEdgeDecayVisibilityThreshold)
+        ? Math.max(0, Math.min(1, cfg.graphEdgeDecayVisibilityThreshold))
+        : 0.2,
     // v8.2: Temporal Memory Tree
     temporalMemoryTreeEnabled: cfg.temporalMemoryTreeEnabled === true,
     tmtHourlyMinMemories:

@@ -953,6 +953,18 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
+      {
+        name: "engram.graph_edge_decay_run",
+        description:
+          "Run the graph-edge-confidence decay maintenance pass (issue #681 PR 2/3). Respects graphEdgeDecayEnabled; writes a structured telemetry record to state/graph-edge-decay-status.json.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            dryRun: { type: "boolean" },
+          },
+          additionalProperties: false,
+        },
+      },
     ].flatMap((tool) => withToolAliases(tool));
   }
 
@@ -1855,6 +1867,40 @@ export class EngramMcpServer {
           fallbackLlm: this.service.fallbackLlmRef,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
         });
+      }
+      case "engram.graph_edge_decay_run":
+      case "remnic.graph_edge_decay_run": {
+        // Issue #681 PR 2/3 — gated by config; tool always callable, but
+        // the job is a no-op when disabled (and the response indicates it).
+        const cfg = this.service.configRef;
+        if (!cfg.graphEdgeDecayEnabled) {
+          return {
+            ranAt: new Date().toISOString(),
+            disabled: true,
+            reason: "graphEdgeDecayEnabled is false",
+          };
+        }
+        const { runGraphEdgeDecayMaintenanceAcrossNamespaces } = await import(
+          "./maintenance/graph-edge-decay.js"
+        );
+        const dryRun = args.dryRun === true;
+        // Codex P2 / gotcha #42: enumerate every namespace storage root
+        // so non-default namespaces (memoryDir/namespaces/<ns>) also get
+        // confidence decay applied. Returns a list of per-namespace
+        // results — each with telemetry or an error string.
+        const results = await runGraphEdgeDecayMaintenanceAcrossNamespaces(
+          this.service.memoryDir,
+          {
+            windowMs: cfg.graphEdgeDecayWindowMs,
+            perWindow: cfg.graphEdgeDecayPerWindow,
+            floor: cfg.graphEdgeDecayFloor,
+            visibilityThreshold: cfg.graphEdgeDecayVisibilityThreshold,
+            dryRun,
+            namespacesEnabled: cfg.namespacesEnabled === true,
+            defaultNamespace: cfg.defaultNamespace,
+          },
+        );
+        return { results };
       }
       default:
         throw new Error(`unknown tool: ${name}`);

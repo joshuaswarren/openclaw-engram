@@ -1804,6 +1804,44 @@
         "default": 7,
         "description": "Number of top competing nodes considered for lateral inhibition"
       },
+      "graphEdgeDecayEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the periodic graph-edge confidence decay maintenance job (issue #681 PR 2/3). Opt-in."
+      },
+      "graphEdgeDecayCadenceMs": {
+        "type": "number",
+        "default": 604800000,
+        "minimum": 60000,
+        "description": "Cadence in milliseconds for the graph-edge decay cron. Default 7 days. Sub-day cadences map to a daily cron expression."
+      },
+      "graphEdgeDecayWindowMs": {
+        "type": "number",
+        "default": 7776000000,
+        "minimum": 60000,
+        "description": "Decay window in milliseconds passed to decayEdgeConfidence. Default 90 days."
+      },
+      "graphEdgeDecayPerWindow": {
+        "type": "number",
+        "default": 0.1,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Per-window confidence drop applied during decay. Default 0.1."
+      },
+      "graphEdgeDecayFloor": {
+        "type": "number",
+        "default": 0.1,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Floor confidence will not decay below. Default 0.1."
+      },
+      "graphEdgeDecayVisibilityThreshold": {
+        "type": "number",
+        "default": 0.2,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Confidence threshold used by the decay telemetry counter for low-visibility edges. Default 0.2."
+      },
       "temporalMemoryTreeEnabled": {
         "type": "boolean",
         "default": false,
@@ -2034,7 +2072,10 @@
       },
       "recallDisclosureEscalation": {
         "type": "string",
-        "enum": ["manual", "auto"],
+        "enum": [
+          "manual",
+          "auto"
+        ],
         "default": "manual",
         "description": "Disclosure auto-escalation policy (issue #677 PR 4/4). When 'auto', recalls without an explicit caller-supplied disclosure escalate from chunk to section if the top-K confidence falls below recallDisclosureEscalationThreshold. 'raw' is never auto-selected. Default 'manual' preserves pre-#677 behavior."
       },
