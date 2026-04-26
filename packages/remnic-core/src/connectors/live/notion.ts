@@ -600,11 +600,20 @@ async function fetchPageText(
   throwIfAborted(signal);
 
   const lines: string[] = [];
+  // Track running size incrementally to avoid recomputing on every block.
+  let runningSize = 0;
   let cursor: string | undefined = undefined;
+  // Codex review #744 round 2 P2: the oversize guard previously only
+  // broke the inner `for` loop, leaving the outer pagination loop free
+  // to keep issuing `blocks.children.list` calls for content we'll
+  // discard as `"too-large"` anyway. Track oversize here so we can stop
+  // both loops together.
+  let oversize = false;
 
   // Page through block children.
   while (true) {
     throwIfAborted(signal);
+    if (oversize) break;
     const pathQuery = cursor
       ? `/blocks/${blockId}/children?page_size=100&start_cursor=${encodeURIComponent(cursor)}`
       : `/blocks/${blockId}/children?page_size=100`;
@@ -620,7 +629,10 @@ async function fetchPageText(
     for (const block of page.results ?? []) {
       throwIfAborted(signal);
       const text = extractBlockText(block);
-      if (text.length > 0) lines.push(text);
+      if (text.length > 0) {
+        lines.push(text);
+        runningSize += text.length + 1;
+      }
 
       // Recurse into nested blocks.
       if (block.has_children && depth < MAX_BLOCK_DEPTH) {
@@ -631,14 +643,19 @@ async function fetchPageText(
           depth + 1,
           signal,
         );
-        if (childText.length > 0) lines.push(childText);
+        if (childText.length > 0) {
+          lines.push(childText);
+          runningSize += childText.length + 1;
+        }
       }
 
-      // Guard against oversized pages.
-      const currentSize = lines.reduce((acc, l) => acc + l.length + 1, 0);
-      if (currentSize >= MAX_TEXT_BYTES) break;
+      if (runningSize >= MAX_TEXT_BYTES) {
+        oversize = true;
+        break;
+      }
     }
 
+    if (oversize) break;
     if (!page.has_more || typeof page.next_cursor !== "string" || page.next_cursor === null) {
       break;
     }
@@ -848,22 +865,36 @@ async function incrementalSync(
     const dbWatermark = payload.databases[dbId];
     let notionCursor: string | undefined = undefined;
     let latestInDb = dbWatermark ?? "";
-    // Track whether we fully drained this database during the pass.
-    //
-    // Why this matters (codex review P1): we sort the query descending by
-    // `last_edited_time` and filter `after: dbWatermark`. If we hit
-    // MAX_PAGES_PER_PASS or get aborted mid-database, the pages we
-    // *haven't* seen yet are *older* than the ones we have seen. Advancing
-    // `databases[dbId]` to the highest `last_edited_time` we saw would set
-    // the next pass's `after` filter past those still-pending older pages
-    // and skip them forever (they only resurface if re-edited).
-    //
-    // Solution: only persist the new database watermark when the database
-    // was fully drained for this pass. If we cut off early, leave
-    // `databases[dbId]` at its previous value so the next pass re-queries
-    // the same `after` filter and finishes the leftovers.
-    let databaseFullyDrained = false;
 
+    // Sort ASCENDING by last_edited_time (oldest-first within the
+    // `after: dbWatermark` window).
+    //
+    // Why ascending matters (codex review #744 round 2 P1):
+    //
+    //   - Descending + cap is a deadlock. If a database has more than
+    //     MAX_PAGES_PER_PASS new edits since the last watermark,
+    //     descending sort hands us only the newest 200. Advancing the
+    //     database watermark would skip all older unseen pages forever;
+    //     refusing to advance it means the *next* poll re-reads the same
+    //     newest 200, gets fresh `skippedUnchanged` hits, and never
+    //     reaches the older queue.
+    //
+    //   - Ascending + advance-after-each-page is monotone. Pages older
+    //     than `latestInDb` have all been seen. Hitting the cap mid-
+    //     database leaves the watermark at the latest *fully processed*
+    //     page; the next pass picks up exactly where we left off.
+    //
+    // We also advance `databases[dbId]` to `latestInDb` unconditionally
+    // at the end of each database loop — every page we processed
+    // (imported, skipped-empty, skipped-too-large, terminal-error) gets
+    // its `last_edited_time` recorded, so the next pass's `after` filter
+    // safely skips them. This is also the fix for codex round 2 P1:
+    // previously `totalConsumed` was incremented before the
+    // `knownRevision` skip check, so cap-cutoff in a busy database could
+    // cause the next pass to spend its entire budget on
+    // `skippedUnchanged` before reaching new pages. With ascending sort
+    // and watermark-advance, the `after` filter prevents already-seen
+    // pages from showing up at all.
     while (true) {
       throwIfAborted(signal);
       if (totalConsumed >= MAX_PAGES_PER_PASS) break;
@@ -873,15 +904,15 @@ async function incrementalSync(
         sorts: [
           {
             timestamp: "last_edited_time",
-            direction: "descending",
+            direction: "ascending",
           },
         ],
       };
-      // Filter to pages edited after the database watermark.
-      if (dbWatermark) {
+      // Filter to pages edited after the (advancing) database watermark.
+      if (latestInDb) {
         body.filter = {
           timestamp: "last_edited_time",
-          last_edited_time: { after: dbWatermark },
+          last_edited_time: { after: latestInDb },
         };
       }
       if (notionCursor) body.start_cursor = notionCursor;
@@ -904,19 +935,29 @@ async function incrementalSync(
       let cutoffMidPage = false;
       for (const notionPage of pageResp.results ?? []) {
         throwIfAborted(signal);
-        totalConsumed++;
 
         const pageId = notionPage.id;
         const lastEdited = notionPage.last_edited_time;
 
         if (typeof pageId !== "string" || typeof lastEdited !== "string") continue;
 
-        // Skip pages that haven't changed since we last saw them.
+        // Codex review #744 round 2 P1: only count pages that we
+        // actually fetch toward the per-pass cap. Pages elided by the
+        // `knownRevision` watermark check (e.g. a page we just imported
+        // showing up again because Notion's `after` boundary is
+        // inclusive) must not consume cap budget.
         const knownRevision = payload.pages[pageId];
         if (knownRevision && knownRevision >= lastEdited) {
           skippedUnchanged++;
+          // Still advance the per-database watermark so we don't loop
+          // on this same record on the next page.
+          if (!latestInDb || lastEdited > latestInDb) {
+            latestInDb = lastEdited;
+          }
           continue;
         }
+
+        totalConsumed++;
 
         // Fetch and build the document.
         const doc = await fetchPageDocument(
@@ -929,27 +970,28 @@ async function incrementalSync(
 
         if (doc === "too-large") {
           skippedTooLarge++;
-          // Codex review P2: record the revision so we don't re-fetch this
-          // oversized page on every subsequent poll. If the page shrinks
-          // below the limit on a future edit, `last_edited_time` will
-          // advance and the watermark check above will let it through.
+          // Record the revision so we don't re-fetch this oversized
+          // page on every subsequent poll.
           updatedPages[pageId] = lastEdited;
         } else if (doc === "empty") {
           skippedEmpty++;
-          // Codex review P2: same reasoning as too-large — record the
-          // revision so we don't re-fetch an empty page indefinitely.
+          // Record the revision so we don't re-fetch an empty page
+          // indefinitely.
           updatedPages[pageId] = lastEdited;
         } else if (doc !== null) {
           newDocs.push(doc);
-          // Advance watermarks.
           updatedPages[pageId] = lastEdited;
-          if (!latestInDb || lastEdited > latestInDb) {
-            latestInDb = lastEdited;
-          }
         } else {
           // null = terminal skip (404/403). Record the version so we
           // don't repeatedly attempt a permanently-inaccessible page.
           updatedPages[pageId] = lastEdited;
+        }
+
+        // Always advance the per-database watermark — ascending sort
+        // means every page we just finished is older than (or equal to)
+        // every page that still might come. Safe to commit.
+        if (!latestInDb || lastEdited > latestInDb) {
+          latestInDb = lastEdited;
         }
 
         if (totalConsumed >= MAX_PAGES_PER_PASS) {
@@ -959,33 +1001,30 @@ async function incrementalSync(
       }
 
       if (cutoffMidPage) {
-        // Hit the per-pass cap inside this database's results. The
-        // database is NOT fully drained; leave its watermark intact so
-        // the next pass re-queries the same `after` filter.
+        // Cap reached. With ascending sort and per-page watermark
+        // advance, `latestInDb` already covers everything we processed;
+        // the next pass safely picks up where we left off.
         break;
       }
 
       if (pageResp.has_more === true) {
-        // Notion claims there are more pages.
         if (typeof pageResp.next_cursor === "string" && pageResp.next_cursor.length > 0) {
-          // Continue paging.
           notionCursor = pageResp.next_cursor;
           continue;
         }
-        // Defensive bail: has_more=true but no usable next_cursor. We do
-        // NOT mark the database fully drained — the next pass must retry
-        // the same `after` filter and pick up whatever we missed.
+        // Defensive bail: has_more=true with no usable next_cursor.
+        // Same reasoning — ascending sort means latestInDb already
+        // reflects what we processed; the next pass will retry from there.
         break;
       }
-      // has_more is false (or absent): the database is fully drained for
-      // this pass. Safe to advance the database watermark below.
-      databaseFullyDrained = true;
+      // Database fully drained for this pass.
       break;
     }
 
-    // Only advance the database watermark when we fully drained the
-    // database. See the long comment above on `databaseFullyDrained`.
-    if (databaseFullyDrained && latestInDb) {
+    // Persist the per-database watermark unconditionally. Ascending sort
+    // makes this safe: latestInDb only ever covers pages whose
+    // last_edited_time was fully consumed in this pass.
+    if (latestInDb) {
       updatedDatabases[dbId] = latestInDb;
     }
   }

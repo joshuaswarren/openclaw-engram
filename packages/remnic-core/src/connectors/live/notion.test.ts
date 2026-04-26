@@ -983,17 +983,17 @@ test("skipped empty pages record their revision so they aren't re-fetched on eve
   assert.equal(payload.pages[PAGE_ID_1], "2026-04-26T08:00:00.000Z");
 });
 
-test("incremental sync preserves prior database watermark when has_more=true with no next_cursor (defensive bail)", async () => {
-  // Codex P1 / Cursor "Descending sort with page cap drops older edits":
-  // when the database is NOT fully drained for this pass (cap hit, abort,
-  // or a defensive bail on a malformed has_more=true response), advancing
-  // databases[dbId] to the highest seen last_edited_time would cause the
-  // next pass's `after` filter to skip older unprocessed pages forever.
-  // Verify we leave the database watermark at its previous value.
+test("incremental sync advances database watermark per-page under ascending sort (round 2 fix)", async () => {
+  // Codex review #744 round 2 P1: with ascending sort by last_edited_time,
+  // every page we finish processing has a `last_edited_time` older than
+  // (or equal to) every page that still might come. Advancing the
+  // database watermark to `latestInDb` after each processed page is
+  // monotone-safe — pages older than `latestInDb` have all been seen.
   //
-  // We exercise this via the defensive-bail path: has_more=true with
-  // next_cursor=null. The connector breaks out of the page loop without
-  // marking the database fully drained.
+  // This means even on cap-cutoff or defensive-bail paths, the watermark
+  // safely advances to the latest *fully processed* page; the next pass
+  // picks up exactly where we left off without re-reading already-seen
+  // pages or skipping older unseen ones.
   const page = makeSyntheticPage(PAGE_ID_1, "2026-04-26T10:00:00.000Z");
   const fetchFn = makeFetch([
     {
@@ -1032,17 +1032,16 @@ test("incremental sync preserves prior database watermark when has_more=true wit
   });
 
   const result = (await connector.syncIncremental({ cursor, config })) as NotionSyncResult;
-  // The page WAS imported and per-page watermark recorded.
   assert.equal(result.newDocs.length, 1);
   const payload = JSON.parse(result.nextCursor.value) as {
     pages: Record<string, string>;
     databases: Record<string, string>;
   };
   assert.equal(payload.pages[PAGE_ID_1], "2026-04-26T10:00:00.000Z");
-  // Database watermark NOT advanced because we didn't fully drain — the
-  // next pass will retry the same `after` filter and pick up the older
-  // pages we missed.
-  assert.equal(payload.databases[DB_ID_A], priorWatermark);
+  // Watermark advances to the page we just processed. Defensive bail is
+  // safe: the next pass's `after: 2026-04-26T10:00:00.000Z` filter will
+  // continue from there.
+  assert.equal(payload.databases[DB_ID_A], "2026-04-26T10:00:00.000Z");
 });
 
 test("incremental sync advances database watermark when fully drained", async () => {
@@ -1091,6 +1090,153 @@ test("incremental sync advances database watermark when fully drained", async ()
   const payload = JSON.parse(result.nextCursor.value) as { databases: Record<string, string> };
   // Drained → watermark advances.
   assert.equal(payload.databases[DB_ID_A], "2026-04-26T10:00:00.000Z");
+});
+
+test("incremental sync uses ascending sort and advances `after` filter across pages (round 2 fix)", async () => {
+  // Codex review #744 round 2 P1: confirm the database query is sent
+  // with ascending sort and that the `after` filter advances to the
+  // latest page we've processed. This prevents the cap-deadlock where
+  // descending sort would re-read the same newest pages every poll.
+  const queries: Array<Record<string, unknown>> = [];
+  const fetchFn: NotionFetchFn = async (url, init) => {
+    if (url.includes("/databases/")) {
+      const body = init.body ? JSON.parse(init.body) : {};
+      queries.push(body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          results: [makeSyntheticPage(PAGE_ID_1, "2026-04-26T10:00:00.000Z")],
+          has_more: false,
+          next_cursor: null,
+        }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        results: [
+          {
+            id: "blk",
+            type: "paragraph",
+            has_children: false,
+            paragraph: { rich_text: [{ plain_text: "body" }] },
+          },
+        ],
+        has_more: false,
+        next_cursor: null,
+      }),
+    };
+  };
+
+  const connector = createNotionConnector({ fetchFn });
+  const config = connector.validateConfig({ token: SYNTHETIC_TOKEN, databaseIds: [DB_ID_A] });
+  const cursor = makeNotionCursor({
+    pages: {},
+    databases: { [DB_ID_A]: "2026-04-25T00:00:00.000Z" },
+  });
+  await connector.syncIncremental({ cursor, config });
+
+  assert.ok(queries.length >= 1, "at least one query must be issued");
+  const sorts = (queries[0].sorts as Array<{ direction: string }>) ?? [];
+  assert.equal(sorts[0]?.direction, "ascending", "must use ascending sort");
+});
+
+test("incremental sync does NOT count `skippedUnchanged` pages toward MAX_PAGES_PER_PASS (round 2 P1)", async () => {
+  // Codex review #744 round 2 P1: pages elided by the `knownRevision`
+  // watermark check must not consume the per-pass cap. We can't easily
+  // change MAX_PAGES_PER_PASS from a test, but we can verify the budget
+  // is preserved indirectly: feed in a page whose revision is already
+  // recorded in the cursor and confirm the result counts it as
+  // skippedUnchanged without affecting newDocs.
+  const page = makeSyntheticPage(PAGE_ID_1, "2026-04-26T10:00:00.000Z");
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes(`/databases/${DB_ID_A}/query`),
+      respond: () => ({
+        status: 200,
+        data: { results: [page], has_more: false, next_cursor: null },
+      }),
+    },
+  ]);
+
+  const connector = createNotionConnector({ fetchFn });
+  const config = connector.validateConfig({ token: SYNTHETIC_TOKEN, databaseIds: [DB_ID_A] });
+  // Per-page watermark already at the current revision → known revision
+  // skip path.
+  const cursor = makeNotionCursor({
+    pages: { [PAGE_ID_1]: "2026-04-26T10:00:00.000Z" },
+    databases: { [DB_ID_A]: "2026-04-25T00:00:00.000Z" },
+  });
+
+  const result = (await connector.syncIncremental({ cursor, config })) as NotionSyncResult;
+  assert.equal(result.skippedUnchanged, 1);
+  assert.equal(result.newDocs.length, 0);
+  // Database watermark advances even though we only saw a known-skipped
+  // page — otherwise the next pass would re-read the same page forever.
+  const payload = JSON.parse(result.nextCursor.value) as { databases: Record<string, string> };
+  assert.equal(payload.databases[DB_ID_A], "2026-04-26T10:00:00.000Z");
+});
+
+test("fetchPageText stops paginating once MAX_TEXT_BYTES is exceeded (round 2 P2)", async () => {
+  // Codex review #744 round 2 P2: when a page's accumulated text crosses
+  // MAX_TEXT_BYTES on the first block-children page, the connector must
+  // NOT issue another `blocks.children.list` call for the next cursor.
+  //
+  // We synthesize a single huge text block whose plain_text alone
+  // exceeds MAX_TEXT_BYTES (5 MiB), then claim has_more=true with a
+  // next_cursor. Counter the number of /blocks/ calls; expect exactly 1.
+  const HUGE = "x".repeat(5 * 1024 * 1024 + 100);
+  const page = makeSyntheticPage(PAGE_ID_1, "2026-04-26T10:00:00.000Z");
+  let blockCallCount = 0;
+  const fetchFn: NotionFetchFn = async (url) => {
+    if (url.includes("/databases/")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          results: [page],
+          has_more: false,
+          next_cursor: null,
+        }),
+      };
+    }
+    if (url.includes("/blocks/")) {
+      blockCallCount++;
+      // Always return has_more=true with a cursor — we want to verify
+      // the connector does NOT follow it after oversize.
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          results: [
+            {
+              id: `blk-${blockCallCount}`,
+              type: "paragraph",
+              has_children: false,
+              paragraph: { rich_text: [{ plain_text: HUGE }] },
+            },
+          ],
+          has_more: true,
+          next_cursor: `next-cursor-${blockCallCount}`,
+        }),
+      };
+    }
+    throw new Error(`unexpected url: ${url}`);
+  };
+
+  const connector = createNotionConnector({ fetchFn });
+  const config = connector.validateConfig({ token: SYNTHETIC_TOKEN, databaseIds: [DB_ID_A] });
+  const cursor = makeNotionCursor({ pages: {}, databases: {} });
+
+  const result = (await connector.syncIncremental({ cursor, config })) as NotionSyncResult;
+  // Page imported as too-large.
+  assert.equal(result.skippedTooLarge, 1);
+  assert.equal(result.newDocs.length, 0);
+  // The connector must have made exactly ONE call to /blocks/ — we
+  // crossed MAX_TEXT_BYTES on the first page and stopped paginating.
+  assert.equal(blockCallCount, 1, `expected exactly 1 /blocks/ call, got ${blockCallCount}`);
 });
 
 test("a network ECONNRESET on database query re-throws as transient", async () => {
