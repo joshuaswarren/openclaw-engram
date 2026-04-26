@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import * as nodeFs from "node:fs/promises";
 import { AccessIdempotencyStore, hashAccessIdempotencyPayload } from "./access-idempotency.js";
 import { AccessAuditAdapter, type AccessAuditConfig, type AccessAuditResult } from "./access-audit.js";
 import type { AnomalyDetectorResult } from "./recall-audit-anomaly.js";
@@ -3790,29 +3791,48 @@ export class EngramAccessService {
     );
     const storage = await this.orchestrator.getStorage(namespace);
     const cfg = this.orchestrator.config;
-    // Canonicalize the storage root once so the path-traversal guard below
-    // can compare resolved absolute paths.  This is required because
+    // Canonicalize the storage root once — through `realpath` so that any
+    // symlink in the namespace root path itself is resolved before we
+    // compare children against it.  This is required because
     // `GraphEdge.from` / `to` are JSONL-parsed strings — a malformed edge
-    // with an absolute path or a `..` segment would otherwise read a
-    // memory file from outside the resolved namespace, leaking metadata
-    // across tenants (codex P1 on PR #734; CLAUDE.md rule 42).
-    const namespaceRoot = nodePath.resolve(storage.dir);
-    const namespaceRootWithSep = namespaceRoot.endsWith(nodePath.sep)
-      ? namespaceRoot
-      : namespaceRoot + nodePath.sep;
+    // with an absolute path, a `..` segment, OR a symlink that resolves
+    // to a file outside the namespace would otherwise read a memory file
+    // from a peer namespace, leaking metadata across tenants
+    // (codex P1 + follow-up on PR #734; CLAUDE.md rule 42).
+    let namespaceRootReal: string;
+    try {
+      namespaceRootReal = await nodeFs.realpath(storage.dir);
+    } catch {
+      // If the namespace root itself doesn't exist on disk yet (fresh
+      // install with no memories), fall back to the lexical resolve so
+      // the snapshot can still return an empty result rather than
+      // throwing.  No symlink can resolve through a missing path, so
+      // this fallback is safe — every candidate we see will fail the
+      // realpath step below and surface as `null`.
+      namespaceRootReal = nodePath.resolve(storage.dir);
+    }
+    const namespaceRootWithSep = namespaceRootReal.endsWith(nodePath.sep)
+      ? namespaceRootReal
+      : namespaceRootReal + nodePath.sep;
     const loadNode = async (relPath: string): Promise<GraphSnapshotNodeMetadata | null> => {
       // `GraphEdge.from` / `to` are storage-relative paths; resolve against
       // the namespaced storage root so the metadata read honors namespace
       // boundaries even when the same memory id exists in multiple
       // namespaces.
       //
-      // Reject absolute paths and `..` traversals up front rather than
-      // letting them silently escape the namespace root.  We compare the
-      // *canonicalized* absolute path against the namespace prefix so
-      // symlinks / mixed separators / `.` segments can't sneak past.
-      // Bad paths log a warning with a redacted form (length only — never
-      // echo the offending segments back into logs, which themselves cross
-      // namespace boundaries) and fall through to a `null` metadata result.
+      // Three-stage guard:
+      //   1. Reject absolute paths up front — only relative endpoints are
+      //      ever produced by the writer, so anything else is malformed.
+      //   2. Lexical containment check on the resolved path.  This catches
+      //      `..` traversals before we touch the filesystem.
+      //   3. `fs.realpath` containment check — resolves symlinks so an
+      //      in-namespace path that *points* at an out-of-namespace file
+      //      is still rejected.  Without this step a symlinked endpoint
+      //      could leak a peer namespace's frontmatter.
+      // Bad paths surface a length-only warning (never echo the offending
+      // segments — those would themselves cross namespace boundaries
+      // through the log surface) and fall through to a `null` metadata
+      // result.
       if (nodePath.isAbsolute(relPath)) {
         log.warn(
           `graphSnapshot: rejected absolute edge endpoint (len=${relPath.length}) `
@@ -3820,20 +3840,36 @@ export class EngramAccessService {
         );
         return null;
       }
-      const candidate = nodePath.resolve(namespaceRoot, relPath);
-      if (candidate !== namespaceRoot && !candidate.startsWith(namespaceRootWithSep)) {
+      const candidate = nodePath.resolve(namespaceRootReal, relPath);
+      if (candidate !== namespaceRootReal && !candidate.startsWith(namespaceRootWithSep)) {
         log.warn(
           `graphSnapshot: rejected traversing edge endpoint (len=${relPath.length}) `
           + `outside namespace root`,
         );
         return null;
       }
-      const memory = await storage.readMemoryByPath(candidate);
+      let canonical: string;
+      try {
+        canonical = await nodeFs.realpath(candidate);
+      } catch {
+        // Missing file — `readMemoryByPath` will return null too.  We
+        // intentionally still call it so callers see a consistent
+        // "unknown" result rather than special-casing missing edges.
+        canonical = candidate;
+      }
+      if (canonical !== namespaceRootReal && !canonical.startsWith(namespaceRootWithSep)) {
+        log.warn(
+          `graphSnapshot: rejected symlinked edge endpoint (len=${relPath.length}) `
+          + `that resolved outside namespace root`,
+        );
+        return null;
+      }
+      const memory = await storage.readMemoryByPath(canonical);
       if (!memory) return null;
       const fm = memory.frontmatter;
       return {
         category: fm.category ?? "unknown",
-        label: fm.id ?? nodePath.basename(candidate, nodePath.extname(candidate)),
+        label: fm.id ?? nodePath.basename(canonical, nodePath.extname(canonical)),
         updated: fm.updated,
       };
     };
