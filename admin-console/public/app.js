@@ -674,8 +674,12 @@ let graphCategoryColorIndex = 0;
 
 // ─── Highlight state (issue #691 PR 4/5) ────────────────────────────────────
 
-/** Set of node IDs currently highlighted by a search. Empty = no active search. */
-let graphHighlightIds = new Set();
+/**
+ * Map of highlighted node IDs → frontmatter memory IDs, populated by search.
+ * Empty map = no active search.  Values are the recall result `id` field, which
+ * is the frontmatter memory ID required by GET /engram/v1/memories/:id.
+ */
+let graphHighlightIds = new Map();
 
 /**
  * Pulse animation state.
@@ -684,20 +688,36 @@ let graphHighlightIds = new Set();
 let graphPulsePhase = 0;
 
 /**
- * Pure function — given a snapshot and a recall result list, return a Set of
- * node IDs whose identity matches one of the recalled memory IDs.
+ * Pure function — given a snapshot node list and a recall result list, return a
+ * Map from matched node ID → recall result frontmatter ID.
  *
- * Matching rules (applied in order, first match wins):
- *   1. Exact `node.id === result.id`
- *   2. `node.id` ends with `result.id` (relative path suffix)
- *   3. `result.id` ends with `node.id` (inverse suffix)
+ * Recall results have two identifiers:
+ *   - `result.id`   — frontmatter memory ID (e.g. "fact-abc123"); used by the
+ *                     memory-detail endpoint GET /engram/v1/memories/:id.
+ *   - `result.path` — absolute file path (e.g. "/home/user/.remnic/facts/foo.md");
+ *                     path-based matching bridges absolute backend paths to
+ *                     relative graph node IDs.
  *
- * @param {Array<{id: string}>} nodes  - nodes from the snapshot
- * @param {Array<{id: string}>} results - recall result objects; each must have an `id` field
- * @returns {Set<string>}
+ * Graph snapshot `node.id` values are relative memory paths (e.g. "facts/foo.md").
+ *
+ * Matching rules (applied in order, first match wins per node):
+ *   1. `node.id` === `result.path` (exact absolute path — rare)
+ *   2. `result.path` ends with `node.id` (absolute path has node's relative tail)
+ *   3. `node.id` ends with `result.path` (inverse, node has absolute prefix)
+ *   4. `node.id` === `result.id` (frontmatter ID match — only for non-path IDs)
+ *   5. `node.id` ends with `result.id` (relative path ends with frontmatter ID)
+ *   6. `result.id` ends with `node.id` (inverse suffix)
+ *
+ * Returns a Map so callers can retrieve the frontmatter ID for the memory-detail
+ * endpoint without a separate lookup.
+ *
+ * @param {Array<{id: string}>} nodes   - nodes from the snapshot
+ * @param {Array<{id: string, path?: string}>} results - recall result objects
+ * @returns {Map<string, string>}  nodeId → frontmatterMemoryId
  */
 function resolveHighlights(nodes, results) {
-  const matched = new Set();
+  /** @type {Map<string, string>} */
+  const matched = new Map();
   if (!Array.isArray(nodes) || !Array.isArray(results) || results.length === 0) {
     return matched;
   }
@@ -706,9 +726,19 @@ function resolveHighlights(nodes, results) {
     if (!nid) continue;
     for (const result of results) {
       const rid = result.id;
-      if (!rid) continue;
-      if (nid === rid || nid.endsWith(rid) || rid.endsWith(nid)) {
-        matched.add(nid);
+      const rpath = result.path || "";
+      // Path-based matching (handles the typical production case where graph
+      // node IDs are relative paths and recall results carry absolute paths).
+      if (rpath) {
+        if (nid === rpath || rpath.endsWith(nid) || nid.endsWith(rpath)) {
+          matched.set(nid, rid);
+          break;
+        }
+      }
+      // Frontmatter-ID matching as fallback (e.g. custom deployments where
+      // node IDs are not file paths).
+      if (rid && (nid === rid || nid.endsWith(rid) || rid.endsWith(nid))) {
+        matched.set(nid, rid);
         break;
       }
     }
@@ -899,7 +929,7 @@ function drawGraph() {
 
   for (const n of graphData.nodes) {
     const r = nodeRadius(n.score);
-    const isHighlighted = hasHighlights && graphHighlightIds.has(n.id);
+    const isHighlighted = hasHighlights && graphHighlightIds.has(n.id);  // Map.has()
     const isDimmed = hasHighlights && !isHighlighted;
 
     // Draw highlight ring + pulse halo before the node fill.
@@ -1156,7 +1186,7 @@ async function loadMemoryGraph() {
   // Reset colours and highlights on each fresh fetch so legend is consistent.
   graphCategoryColors.clear();
   graphCategoryColorIndex = 0;
-  graphHighlightIds = new Set();
+  graphHighlightIds = new Map();
   closeGraphNodePanel();
 
   // Pre-warm category colours in node order.
@@ -1219,6 +1249,11 @@ async function runGraphSearch() {
       Array.isArray(recall.results)  ? recall.results  :
       [];
     graphHighlightIds = resolveHighlights(graphData.nodes, rawResults);
+    // Store frontmatter IDs on matched nodes for drill-through.
+    for (const [nodeId, memId] of graphHighlightIds.entries()) {
+      const node = graphData.nodes.find((n) => n.id === nodeId);
+      if (node) node._memoryId = memId;
+    }
     drawGraph();
     const count = graphHighlightIds.size;
     setStatus(
@@ -1235,7 +1270,7 @@ async function runGraphSearch() {
 
 /** Clear the current highlight selection and redraw. */
 function clearGraphSearch() {
-  graphHighlightIds = new Set();
+  graphHighlightIds = new Map();
   const input = $("graphSearchQuery");
   if (input) input.value = "";
   if (graphData) drawGraph();
@@ -1274,8 +1309,15 @@ async function openGraphNodePanel(node) {
   if (contentEl) contentEl.textContent = "Loading…";
   if (edgesEl) edgesEl.innerHTML = "<strong>Loading edges…</strong>";
 
+  // Use the frontmatter memory ID for the endpoint when available (attached
+  // by runGraphSearch via resolveHighlights).  Graph node IDs are relative
+  // paths; the memory-detail endpoint resolves by frontmatter ID, not path.
+  // Fall back to node.id so non-search-originated clicks still attempt a
+  // lookup (will 404 gracefully if the node ID isn't a frontmatter ID).
+  const lookupId = node._memoryId || node.id;
+
   try {
-    const response = await fetchJson(`/engram/v1/memories/${encodeURIComponent(node.id)}`);
+    const response = await fetchJson(`/engram/v1/memories/${encodeURIComponent(lookupId)}`);
     const mem = response.memory || {};
 
     // Build frontmatter table from top-level scalar fields.
@@ -1330,7 +1372,7 @@ async function openGraphNodePanel(node) {
       }
     }
 
-    if (status) { status.textContent = `Loaded ${node.id}.`; status.className = "status ok"; }
+    if (status) { status.textContent = `Loaded ${lookupId}.`; status.className = "status ok"; }
   } catch (err) {
     if (status) { status.textContent = err.message || String(err); status.className = "status error"; }
     if (contentEl) contentEl.textContent = "Failed to load memory content.";
