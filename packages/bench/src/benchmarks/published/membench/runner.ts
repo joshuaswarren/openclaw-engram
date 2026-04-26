@@ -1040,14 +1040,11 @@ function parseTargetStepRefs(value: unknown): {
       const numeric = item.filter((part): part is number =>
         typeof part === "number" && Number.isInteger(part) && part >= 0,
       );
-      for (const part of numeric) {
-        candidates.add(part);
-      }
       if (numeric.length >= 2) {
         const [first, second] = numeric;
-        candidates.add(first + second);
-        candidates.add(first * 2 + second);
-        candidates.add(second * 2 + first);
+        candidates.add(second * 3 + first);
+      } else if (numeric.length === 1) {
+        candidates.add(numeric[0]!);
       }
     }
   }
