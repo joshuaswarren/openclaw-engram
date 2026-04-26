@@ -175,14 +175,18 @@ export function decayEdgeConfidence(
   const lowerBound = Math.min(safeFloor, current);
   const next = Math.max(lowerBound, Math.min(current, decayed));
 
-  // Cursor Medium: advance `lastReinforcedAt` to `now` after a decay
-  // pass so subsequent calls see a fresh age and don't re-apply the
-  // same decay. Without this, a periodic maintenance job running at
-  // a cadence shorter than `windowMs` would compound: every run past
-  // the grace window would re-evaluate the SAME `windowsPast` against
-  // the now-lower `current`, decaying repeatedly to floor in a single
-  // window. Resetting the anchor restores the invariant that decay
-  // accrues at most `perWindow` per real-world `windowMs` regardless
-  // of how often the helper is invoked.
-  return { ...edge, confidence: next, lastReinforcedAt: now };
+  // Cursor Medium round 2 + Codex P1: the anchor must advance by
+  // EXACTLY the windows we just charged for — not to `now`. Resetting
+  // to `now` makes every decay pass look like a fresh reinforcement
+  // and re-applies the grace window on every run, under-decaying
+  // stale edges when the maintenance job runs less frequently than
+  // `windowMs` (codex P1). Leaving the anchor unchanged compounds
+  // decay on frequent calls (cursor Medium). Advancing by
+  // `windowsPast * windowMs` from the prior anchor is the right
+  // middle ground: subsequent calls see a fresh grace window,
+  // decay accrues at most `perWindow` per real `windowMs` regardless
+  // of cadence, and historical anchor information is preserved.
+  const newRefMs = refMs + windowsPast * windowMs;
+  const newRef = new Date(newRefMs).toISOString();
+  return { ...edge, confidence: next, lastReinforcedAt: newRef };
 }
