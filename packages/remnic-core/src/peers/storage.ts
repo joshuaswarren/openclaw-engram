@@ -607,6 +607,11 @@ export async function listPeers(memoryDir: string): Promise<Peer[]> {
   // operates on the original inode regardless of subsequent path-
   // based mutations.
   const root = peersRoot(memoryDir);
+  // Cursor M round 14: use the held directory handle's readdir so
+  // we read entries from the original-inode directory we opened
+  // with O_NOFOLLOW. A path-based fs.readdir(root) would re-resolve
+  // the path and could traverse a swapped-in symlink. dh.readdir()
+  // operates on the open file descriptor and is immune to that race.
   let entries: string[];
   let dh: import("node:fs/promises").FileHandle | null = null;
   try {
@@ -614,8 +619,7 @@ export async function listPeers(memoryDir: string): Promise<Peer[]> {
       root,
       fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
     );
-    const dir = await fs.readdir(root);
-    entries = dir;
+    entries = await dh.readdir();
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return [];
@@ -653,13 +657,27 @@ export async function listPeers(memoryDir: string): Promise<Peer[]> {
     try {
       peer = await readPeer(memoryDir, name);
     } catch (err) {
-      // Codex P2 round 13: only skip schema/parse failures (those
-      // are caught and re-thrown as plain Error). Re-throw real I/O
-      // errors (EACCES, EIO, EBUSY, etc.) so the operator sees them.
+      // Cursor M round 14: classifying by `.code` alone treated
+      // security-check failures (assertPeerDirNotEscaped /
+      // assertParentDirInodeStable / "is a symlink and is rejected"
+      // / "inode mismatch") as parse failures and silently skipped
+      // them. Those messages are critical signals — an attacker
+      // attempted to redirect a read outside the peers root. Match
+      // by message prefix to detect them and propagate.
       const code = (err as NodeJS.ErrnoException).code;
-      if (code && code !== "ENOENT") {
-        throw err;
-      }
+      const message = err instanceof Error ? err.message : String(err);
+      const isSecurityFailure =
+        message.startsWith("peers root") ||
+        message.startsWith("peer directory") ||
+        message.startsWith("parent directory") ||
+        message.startsWith("path ") /* "path \"...\" is a symlink" */ ||
+        message.includes("escapes the peers root") ||
+        message.includes("inode mismatch") ||
+        message.includes("is a symlink and is rejected") ||
+        message.includes("was swapped");
+      if (isSecurityFailure) throw err;
+      // Real I/O errors (EACCES, EIO, EBUSY, etc.) propagate too.
+      if (code && code !== "ENOENT") throw err;
       // Schema/parse failures fall through and skip the entry.
       continue;
     }
