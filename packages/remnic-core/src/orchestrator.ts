@@ -77,7 +77,12 @@ import {
   ensureNightlyGovernanceCron,
   ensureProceduralMiningCron,
   ensureContradictionScanCron,
+  ensurePatternReinforcementCron,
 } from "./maintenance/memory-governance-cron.js";
+import {
+  runPatternReinforcement,
+  type PatternReinforcementResult,
+} from "./maintenance/pattern-reinforcement.js";
 import { ModelRegistry } from "./model-registry.js";
 import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
 import {
@@ -244,6 +249,7 @@ import {
   chooseConsolidationOperator,
   buildExtensionsBlockForConsolidation,
   materializeAfterSemanticConsolidation,
+  type ConsolidationOperator,
   type SemanticConsolidationResult,
 } from "./semantic-consolidation.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
@@ -1354,6 +1360,11 @@ export class Orchestrator {
   private lastTierMigrationRunAtMs = 0;
   private readonly conversationIndexLastUpdateAtMs = new Map<string, number>();
   private lastFileHygieneRunAtMs = 0;
+  // Pattern-reinforcement cadence gate (issue #687 PR 2/4).  Tracks the
+  // last successful run so `runPatternReinforcement` can short-circuit
+  // when the configured cadence has not elapsed.  `undefined` means the
+  // job has never run in this process.
+  private lastPatternReinforcementAt: number | undefined = undefined;
   private lastRecallFailureLogAtMs = 0;
   private lastRecallFailureAtMs = 0;
   private suppressedRecallFailures = 0;
@@ -2399,6 +2410,17 @@ export class Orchestrator {
       }
     }
 
+    // Auto-register pattern-reinforcement cron (issue #687 PR 2/4).
+    // Gated on the feature flag so memory-only users without the
+    // cron daemon installed never see a stray jobs.json mutation.
+    if (this.config.patternReinforcementEnabled) {
+      try {
+        await this.autoRegisterPatternReinforcementCron();
+      } catch (err) {
+        log.debug(`pattern reinforcement cron auto-register failed (non-fatal): ${err}`);
+      }
+    }
+
     log.info("orchestrator initialized (full — deferred steps complete)");
   }
 
@@ -2633,6 +2655,66 @@ export class Orchestrator {
     } catch (err) {
       log.debug(`contradiction scan cron auto-register error: ${err}`);
     }
+  }
+
+  private async autoRegisterPatternReinforcementCron(): Promise<void> {
+    const home = resolveHomeDir();
+    const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
+    try {
+      if (!existsSync(jobsPath)) {
+        log.debug("pattern reinforcement cron: jobs.json not found, skipping auto-register");
+        return;
+      }
+      const created = await ensurePatternReinforcementCron(jobsPath, {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      if (created.created) {
+        log.info(`pattern reinforcement cron auto-registered (${created.jobId})`);
+      } else {
+        log.debug("pattern reinforcement cron already exists, skipping auto-register");
+      }
+    } catch (err) {
+      log.debug(`pattern reinforcement cron auto-register error: ${err}`);
+    }
+  }
+
+  /**
+   * Run the pattern-reinforcement maintenance job (issue #687 PR 2/4).
+   *
+   * Cadence-gated on `patternReinforcementCadenceMs` so callers
+   * (orchestrator cron path, future MCP tool, future CLI) can call
+   * this on a hot loop without burning the corpus.  When the feature
+   * is disabled or the cadence has not elapsed, returns a synthetic
+   * "skipped" result rather than throwing.
+   */
+  async runPatternReinforcement(options: {
+    force?: boolean;
+  } = {}): Promise<{
+    ran: boolean;
+    skippedReason?: "disabled" | "cadence";
+    result?: PatternReinforcementResult;
+  }> {
+    if (!this.config.patternReinforcementEnabled && !options.force) {
+      return { ran: false, skippedReason: "disabled" };
+    }
+    const cadence = this.config.patternReinforcementCadenceMs;
+    if (
+      !options.force &&
+      cadence > 0 &&
+      this.lastPatternReinforcementAt !== undefined &&
+      Date.now() - this.lastPatternReinforcementAt < cadence
+    ) {
+      return { ran: false, skippedReason: "cadence" };
+    }
+    const result = await runPatternReinforcement(this.storage, {
+      categories: this.config.patternReinforcementCategories,
+      minCount: this.config.patternReinforcementMinCount,
+    });
+    this.lastPatternReinforcementAt = Date.now();
+    log.debug(
+      `pattern reinforcement: clusters=${result.clustersFound} canonicalsUpdated=${result.canonicalsUpdated} duplicatesSuperseded=${result.duplicatesSuperseded}`,
+    );
+    return { ran: true, result };
   }
 
   async applyBehaviorRuntimePolicy(
@@ -2901,9 +2983,14 @@ export class Orchestrator {
 
         // Operator-aware parse (issue #561 PR 3).  In legacy mode we fall
         // back to the plain-text parser and derive the operator from the
-        // cluster-shape heuristic so `derived_via` still lands.
+        // cluster-shape heuristic so `derived_via` still lands.  The
+        // operator vocabulary widened in #687 PR 2/4 to include
+        // `"pattern-reinforcement"` (used by a separate maintenance job),
+        // so this path uses the full `ConsolidationOperator` type even
+        // though semantic-consolidation only ever produces the original
+        // split / merge / update values.
         let canonicalContent: string;
-        let operator: "split" | "merge" | "update";
+        let operator: ConsolidationOperator;
         if (operatorAwareEnabled) {
           const parsed = parseOperatorAwareConsolidationResponse(
             response.content,

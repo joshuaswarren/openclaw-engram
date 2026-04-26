@@ -21,8 +21,19 @@
  *   memory.
  * - `update` — a newer value supersedes an older value within the same
  *   logical fact.
+ * - `pattern-reinforcement` (issue #687 PR 2/4) — emitted by the
+ *   pattern-reinforcement maintenance job when it clusters duplicate
+ *   non-procedural memories and promotes the most recent member to
+ *   canonical.  Unlike the other operators, the job does not produce
+ *   page-versioning snapshots — it just stamps reinforcement metadata
+ *   on the canonical and points superseded duplicates at it.  See
+ *   `maintenance/pattern-reinforcement.ts`.
  */
-export type ConsolidationOperator = "split" | "merge" | "update";
+export type ConsolidationOperator =
+  | "split"
+  | "merge"
+  | "update"
+  | "pattern-reinforcement";
 
 /**
  * Allowed values for the `derived_via` frontmatter field.  Used by storage
@@ -32,6 +43,7 @@ export const CONSOLIDATION_OPERATORS: readonly ConsolidationOperator[] = [
   "split",
   "merge",
   "update",
+  "pattern-reinforcement",
 ] as const;
 
 /**
@@ -46,12 +58,29 @@ export const CONSOLIDATION_OPERATORS: readonly ConsolidationOperator[] = [
 const DERIVED_FROM_ENTRY_RE = /^(.+):(\d+)$/;
 
 /**
- * Validate a `derived_from` entry string.  Returns `true` if the entry
- * parses as `<non-empty path>:<integer >= 0>`.  Kept pure so storage and
- * future CLI/doctor paths can share the same validator.
+ * Regular expression for validating a memory-id `derived_from` entry
+ * (issue #687 PR 2/4).  Pattern reinforcement records source memory IDs
+ * directly rather than page-versioning snapshots, so we also need to
+ * accept that shape.  Memory IDs are alphanumeric with hyphens or
+ * underscores — crucially, they MUST NOT contain `:` or `/` so they
+ * cannot collide with the `<path>:<version>` form.
+ */
+const DERIVED_FROM_MEMORY_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+/**
+ * Validate a `derived_from` entry string.  Returns `true` for either
+ * - the snapshot format `<non-empty path>:<integer >= 0>` (issue #561), or
+ * - a memory-id of the form `<prefix>-<ts>-<suffix>` (issue #687 PR 2/4
+ *   — used by pattern-reinforcement provenance).
+ *
+ * Kept pure so storage and future CLI/doctor paths can share the same
+ * validator.
  */
 export function isValidDerivedFromEntry(entry: unknown): entry is string {
   if (typeof entry !== "string") return false;
+  // Memory-id form takes precedence: it has no `:` so it cannot collide
+  // with the `<path>:<version>` form.
+  if (DERIVED_FROM_MEMORY_ID_RE.test(entry)) return true;
   const match = entry.match(DERIVED_FROM_ENTRY_RE);
   if (!match) return false;
   const pathPart = match[1];

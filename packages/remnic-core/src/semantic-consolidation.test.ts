@@ -26,8 +26,16 @@ test("semantic-consolidation.ts re-exports match consolidation-operator.ts", () 
   assert.equal(isValidDerivedFromEntry, isValidDerivedFromEntryDirect);
 });
 
-test("CONSOLIDATION_OPERATORS enumerates exactly split/merge/update", () => {
-  assert.deepEqual([...CONSOLIDATION_OPERATORS], ["split", "merge", "update"]);
+test("CONSOLIDATION_OPERATORS enumerates split/merge/update/pattern-reinforcement", () => {
+  // `pattern-reinforcement` joined the operator vocabulary in issue
+  // #687 PR 2/4 so the maintenance job in
+  // `maintenance/pattern-reinforcement.ts` can stamp `derived_via`
+  // through the same write-time validator the rest of consolidation
+  // uses.
+  assert.deepEqual(
+    [...CONSOLIDATION_OPERATORS],
+    ["split", "merge", "update", "pattern-reinforcement"],
+  );
 });
 
 test("isConsolidationOperator accepts every defined operator", () => {
@@ -58,13 +66,31 @@ test("isValidDerivedFromEntry accepts well-formed path:version strings", () => {
 
 test("isValidDerivedFromEntry rejects malformed entries", () => {
   assert.equal(isValidDerivedFromEntry(""), false, "empty string");
-  assert.equal(isValidDerivedFromEntry("facts/a.md"), false, "no version");
+  // `facts/a.md` has no `:`, fails the snapshot regex, and fails the
+  // memory-id regex (contains `/` and `.`).
+  assert.equal(isValidDerivedFromEntry("facts/a.md"), false, "no version, path-shaped");
   assert.equal(isValidDerivedFromEntry("facts/a.md:"), false, "missing digits");
   assert.equal(isValidDerivedFromEntry("facts/a.md:abc"), false, "non-numeric version");
   assert.equal(isValidDerivedFromEntry("facts/a.md:-1"), false, "negative version");
   assert.equal(isValidDerivedFromEntry("facts/a.md:1.5"), false, "fractional version");
   assert.equal(isValidDerivedFromEntry(":3"), false, "empty path");
   assert.equal(isValidDerivedFromEntry("   :3"), false, "whitespace-only path");
+  // Memory-id form must reject leading non-alphanumeric characters
+  // (so it cannot accidentally swallow a malformed snapshot like
+  // `_-bad`).
+  assert.equal(isValidDerivedFromEntry("-not-an-id"), false, "leading hyphen");
+  assert.equal(isValidDerivedFromEntry("has spaces"), false, "spaces in id");
+  assert.equal(isValidDerivedFromEntry("has/slash"), false, "slash without version");
+});
+
+test("isValidDerivedFromEntry accepts memory-id-shaped entries (issue #687 PR 2/4)", () => {
+  // Pattern reinforcement records source memory IDs directly rather
+  // than page-versioning snapshots; the validator widened to accept
+  // either shape.
+  assert.equal(isValidDerivedFromEntry("m-abc123-de"), true);
+  assert.equal(isValidDerivedFromEntry("m-1"), true);
+  assert.equal(isValidDerivedFromEntry("alpha"), true);
+  assert.equal(isValidDerivedFromEntry("Mem_Underscored-Allowed"), true);
 });
 
 test("isValidDerivedFromEntry rejects non-string values", () => {
@@ -75,10 +101,11 @@ test("isValidDerivedFromEntry rejects non-string values", () => {
   assert.equal(isValidDerivedFromEntry({ path: "facts/a.md", version: 2 }), false);
 });
 
-test("ConsolidationOperator type includes split/merge/update", () => {
+test("ConsolidationOperator type includes split/merge/update/pattern-reinforcement", () => {
   // Compile-time-only: ensure every literal is assignable to the type.
   const split: ConsolidationOperator = "split";
   const merge: ConsolidationOperator = "merge";
   const update: ConsolidationOperator = "update";
-  assert.equal([split, merge, update].length, 3);
+  const reinforcement: ConsolidationOperator = "pattern-reinforcement";
+  assert.equal([split, merge, update, reinforcement].length, 4);
 });
