@@ -622,20 +622,30 @@ function decodeBase64urlBody(encoded: string): string {
 
 /**
  * Minimal HTML tag stripper. Collapses all `<...>` spans and decodes common
- * HTML entities. Not a full sanitizer — we just want readable plain text.
+ * HTML entities in a single pass to avoid double-unescaping (CodeQL finding:
+ * chained replace calls can expand `&amp;lt;` → `&lt;` → `<`). The entity
+ * map is applied in one `replace` with a callback, so each entity is decoded
+ * exactly once and the output is never fed back through entity expansion.
  */
 function stripHtmlTags(html: string): string {
   if (!html) return "";
-  return html
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/\s{2,}/g, " ")
-    .trim();
+  // Step 1: strip all HTML tags.
+  const noTags = html.replace(/<[^>]*>/g, " ");
+  // Step 2: decode HTML entities in a single pass via a lookup table.
+  const HTML_ENTITIES: Readonly<Record<string, string>> = {
+    "&nbsp;": " ",
+    "&amp;": "&",
+    "&lt;": "<",
+    "&gt;": ">",
+    "&quot;": '"',
+    "&#39;": "'",
+    "&apos;": "'",
+  };
+  const decoded = noTags.replace(/&(?:#39|nbsp|amp|lt|gt|quot|apos);/gi, (entity) => {
+    return HTML_ENTITIES[entity.toLowerCase()] ?? entity;
+  });
+  // Step 3: collapse whitespace.
+  return decoded.replace(/\s{2,}/g, " ").trim();
 }
 
 /**
@@ -758,10 +768,17 @@ async function incrementalSync(
 
   // Track the highest internalDate seen across successfully processed messages.
   let highWaterMs = afterEpochSec > 0 ? afterEpochSec * 1000 : 0;
-  // Track whether we advanced the watermark at all.
-  let watermarkAdvanced = false;
 
   let pageToken: string | undefined = undefined;
+
+  // Whether we exhausted the full message list without hitting the per-pass
+  // cap. Mirrors Notion's `databaseFullyDrained` pattern (Codex P1 review):
+  // only advance the watermark when we fully drained the list. If the cap was
+  // hit mid-pass, the next poll must re-query the same `after:` window to pick
+  // up the remaining messages — advancing the watermark would permanently skip
+  // them (especially with newest-first list ordering).
+  let listFullyDrained = false;
+  let capHit = false;
 
   // Page through messages.list until exhausted, aborted, or per-pass cap hit.
   outer: while (true) {
@@ -787,9 +804,9 @@ async function incrementalSync(
       throwIfAborted(signal);
 
       if (totalConsumed >= MAX_MESSAGES_PER_PASS) {
-        // Hit the cap — stop paging. We'll resume from the current watermark
-        // on the next pass (not perfect but acceptable: the `after:` filter
-        // re-queries newer messages each time).
+        // Hit the per-pass cap mid-page. Do NOT advance the watermark — the
+        // remaining messages in this window must be retried on the next poll.
+        capHit = true;
         break outer;
       }
       totalConsumed++;
@@ -813,29 +830,35 @@ async function incrementalSync(
         skippedTooLarge++;
       } else if (doc !== null) {
         newDocs.push(doc);
-        // Advance watermark based on the message's internalDate.
+        // Track highest internalDate to advance watermark when fully drained.
         if (doc.source.externalRevision) {
           const msgMs = Number(doc.source.externalRevision);
           if (Number.isFinite(msgMs) && msgMs > highWaterMs) {
             highWaterMs = msgMs;
-            watermarkAdvanced = true;
           }
         }
       }
     }
 
-    // Advance to the next page, or stop if exhausted.
+    // Continue to the next page if Gmail signals more results.
     if (typeof listPage.nextPageToken === "string" && listPage.nextPageToken.length > 0) {
       pageToken = listPage.nextPageToken;
       continue;
     }
+
+    // No nextPageToken — the list is fully drained for this `after:` window.
+    listFullyDrained = true;
     break;
   }
 
-  // Build next cursor.
-  const nextWatermarkIso = watermarkAdvanced
-    ? new Date(highWaterMs).toISOString()
-    : cursorPayload.watermarkIso;
+  // Only advance the watermark when we fully drained the list (no cap hit, no
+  // premature abort). If we stopped early, preserve the existing watermark so
+  // the next poll re-queries the same `after:` window and processes the
+  // remaining messages. This mirrors Notion's databaseFullyDrained contract.
+  const nextWatermarkIso =
+    listFullyDrained && !capHit && highWaterMs > (afterEpochSec * 1000)
+      ? new Date(highWaterMs).toISOString()
+      : cursorPayload.watermarkIso;
 
   const nextCursor = makeCursor({ watermarkIso: nextWatermarkIso });
 

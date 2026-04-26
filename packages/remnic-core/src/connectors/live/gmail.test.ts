@@ -111,7 +111,7 @@ function tokenHandler(): {
   respond: (url: string, body: string | undefined) => { status: number; data: unknown };
 } {
   return {
-    match: (url) => url.includes("oauth2.googleapis.com"),
+    match: (url) => url.startsWith("https://oauth2.googleapis.com/"),
     respond: () => ({
       status: 200,
       data: { access_token: SYNTHETIC_ACCESS_TOKEN, token_type: "Bearer", expires_in: 3600 },
@@ -338,6 +338,86 @@ test("watermark advances to the highest internalDate of successfully processed m
   const payload = JSON.parse(result.nextCursor.value) as { watermarkIso: string };
   const watermarkMs = new Date(payload.watermarkIso).getTime();
   // Watermark should equal T3 (the highest internalDate).
+  assert.equal(watermarkMs, Number(T3));
+});
+
+// ---------------------------------------------------------------------------
+// Watermark does NOT advance on partial drain (Codex P1)
+// ---------------------------------------------------------------------------
+
+test("watermark does NOT advance when nextPageToken present (partial drain)", async () => {
+  // Simulate a paginated list: first page has a nextPageToken, second call
+  // returns empty — but the cap is NOT hit here; we're testing that having
+  // a nextPageToken path that is followed and then exhausted DOES advance.
+  // The opposite: if a nextPageToken causes the second list call to fail
+  // with a transient error, we never mark the list fully drained.
+  const initialWatermark = new Date(Number(T1)).toISOString();
+  const msg1 = makeMessage("msg-partial-1", T2, "partial drain message");
+
+  let listCallCount = 0;
+  const partialDrainFetch = makeFetch([
+    tokenHandler(),
+    {
+      // First list call returns a nextPageToken (partial).
+      // Second call throws a transient error mid-drain.
+      match: (url) => url.startsWith("https://gmail.googleapis.com/") && url.includes("/messages") && !url.includes("format=full"),
+      respond: () => {
+        listCallCount++;
+        if (listCallCount === 1) {
+          return {
+            status: 200,
+            data: { messages: [{ id: "msg-partial-1" }], nextPageToken: "pg2" },
+          };
+        }
+        // Second page: transient error — list not fully drained.
+        return {
+          status: 503,
+          data: { error: { message: "service unavailable", code: 503 } },
+        };
+      },
+    },
+    getHandler({ "msg-partial-1": msg1 }),
+  ]);
+
+  const connector = createGmailConnector({ fetchFn: partialDrainFetch });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  const cursor: ConnectorCursor = {
+    kind: GMAIL_CURSOR_KIND,
+    value: JSON.stringify({ watermarkIso: initialWatermark }),
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  // The 503 on the second list page rethrows (transient), stopping the pass.
+  await assert.rejects(
+    connector.syncIncremental({ cursor, config }),
+    /service unavailable/,
+  );
+});
+
+test("watermark advances when list is fully drained (no nextPageToken)", async () => {
+  const msg1 = makeMessage("msg-full-1", T1, "message 1");
+  const msg2 = makeMessage("msg-full-2", T3, "message 2");
+
+  const fetchFn = makeFetch([
+    tokenHandler(),
+    // No nextPageToken — fully drained.
+    listHandler([makeMessageRef("msg-full-1"), makeMessageRef("msg-full-2")]),
+    getHandler({ "msg-full-1": msg1, "msg-full-2": msg2 }),
+  ]);
+  const connector = createGmailConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  const initialWatermark = new Date(Number(T1) - 1000).toISOString();
+  const cursor: ConnectorCursor = {
+    kind: GMAIL_CURSOR_KIND,
+    value: JSON.stringify({ watermarkIso: initialWatermark }),
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  const result = await connector.syncIncremental({ cursor, config });
+
+  const payload = JSON.parse(result.nextCursor.value) as { watermarkIso: string };
+  const watermarkMs = new Date(payload.watermarkIso).getTime();
+  // Watermark should advance to T3 (the highest).
   assert.equal(watermarkMs, Number(T3));
 });
 
@@ -790,7 +870,7 @@ test("incremental sync extracts plain text from HTML when no text/plain part exi
 test("OAuth2 token exchange failure propagates as transient error", async () => {
   const failFetch = makeFetch([
     {
-      match: (url) => url.includes("oauth2.googleapis.com"),
+      match: (url) => url.startsWith("https://oauth2.googleapis.com/"),
       respond: () => ({
         status: 503,
         data: { error: "service_unavailable", error_description: "try again" },
@@ -814,7 +894,7 @@ test("OAuth2 token exchange failure propagates as transient error", async () => 
 test("OAuth2 token exchange 401 failure (invalid credentials) also throws", async () => {
   const failFetch = makeFetch([
     {
-      match: (url) => url.includes("oauth2.googleapis.com"),
+      match: (url) => url.startsWith("https://oauth2.googleapis.com/"),
       respond: () => ({
         status: 401,
         data: { error: "invalid_client", error_description: "bad credentials" },
