@@ -429,7 +429,7 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
   const parsedChoices = parseChoices(choices, location);
   const parsedCorrectChoice = parseCorrectChoice(correctChoice, answer, parsedChoices, location);
   const flatCoordinateIndex = buildFlatCoordinateIndex(turns.length);
-  const idRefs = parseTargetStepRefs(targetStepIds);
+  const idRefs = parseTargetStepRefs(targetStepIds, flatCoordinateIndex);
   const coordinateRefs = parseTargetStepRefs(targetStepCoordinates, flatCoordinateIndex, {
     treatSingleArrayAsCoordinate: true,
   });

@@ -105,6 +105,7 @@ function createDatasetCases() {
       ],
       question: "Which city did I move to last spring?",
       answer: "Lisbon",
+      targetStepIds: [[0, 0]],
       targetStepCoordinates: [[0, 0]],
     },
   ];
