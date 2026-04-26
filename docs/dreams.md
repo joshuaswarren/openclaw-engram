@@ -123,12 +123,15 @@ existing top-level keys readable for backward compatibility.
 
 ### Deep sleep gates (today)
 
-- The `fileHygiene` block (`hygiene.enabled`, `hygiene.archiveDir`,
-  warning-page paths) — drives archive and warning emission for
-  files that exceed size thresholds.
-- `pageVersioning.maxVersionsPerPage` (parsed in
-  `page-versioning.ts`) — retention for the snapshot history that
-  every memory file overwrite produces. `0` disables pruning.
+- The `fileHygiene` block (`fileHygiene.enabled`,
+  `fileHygiene.archiveDir`, `fileHygiene.lintBudgetBytes`,
+  `fileHygiene.rotateEnabled`, `fileHygiene.rotateMaxBytes`,
+  `fileHygiene.warningsLogPath`, etc.) — drives archive and warning
+  emission for files that exceed size thresholds.
+- `versioningMaxPerPage` (top-level config key, consumed by
+  `page-versioning.ts` as `maxVersionsPerPage`) — retention for the
+  snapshot history that every memory file overwrite produces. `0`
+  disables pruning.
 - The `engram-nightly-governance` cron registered in
   `maintenance/memory-governance-cron.ts` — orchestrates the deep
   sleep pass on a schedule. The same module also registers
