@@ -128,6 +128,17 @@ export async function exportCapsule(
   await assertIsDirectory(rootAbs);
 
   const outDirAbs = path.resolve(opts.outDir ?? path.join(rootAbs, ".capsules"));
+  // Reject outDir === root: the input scan would otherwise be entirely
+  // skipped by `shouldInclude` (outDirRelPosix === ".") and the export would
+  // silently succeed with an empty manifest/archive — a Rule 51 violation
+  // and a data-loss footgun for callers that point outDir at the root.
+  if (outDirAbs === rootAbs) {
+    throw new Error(
+      "exportCapsule: 'outDir' must not equal 'root'. " +
+        "Choose a separate directory (default: <root>/.capsules) so the " +
+        "export does not overwrite or shadow the source tree.",
+    );
+  }
   await mkdir(outDirAbs, { recursive: true });
 
   // If the output directory lives inside the export root, scan results would
@@ -348,8 +359,12 @@ function normalizePeerIds(
  */
 function computeOutDirRel(rootAbs: string, outDirAbs: string): string | null {
   const rel = path.relative(rootAbs, outDirAbs);
-  // outDir == root: degenerate, skip the whole tree by treating as ".".
-  if (rel === "") return ".";
+  // outDir == root: degenerate. {@link exportCapsule} rejects this case
+  // before calling us; this branch is defensive only. Returning `"."` would
+  // make `shouldInclude` drop every file, masking the misuse — return `null`
+  // instead so any direct caller that bypasses the check still produces a
+  // populated manifest rather than a silent empty export.
+  if (rel === "") return null;
   // outDir outside root: nothing to exclude.
   if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
   return rel.split(path.sep).join("/");
@@ -378,8 +393,9 @@ function shouldInclude(
   // Exclude the output directory subtree. Without this, re-running against
   // the same root packages prior `.capsule.json.gz` archives and sidecar
   // manifests as records, causing bundle bloat and leaking stale exports.
+  // `outDir === root` is rejected at the entrypoint (`exportCapsule`), so
+  // {@link computeOutDirRel} never returns `"."` for the in-tree case here.
   if (outDirRelPosix !== null) {
-    if (outDirRelPosix === ".") return false; // degenerate: outDir == root
     if (relPosix === outDirRelPosix) return false;
     if (relPosix.startsWith(`${outDirRelPosix}/`)) return false;
   }

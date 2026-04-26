@@ -412,6 +412,28 @@ test("explicit outDir under root is also excluded from the input scan", async ()
   );
 });
 
+test("outDir equal to root is rejected (avoids silent empty export)", async () => {
+  const root = await makeFixture([{ rel: "facts/a.md", content: "a\n" }]);
+
+  await assert.rejects(
+    () => exportCapsule({ name: "self", root, outDir: root }),
+    /'outDir' must not equal 'root'/,
+    "exportCapsule must throw when outDir resolves to the same path as root",
+  );
+});
+
+test("outDir resolving to root via '.' segments is also rejected", async () => {
+  const root = await makeFixture([{ rel: "facts/a.md", content: "a\n" }]);
+  // outDir is logically the same directory as root but written with a trailing
+  // "/." — `path.resolve` normalizes both to the same absolute path, so the
+  // equality check must catch this case too.
+  await assert.rejects(
+    () => exportCapsule({ name: "self", root, outDir: path.join(root, ".") }),
+    /'outDir' must not equal 'root'/,
+    "outDir written as `<root>/.` must still be rejected",
+  );
+});
+
 test("outDir outside root does not affect inclusion", async () => {
   const root = await makeFixture([
     { rel: "facts/a.md", content: "a\n" },
