@@ -5,19 +5,27 @@
  * non-procedural memories by normalized content, and reinforces the
  * most-recent member of each large-enough cluster:
  *
- *   1. Pick the most-recent memory in the cluster as the canonical.
- *   2. Stamp the canonical with `reinforcement_count` (cluster size)
- *      and `last_reinforced_at` (job timestamp).  Record provenance:
- *      `derived_from = [...source-ids...]` and
- *      `derived_via = "pattern-reinforcement"` so the lineage is
- *      traceable.
- *   3. Mark the older duplicates with `status: "superseded"` and
- *      point `supersededBy` at the canonical id.
+ *   1. Cluster across active AND already-superseded members.  This is
+ *      load-bearing: after the first reinforcement pass, older
+ *      duplicates are marked `superseded`, so on the next pass the
+ *      "active count" alone would be just `canonical + N-new`.  By
+ *      keeping superseded members in the cluster for the threshold
+ *      check, an established canonical (count >= minCount) keeps
+ *      growing as soon as a single new duplicate arrives.
+ *      `forgotten` / `archived` / `quarantined` / `pending_review` /
+ *      `rejected` stay excluded per CLAUDE.md rule 53.
+ *   2. Pick the most-recent ACTIVE member of each cluster as the
+ *      canonical.  Stamp it with `reinforcement_count` (total cluster
+ *      size including superseded members) and `last_reinforced_at`.
+ *      Record provenance: `derived_from = [...source-ids...]` and
+ *      `derived_via = "pattern-reinforcement"`.
+ *   3. Mark any still-active duplicates with `status: "superseded"`
+ *      and point `supersededBy` at the canonical id.
  *
  * The job is idempotent: re-running on the same corpus does not
- * double-bump `reinforcement_count`.  Already-superseded duplicates
- * are skipped via the active-status filter, so only newly-discovered
- * duplicates contribute to subsequent reinforcement.
+ * double-bump `reinforcement_count` (the bump-only-on-change guard
+ * compares cluster size to the canonical's previous counter), and
+ * already-superseded duplicates simply pass through.
  *
  * Recall integration (boost from `reinforcement_count`) and the CLI
  * surface ship in PR 3/4 and PR 4/4 respectively — this PR only wires
@@ -148,19 +156,23 @@ export async function runPatternReinforcement(
 
   const memories = await storage.readAllMemories();
 
-  // Filter to active, in-scope memories.  Only consider memories whose
-  // status is implicitly or explicitly "active" — superseded /
-  // archived / forgotten / quarantined memories are out of scope per
-  // CLAUDE.md rule 53.
-  const candidates = memories.filter((m) => {
+  // Cluster across BOTH active and already-superseded memories so a
+  // canonical that has previously absorbed duplicates still gets
+  // reinforced when a single new duplicate arrives (Codex P1).
+  // Without this, the post-first-pass active set is just
+  // `canonical + N-new`, which falls below `minCount` for any
+  // realistic cadence.  CLAUDE.md rule 53 still applies — forgotten,
+  // archived, quarantined, pending_review, and rejected memories
+  // remain excluded.
+  const eligible = memories.filter((m) => {
     if (!targetCategories.has(m.frontmatter.category)) return false;
     const status = m.frontmatter.status ?? ACTIVE_STATUS;
-    return status === ACTIVE_STATUS;
+    return status === ACTIVE_STATUS || status === "superseded";
   });
 
-  if (candidates.length === 0) return emptyResult();
+  if (eligible.length === 0) return emptyResult();
 
-  const clusters = clusterByKey(candidates, (m) =>
+  const clusters = clusterByKey(eligible, (m) =>
     patternReinforcementKey(m.content),
   );
 
@@ -172,15 +184,30 @@ export async function runPatternReinforcement(
   };
 
   for (const cluster of clusters.values()) {
+    // The cluster represents the full historical pattern — its size
+    // is the threshold the user configured against.
     if (cluster.length < minCount) continue;
+
+    // Active members are the only ones we can write to (or pick as
+    // canonical).  If every member is already superseded — e.g. a
+    // prior canonical was archived externally — there's nothing to
+    // do for this cluster on this pass.
+    const activeMembers = cluster.filter((m) => {
+      const status = m.frontmatter.status ?? ACTIVE_STATUS;
+      return status === ACTIVE_STATUS;
+    });
+    if (activeMembers.length === 0) continue;
+
     result.clustersFound += 1;
 
-    const canonical = pickCanonical(cluster);
-    const duplicates = cluster.filter((m) => m !== canonical);
+    const canonical = pickCanonical(activeMembers);
+    const activeDuplicates = activeMembers.filter((m) => m !== canonical);
 
-    // Source-id provenance: include canonical + duplicates so the
-    // lineage is fully reconstructible.  Sort ids deterministically
-    // (CLAUDE.md rule 38) so re-runs produce stable on-disk output.
+    // Source-id provenance: include the canonical + every member
+    // that contributed to the cluster (active and superseded), so
+    // the lineage is fully reconstructible.  Sort ids
+    // deterministically (CLAUDE.md rule 38) so re-runs produce
+    // stable on-disk output.
     const sourceIds = [...cluster]
       .map((m) => m.frontmatter.id)
       .filter((id): id is string => typeof id === "string" && id.length > 0)
@@ -190,7 +217,7 @@ export async function runPatternReinforcement(
     const newCount = cluster.length;
     const reinforcementBumped = newCount > previousCount;
 
-    // Patch the canonical only when something actually changed —
+    // Patch the canonical only when the cluster actually grew —
     // idempotent re-runs on a stable corpus produce zero writes.
     if (reinforcementBumped) {
       const patch: Partial<MemoryFrontmatter> = {
@@ -204,18 +231,12 @@ export async function runPatternReinforcement(
       result.canonicalsUpdated += 1;
     }
 
-    // Supersede any active duplicates that haven't already been
-    // pointed at the canonical.  Skipping already-linked duplicates
-    // keeps the job idempotent under partial completion (e.g. a
-    // previous run crashed midway).
+    // Supersede any still-active duplicates.  Already-superseded
+    // members were filtered out above, which doubles as our
+    // crash-recovery guard: a previous run that died mid-supersede
+    // simply re-runs the active half on the next pass.
     const supersededIds: string[] = [];
-    for (const dup of duplicates) {
-      if (
-        dup.frontmatter.status === "superseded" &&
-        dup.frontmatter.supersededBy === canonical.frontmatter.id
-      ) {
-        continue;
-      }
+    for (const dup of activeDuplicates) {
       const patch: Partial<MemoryFrontmatter> = {
         status: "superseded",
         supersededBy: canonical.frontmatter.id,

@@ -289,6 +289,18 @@ export class EngramMcpServer {
         },
       },
       {
+        name: "engram.pattern_reinforcement_run",
+        description:
+          "Run the pattern-reinforcement maintenance job (issue #687 PR 2/4). Clusters duplicate non-procedural memories by normalized content, promotes the most-recent member to canonical, and supersedes the older duplicates. Gated on patternReinforcementEnabled.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            namespace: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
         // The canonical `remnic.procedural_stats` alias is added automatically
         // by `withToolAliases` — the dual-naming invariant keeps both names
         // alive for the legacy surface.
@@ -1460,6 +1472,14 @@ export class EngramMcpServer {
         }, effectivePrincipal);
       case "engram.procedure_mining_run":
         return this.service.procedureMiningRun(
+          {
+            namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+            authenticatedPrincipal: effectivePrincipal,
+          },
+          effectivePrincipal,
+        );
+      case "engram.pattern_reinforcement_run":
+        return this.service.patternReinforcementRun(
           {
             namespace: typeof args.namespace === "string" ? args.namespace : undefined,
             authenticatedPrincipal: effectivePrincipal,

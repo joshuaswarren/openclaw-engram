@@ -156,20 +156,93 @@ test("runPatternReinforcement: idempotent re-run does not double-bump reinforcem
   assert.equal(first.duplicatesSuperseded, 2);
   assert.equal(first.clusters[0]?.reinforcementBumped, true);
 
-  // Second run on the same corpus.  After the first run, duplicates
-  // are now `superseded` so they fall out of the active filter — the
-  // canonical's cluster size shrinks to 1 and the job becomes a no-op.
+  // Second run on the same corpus.  After the first run, the older
+  // members are `superseded` — but the cluster STILL counts them
+  // toward the threshold (Codex P1 fix), so the cluster is found
+  // again with size 3 and no new active duplicates remain.  Because
+  // `reinforcement_count` is already 3, the bump-only-on-change
+  // guard keeps the run a no-op write-wise.
   const writesBefore = writes.length;
   const second = await runPatternReinforcement(stub, {
     categories: ["preference"],
     minCount: 3,
     now: frozenNow,
   });
-  assert.equal(second.clustersFound, 0);
+  assert.equal(second.clustersFound, 1);
   assert.equal(second.canonicalsUpdated, 0);
   assert.equal(second.duplicatesSuperseded, 0);
+  assert.equal(second.clusters[0]?.reinforcementBumped, false);
   // No additional writes.
   assert.equal(writes.length, writesBefore);
+});
+
+test("runPatternReinforcement: established canonical grows when a single new duplicate arrives (Codex P1)", async () => {
+  // Models the exact post-first-run scenario the Codex review flagged:
+  // canonical + 2 already-superseded members + 1 brand-new active
+  // duplicate.  The new duplicate must be absorbed and the count
+  // bumped to 4, even though the active sub-cluster size is only 2.
+  const dupContent = "established pattern";
+  const memories = [
+    makeMemory({
+      id: "m-old1",
+      content: dupContent,
+      updated: "2026-01-01T00:00:00Z",
+      status: "superseded",
+      supersededBy: "m-canon",
+    }),
+    makeMemory({
+      id: "m-old2",
+      content: dupContent,
+      updated: "2026-02-01T00:00:00Z",
+      status: "superseded",
+      supersededBy: "m-canon",
+    }),
+    makeMemory({
+      id: "m-canon",
+      content: dupContent,
+      updated: "2026-03-01T00:00:00Z",
+      reinforcement_count: 3,
+      last_reinforced_at: "2026-03-01T00:00:00.000Z",
+      derived_via: "pattern-reinforcement",
+      derived_from: ["m-canon", "m-old1", "m-old2"],
+    }),
+    // A brand-new active duplicate from a later session.
+    makeMemory({
+      id: "m-new",
+      content: dupContent,
+      updated: "2026-04-15T00:00:00Z",
+    }),
+  ];
+  const { stub, writes } = makeStorageStub(memories);
+
+  const result = await runPatternReinforcement(stub, {
+    categories: ["preference"],
+    minCount: 3,
+    now: frozenNow,
+  });
+
+  assert.equal(result.clustersFound, 1);
+  assert.equal(result.canonicalsUpdated, 1);
+  assert.equal(result.duplicatesSuperseded, 1);
+  assert.equal(result.clusters[0]?.count, 4);
+  assert.equal(result.clusters[0]?.reinforcementBumped, true);
+  // The most-recent active member becomes the new canonical.
+  assert.equal(result.clusters[0]?.canonicalId, "m-new");
+  // Source-ids include every member of the historical cluster.
+  assert.deepEqual(
+    result.clusters[0]?.sourceIds.slice().sort(),
+    ["m-canon", "m-new", "m-old1", "m-old2"],
+  );
+  // The new active member was patched as canonical with count=4.
+  const canonicalWrite = writes.find((w) => w.memoryId === "m-new");
+  assert.ok(canonicalWrite);
+  assert.equal(canonicalWrite!.patch.reinforcement_count, 4);
+  // The previous canonical (still active before the run) was
+  // superseded.
+  const oldCanonWrite = writes.find((w) => w.memoryId === "m-canon");
+  assert.ok(oldCanonWrite);
+  assert.equal(oldCanonWrite!.patch.status, "superseded");
+  assert.equal(oldCanonWrite!.patch.supersededBy, "m-new");
 });
 
 test("runPatternReinforcement: re-run with existing reinforcement_count does not bump when count unchanged", async () => {
@@ -255,7 +328,7 @@ test("runPatternReinforcement: skips out-of-scope categories", async () => {
   assert.equal(writes.length, 0);
 });
 
-test("runPatternReinforcement: skips already-superseded memories in the cluster", async () => {
+test("runPatternReinforcement: counts both active and already-superseded members; only writes to active duplicates", async () => {
   const dupContent = "mixed status cluster";
   const memories = [
     makeMemory({
@@ -288,7 +361,7 @@ test("runPatternReinforcement: skips already-superseded memories in the cluster"
       updated: "2026-04-15T00:00:00Z",
     }),
   ];
-  const { stub } = makeStorageStub(memories);
+  const { stub, writes } = makeStorageStub(memories);
 
   const result = await runPatternReinforcement(stub, {
     categories: ["preference"],
@@ -296,12 +369,27 @@ test("runPatternReinforcement: skips already-superseded memories in the cluster"
     now: frozenNow,
   });
 
-  // Only the 3 active memories form the cluster.
+  // All 5 cluster members count toward the threshold (Codex P1).
   assert.equal(result.clustersFound, 1);
   assert.equal(result.clusters[0]?.canonicalId, "m-new3");
-  assert.equal(result.clusters[0]?.count, 3);
-  // Only active duplicates get superseded.
-  assert.deepEqual(result.clusters[0]?.supersededIds.slice().sort(), ["m-new1", "m-new2"]);
+  assert.equal(result.clusters[0]?.count, 5);
+  // sourceIds includes every member, active and superseded.
+  assert.deepEqual(result.clusters[0]?.sourceIds.slice().sort(), [
+    "m-new1",
+    "m-new2",
+    "m-new3",
+    "m-old1",
+    "m-old2",
+  ]);
+  // Only the active duplicates were newly superseded — pre-existing
+  // superseded memories are not re-touched.
+  assert.deepEqual(
+    result.clusters[0]?.supersededIds.slice().sort(),
+    ["m-new1", "m-new2"],
+  );
+  // Already-superseded memories are NOT written to.
+  assert.ok(!writes.some((w) => w.memoryId === "m-old1"));
+  assert.ok(!writes.some((w) => w.memoryId === "m-old2"));
 });
 
 test("runPatternReinforcement: empty categories short-circuits with no work", async () => {

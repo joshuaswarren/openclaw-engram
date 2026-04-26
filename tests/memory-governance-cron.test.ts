@@ -7,6 +7,7 @@ import {
   ensureDaySummaryCron,
   ensureNightlyGovernanceCron,
   ensureProceduralMiningCron,
+  ensurePatternReinforcementCron,
 } from "../src/maintenance/memory-governance-cron.ts";
 
 test("nightly governance cron auto-registers a bounded job once", async () => {
@@ -93,6 +94,28 @@ test("procedural mining cron registers once and references engram.procedure_mini
     const job = parsed.jobs.find((j) => j.id === "engram-procedural-mining");
     assert.ok(job);
     assert.match(job.payload.message, /engram\.procedure_mining_run/);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("pattern reinforcement cron registers once and references engram.pattern_reinforcement_run", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "engram-pattern-reinforcement-cron-"));
+  const jobsPath = path.join(tempDir, "jobs.json");
+  try {
+    await writeFile(jobsPath, JSON.stringify({ version: 1, jobs: [] }, null, 2) + "\n", "utf-8");
+    const first = await ensurePatternReinforcementCron(jobsPath, { timezone: "UTC" });
+    assert.equal(first.created, true);
+    const second = await ensurePatternReinforcementCron(jobsPath, { timezone: "UTC" });
+    assert.equal(second.created, false);
+    const parsed = JSON.parse(await readFile(jobsPath, "utf-8")) as {
+      jobs: Array<{ id: string; schedule: { expr: string }; payload: { message: string } }>;
+    };
+    const job = parsed.jobs.find((j) => j.id === "engram-pattern-reinforcement");
+    assert.ok(job);
+    // Cron expression must offset from sibling crons.
+    assert.equal(job.schedule.expr, "53 4 * * 0");
+    assert.match(job.payload.message, /engram\.pattern_reinforcement_run/);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
