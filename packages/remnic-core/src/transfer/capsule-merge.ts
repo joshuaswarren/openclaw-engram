@@ -348,9 +348,13 @@ export async function mergeCapsule(
     const dedupKey = targetAbs.toLowerCase();
     const firstSourcePath = seenTargetPaths.get(dedupKey);
     if (firstSourcePath !== undefined) {
+      // Report the canonical normalized target path (posixNormalized), not the
+      // second entry's raw source path. For `subdir/./file.md`, the raw path
+      // misleads anyone debugging the archive — the actual on-disk target is
+      // `subdir/file.md` (Cursor low-severity thread on PR #748).
       throw new Error(
         `mergeCapsule: manifest contains two entries that resolve to the same target path: ` +
-          `"${firstSourcePath}" and "${rec.path}" both map to "${rec.path}"`,
+          `"${firstSourcePath}" and "${rec.path}" both map to "${posixNormalized}"`,
       );
     }
     seenTargetPaths.set(dedupKey, rec.path);
