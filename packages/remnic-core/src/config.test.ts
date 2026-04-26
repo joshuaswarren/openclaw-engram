@@ -651,3 +651,91 @@ test("parseConfig rejects malformed folderIds", () => {
     /folderIds entries must be strings/,
   );
 });
+
+// ─── #683 PR 5/6: connectors.github repo slug validation ───────────────────
+
+test("parseConfig connectors.github accepts well-formed owner/repo slugs", () => {
+  const result = parseConfig({
+    openaiApiKey: "sk-test",
+    connectors: {
+      github: {
+        enabled: true,
+        token: "ghp_synthetic_token",
+        userLogin: "synthetic-user",
+        repos: ["owner-1/repo.alpha", "owner_2/repo-beta"],
+      },
+    },
+  });
+  assert.equal(result.connectors.github.enabled, true);
+  assert.deepEqual(result.connectors.github.repos, [
+    "owner-1/repo.alpha",
+    "owner_2/repo-beta",
+  ]);
+});
+
+test("parseConfig connectors.github rejects repo slugs missing the slash", () => {
+  assert.throws(
+    () =>
+      parseConfig({
+        openaiApiKey: "sk-test",
+        connectors: {
+          github: {
+            token: "ghp_synthetic_token",
+            userLogin: "synthetic-user",
+            repos: ["no-slash"],
+          },
+        },
+      }),
+    /repos entries must match owner\/repo format/,
+  );
+});
+
+test("parseConfig connectors.github rejects repo slugs with extra segments", () => {
+  // Three-segment paths are not valid `owner/repo` slugs.
+  assert.throws(
+    () =>
+      parseConfig({
+        openaiApiKey: "sk-test",
+        connectors: {
+          github: {
+            token: "ghp_synthetic_token",
+            userLogin: "synthetic-user",
+            repos: ["owner/repo/extra"],
+          },
+        },
+      }),
+    /repos entries must match owner\/repo format/,
+  );
+});
+
+test("parseConfig connectors.github rejects repo slugs with disallowed characters", () => {
+  // Spaces, slashes inside owner/repo segments, or other special chars.
+  assert.throws(
+    () =>
+      parseConfig({
+        openaiApiKey: "sk-test",
+        connectors: {
+          github: {
+            token: "ghp_synthetic_token",
+            userLogin: "synthetic-user",
+            repos: ["owner with space/repo"],
+          },
+        },
+      }),
+    /repos entries must match owner\/repo format/,
+  );
+  assert.throws(
+    () =>
+      parseConfig({
+        openaiApiKey: "sk-test",
+        connectors: {
+          github: {
+            token: "ghp_synthetic_token",
+            userLogin: "synthetic-user",
+            repos: ["owner/repo!bad"],
+          },
+        },
+      }),
+    /repos entries must match owner\/repo format/,
+  );
+});

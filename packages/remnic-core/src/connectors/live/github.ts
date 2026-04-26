@@ -1006,7 +1006,11 @@ async function fetchAndFilterComments(
         newSeenIds[seenKey] = comment.updated_at;
         continue;
       }
-      if (trimmed.length > MAX_BODY_BYTES) {
+      // MAX_BODY_BYTES is a UTF-8 byte limit (not a character limit). String
+      // `.length` counts UTF-16 code units, so for multi-byte content the
+      // byte size can exceed the limit while character count stays under it.
+      // Use `Buffer.byteLength(..., "utf8")` to compare like with like.
+      if (Buffer.byteLength(trimmed, "utf8") > MAX_BODY_BYTES) {
         skippedTooLarge++;
         if (!latestWatermark || comment.updated_at > latestWatermark) {
           latestWatermark = comment.updated_at;

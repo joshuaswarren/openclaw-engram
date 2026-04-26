@@ -2696,6 +2696,12 @@ export function parseConfig(raw: unknown): PluginConfig {
             `connectors.github.repos must be an array of strings (got ${typeof rawGitHub.repos})`,
           );
         }
+        // Reject invalid `owner/repo` slugs at the config boundary so users
+        // get a clear error at parse time instead of a confusing runtime
+        // failure during sync. Mirrors `REPO_SLUG_PATTERN` in the connector
+        // (`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`). CLAUDE.md gotcha #51:
+        // never silently default; reject invalid input.
+        const githubRepoSlugPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
         const seen = new Set<string>();
         for (const value of rawGitHub.repos) {
           if (typeof value !== "string") {
@@ -2705,6 +2711,11 @@ export function parseConfig(raw: unknown): PluginConfig {
           }
           const trimmed = value.trim();
           if (trimmed.length === 0) continue;
+          if (!githubRepoSlugPattern.test(trimmed)) {
+            throw new Error(
+              `connectors.github.repos entries must match owner/repo format (got ${JSON.stringify(value)})`,
+            );
+          }
           if (seen.has(trimmed)) continue;
           seen.add(trimmed);
           githubRepos.push(trimmed);

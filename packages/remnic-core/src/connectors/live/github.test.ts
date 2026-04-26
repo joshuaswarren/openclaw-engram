@@ -1386,3 +1386,47 @@ test("startRepoIndex rotates to give later repos a chance on next pass", async (
   const payload = JSON.parse(result.nextCursor.value) as { startRepoIndex: number };
   assert.equal(payload.startRepoIndex, 1, "startRepoIndex must advance to 1 after a pass starting at 0");
 });
+
+// ---------------------------------------------------------------------------
+// Regression: body size check uses UTF-8 byte length, not character count
+// Fix: Cursor Low finding (PRRT_kwDORJXyws59sm83)
+// ---------------------------------------------------------------------------
+
+test("body size check rejects content whose UTF-8 byte size exceeds the limit", async () => {
+  // 4-byte UTF-8 emoji repeated. 5 MB / 4 bytes per char = ~1.31M characters.
+  // We construct a string whose .length is well below 5M but whose UTF-8 byte
+  // size is above 5 MB. With the fix the comment is rejected as too large;
+  // with the old `.length` check it would have slipped through.
+  const emoji = "\u{1F600}"; // 4 UTF-8 bytes, 2 UTF-16 code units (.length === 2)
+  // ~1.4M emojis = ~5.6M UTF-8 bytes, ~2.8M characters.
+  const tooBigBody = emoji.repeat(1_400_000);
+  const tooBigComment = makeComment(
+    501,
+    SYNTHETIC_LOGIN,
+    tooBigBody,
+    "2026-04-26T17:00:00.000Z",
+  );
+
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes("/issues/comments"),
+      respond: () => ({ status: 200, data: [tooBigComment] }),
+    },
+    {
+      match: (url) => url.includes("/pulls/comments"),
+      respond: () => ({ status: 200, data: [] }),
+    },
+  ]);
+
+  const connector = createGitHubConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CONFIG });
+  const cursor = makeGitHubCursor({});
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GitHubSyncResult;
+  assert.equal(
+    result.newDocs.length,
+    0,
+    "comment whose UTF-8 byte size exceeds the limit must be rejected",
+  );
+  assert.equal(result.skippedTooLarge, 1);
+});
