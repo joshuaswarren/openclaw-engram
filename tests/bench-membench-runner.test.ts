@@ -186,8 +186,45 @@ function createOfficialParticipantDataset() {
             question: "Which movie preference should the assistant remember?",
             choices: ["Toy Story", "Alien (1979)", "Heat", "Jaws"],
             answer: "Alien (1979)",
-            target_step_coordinates: [[0, 1], [1, 1]],
+            target_step_coordinates: [[0, 1], [0, 1, 1]],
           },
+        },
+      ],
+    },
+  };
+}
+
+function createOfficialPairedCoordinateDataset() {
+  return {
+    factual: {
+      FirstAgentDataLowLevel: [
+        {
+          message_list: [
+            [
+              {
+                user: "I chose the blue mug for my desk.",
+                agent: "The blue mug choice is saved.",
+              },
+              {
+                user: "I chose the green notebook for travel.",
+                agent: "The green notebook choice is saved.",
+              },
+            ],
+          ],
+          QA: [
+            {
+              question: "Which item did the assistant acknowledge first?",
+              choices: ["red pen", "blue mug", "black bag", "white lamp"],
+              answer: "B",
+              target_step_coordinate: [0, 0, 1],
+            },
+            {
+              question: "Which item did I choose second?",
+              choices: ["blue mug", "green notebook", "yellow folder", "silver watch"],
+              answer: "B",
+              target_step_coordinates: [[0, 0, 1], [1, 0]],
+            },
+          ],
         },
       ],
     },
@@ -378,13 +415,47 @@ test("runBenchmark accepts official first-agent message_list and QA records", as
   assert.equal(task.details?.memoryType, "reflective");
   assert.equal(task.details?.scenario, "participant");
   assert.equal(task.details?.turnCount, 4);
-  assert.deepEqual(task.details?.targetStepCoordinates, [[0, 1], [1, 1]]);
+  assert.deepEqual(task.details?.targetStepCoordinates, [[0, 1], [0, 1, 1]]);
   assert.deepEqual(task.details?.targetStepIds, [2, 3]);
   assert.equal(task.scores.membench_accuracy, 1);
   assert.equal(
     result.results.aggregates.membench_accuracy_reflective_participant?.mean,
     1,
   );
+});
+
+test("runBenchmark maps singular and paired MemBench coordinate tuples without collisions", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-membench-paired-coords-"));
+  const datasetDir = path.join(tmpDir, "datasets", "membench");
+  const adapter = new FakeMemoryAdapter();
+  adapter.responder = {
+    async respond() {
+      return {
+        text: "B",
+        tokens: { input: 3, output: 1 },
+        latencyMs: 2,
+        model: "fake-choice-model",
+      };
+    },
+  };
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "FirstAgentDataLowLevel.json"),
+    JSON.stringify(createOfficialPairedCoordinateDataset()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("membench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 2);
+  assert.deepEqual(result.results.tasks[0]?.details?.targetStepCoordinates, [[0, 0, 1]]);
+  assert.deepEqual(result.results.tasks[0]?.details?.targetStepIds, [1]);
+  assert.deepEqual(result.results.tasks[1]?.details?.targetStepCoordinates, [[0, 0, 1], [1, 0]]);
+  assert.deepEqual(result.results.tasks[1]?.details?.targetStepIds, [1, 2]);
 });
 
 test("runBenchmark surfaces MemBench recall@10 search failures", async () => {

@@ -407,7 +407,9 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
   const parsedChoices = parseChoices(choices, location);
   const parsedCorrectChoice = parseCorrectChoice(correctChoice, answer, parsedChoices, location);
   const idRefs = parseTargetStepRefs(targetStepIds);
-  const coordinateRefs = parseTargetStepRefs(targetStepCoordinates);
+  const coordinateRefs = parseTargetStepRefs(targetStepCoordinates, undefined, {
+    treatSingleArrayAsCoordinate: true,
+  });
   const targetRefs = {
     targetStepIds: idRefs.targetStepIds ?? coordinateRefs.targetStepIds,
     targetStepCoordinates: coordinateRefs.targetStepCoordinates ?? idRefs.targetStepCoordinates,
@@ -696,11 +698,12 @@ function appendTrajectoryTurn(
   if (userText || assistantText) {
     if (userText) {
       rememberCoordinate();
+      rememberCoordinate(pairedTurnCoordinate(coordinate, 0));
       turns.push({ role: "user", content: userText });
     }
     if (assistantText) {
       rememberCoordinate(
-        userText ? pairedAssistantCoordinate(coordinate) : coordinate,
+        userText ? pairedTurnCoordinate(coordinate, 1) : coordinate,
       );
       turns.push({ role: "assistant", content: assistantText });
     }
@@ -766,6 +769,7 @@ function normalizeQaPairs(
     }
 
     const id = firstString(item.id, item.qid, item.question_id);
+    const targetRefSource = resolveTargetRefSource(item);
     pairs.push({
       id: id ?? undefined,
       question,
@@ -773,18 +777,40 @@ function normalizeQaPairs(
       choices: choices ?? undefined,
       correctChoice: correctChoice ?? undefined,
       questionTime: firstString(item.time, item.question_time, item.questionTime) ?? undefined,
-      ...parseTargetStepRefs(
-        item.target_step_id
-        ?? item.target_step_ids
-        ?? item.targetStepIds
-        ?? item.target_step_coordinates
-        ?? item.targetStepCoordinates,
-        coordinateIndex,
-      ),
+      ...parseTargetStepRefs(targetRefSource?.value, coordinateIndex, {
+        treatSingleArrayAsCoordinate: targetRefSource?.kind === "coordinates",
+      }),
     });
   }
 
   return pairs;
+}
+
+function resolveTargetRefSource(
+  item: Record<string, unknown>,
+): { value: unknown; kind: "ids" | "coordinates" } | undefined {
+  if (item.target_step_id !== undefined) {
+    return { value: item.target_step_id, kind: "ids" };
+  }
+  if (item.target_step_ids !== undefined) {
+    return { value: item.target_step_ids, kind: "ids" };
+  }
+  if (item.targetStepIds !== undefined) {
+    return { value: item.targetStepIds, kind: "ids" };
+  }
+  if (item.target_step_coordinates !== undefined) {
+    return { value: item.target_step_coordinates, kind: "coordinates" };
+  }
+  if (item.targetStepCoordinates !== undefined) {
+    return { value: item.targetStepCoordinates, kind: "coordinates" };
+  }
+  if (item.target_step_coordinate !== undefined) {
+    return { value: item.target_step_coordinate, kind: "coordinates" };
+  }
+  if (item.targetStepCoordinate !== undefined) {
+    return { value: item.targetStepCoordinate, kind: "coordinates" };
+  }
+  return undefined;
 }
 
 function resolveCaseId(
@@ -1103,11 +1129,18 @@ function normalizeComparable(value: string): string {
 function parseTargetStepRefs(
   value: unknown,
   coordinateIndex?: Map<string, number>,
+  options: { treatSingleArrayAsCoordinate?: boolean } = {},
 ): {
   targetStepIds?: number[];
   targetStepCoordinates?: number[][];
 } {
-  const rawValues = Array.isArray(value) ? value : value === undefined ? [] : [value];
+  const rawValues = Array.isArray(value)
+    ? options.treatSingleArrayAsCoordinate && isCoordinateTuple(value)
+      ? [value]
+      : value
+    : value === undefined
+      ? []
+      : [value];
   const coordinates = rawValues
     .filter(Array.isArray)
     .map((items) => items.filter((item): item is number =>
@@ -1128,7 +1161,12 @@ function parseTargetStepRefs(
           candidates.add(mapped);
         }
       } else if (numeric.length === 1) {
-        candidates.add(numeric[0]!);
+        const mapped = coordinateIndex?.get(coordinateKey(numeric));
+        if (mapped !== undefined) {
+          candidates.add(mapped);
+        } else if (!options.treatSingleArrayAsCoordinate) {
+          candidates.add(numeric[0]!);
+        }
       }
     }
   }
@@ -1140,17 +1178,18 @@ function parseTargetStepRefs(
   };
 }
 
+function isCoordinateTuple(value: unknown[]): boolean {
+  return value.length > 0 && value.every((item) =>
+    typeof item === "number" && Number.isInteger(item) && item >= 0,
+  );
+}
+
 function coordinateKey(coordinate: number[]): string {
   return coordinate.join(":");
 }
 
-function pairedAssistantCoordinate(coordinate: number[]): number[] {
-  if (coordinate.length === 1) {
-    return [1, coordinate[0]!];
-  }
-
-  const [turnIndex, ...rest] = coordinate;
-  return [(turnIndex ?? 0) + 1, ...rest];
+function pairedTurnCoordinate(coordinate: number[], sideIndex: 0 | 1): number[] {
+  return [...coordinate, sideIndex];
 }
 
 function normalizeLimit(limit: number | undefined): number | undefined {
