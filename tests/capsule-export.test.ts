@@ -434,6 +434,33 @@ test("outDir resolving to root via '.' segments is also rejected", async () => {
   );
 });
 
+test("outDir name starting with '..' is treated as in-tree (not parent-traversal)", async () => {
+  // Codex P2 (#731): the prior outside-root check used `rel.startsWith("..")`,
+  // which incorrectly classified valid in-tree directory names like
+  // `..capsules` as parent-traversal and skipped excluding them. The boundary
+  // check (`rel === ".."` or starts with `".." + path.sep`) correctly treats
+  // `..capsules` as in-tree and excludes its subtree from re-export.
+  const root = await makeFixture([{ rel: "facts/a.md", content: "a\n" }]);
+  const dotsDir = path.join(root, "..capsules");
+
+  // First export — writes archive + sidecar into the literal `..capsules`
+  // subdir. The directory name resolves under root (no traversal).
+  await exportCapsule({ name: "first", root, outDir: dotsDir });
+
+  const second = await exportCapsule({
+    name: "second",
+    root,
+    outDir: dotsDir,
+  });
+  // The first run's archive + manifest must not appear in the second manifest.
+  for (const f of second.manifest.files) {
+    assert.ok(
+      !f.path.startsWith("..capsules/"),
+      `..capsules contents must be excluded, got: ${f.path}`,
+    );
+  }
+});
+
 test("outDir outside root does not affect inclusion", async () => {
   const root = await makeFixture([
     { rel: "facts/a.md", content: "a\n" },

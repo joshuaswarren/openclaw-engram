@@ -365,8 +365,13 @@ function computeOutDirRel(rootAbs: string, outDirAbs: string): string | null {
   // instead so any direct caller that bypasses the check still produces a
   // populated manifest rather than a silent empty export.
   if (rel === "") return null;
-  // outDir outside root: nothing to exclude.
-  if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
+  // outDir outside root: nothing to exclude. Match real parent-traversal
+  // segments only — `rel.startsWith("..")` would also match valid in-tree
+  // names like `..capsules` and would skip excluding that subtree. The
+  // boundary check (`rel === ".."` or `rel` starts with `".." + sep`) is
+  // platform-aware via `path.sep` so Windows backslashes are respected.
+  if (rel === ".." || rel.startsWith(`..${path.sep}`)) return null;
+  if (path.isAbsolute(rel)) return null;
   return rel.split(path.sep).join("/");
 }
 
