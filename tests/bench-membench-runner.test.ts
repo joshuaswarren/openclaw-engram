@@ -317,6 +317,7 @@ test("runBenchmark executes membench in full mode from an explicit dataset file"
   assert.equal(result.results.tasks[0]?.expected, "Lisbon");
   assert.equal(result.results.tasks[0]?.details.scenario, "participant");
   assert.deepEqual(result.results.tasks[0]?.details.targetStepCoordinates, [[0, 0]]);
+  assert.deepEqual(result.results.tasks[0]?.details.targetStepIds, [0]);
 });
 
 test("runBenchmark accepts upstream MemBench export filenames in full mode", async () => {
@@ -573,8 +574,14 @@ test("runBenchmark includes official MemBench failure sentinels on task errors",
   assert.equal(task.expected, "B");
   assert.equal(task.scores.membench_accuracy, -1);
   assert.equal(task.scores.membench_recall_at_10, -1);
+  assert.equal(task.details?.memoryType, "factual");
+  assert.equal(task.details?.scenario, "observation");
   assert.equal(result.results.aggregates.membench_accuracy?.mean, -1);
   assert.equal(result.results.aggregates.membench_recall_at_10?.mean, -1);
+  assert.equal(
+    result.results.aggregates.membench_accuracy_factual_observation?.mean,
+    -1,
+  );
 });
 
 test("runBenchmark does not infer MCQ choices from recalled text without a responder", async () => {

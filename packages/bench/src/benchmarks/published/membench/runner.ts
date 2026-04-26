@@ -194,7 +194,20 @@ export async function runMemBenchBenchmark(
         scores,
         latencyMs: 0,
         tokens: { input: 0, output: 0 },
-        details: { error: message },
+        details: {
+          error: message,
+          memoryType: testCase.memoryType,
+          scenario: testCase.scenario,
+          level: testCase.level,
+          turnCount: testCase.turns.length,
+          officialProtocol: testCase.choices ? "multiple_choice_accuracy" : "exact_answer_accuracy",
+          choices: testCase.choices,
+          correctChoice: testCase.correctChoice,
+          correctAnswer: testCase.answer,
+          questionTime: testCase.questionTime,
+          targetStepIds: testCase.targetStepIds,
+          targetStepCoordinates: testCase.targetStepCoordinates,
+        },
       });
     }
 
@@ -415,8 +428,9 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
 
   const parsedChoices = parseChoices(choices, location);
   const parsedCorrectChoice = parseCorrectChoice(correctChoice, answer, parsedChoices, location);
+  const flatCoordinateIndex = buildFlatCoordinateIndex(turns.length);
   const idRefs = parseTargetStepRefs(targetStepIds);
-  const coordinateRefs = parseTargetStepRefs(targetStepCoordinates, undefined, {
+  const coordinateRefs = parseTargetStepRefs(targetStepCoordinates, flatCoordinateIndex, {
     treatSingleArrayAsCoordinate: true,
   });
   const targetRefs = {
@@ -1204,6 +1218,15 @@ function isCoordinateTuple(value: unknown[]): boolean {
 
 function coordinateKey(coordinate: number[]): string {
   return coordinate.join(":");
+}
+
+function buildFlatCoordinateIndex(turnCount: number): Map<string, number> {
+  const index = new Map<string, number>();
+  for (let turnIndex = 0; turnIndex < turnCount; turnIndex += 1) {
+    index.set(coordinateKey([turnIndex]), turnIndex);
+    index.set(coordinateKey([0, turnIndex]), turnIndex);
+  }
+  return index;
 }
 
 function pairedTurnCoordinate(coordinate: number[], sideIndex: 0 | 1): number[] {
