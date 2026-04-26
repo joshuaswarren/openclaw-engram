@@ -377,9 +377,9 @@ test("runBenchmark accepts official first-agent message_list and QA records", as
   assert.equal(task.actual, "B");
   assert.equal(task.details?.memoryType, "reflective");
   assert.equal(task.details?.scenario, "participant");
-  assert.equal(task.details?.turnCount, 2);
+  assert.equal(task.details?.turnCount, 4);
   assert.deepEqual(task.details?.targetStepCoordinates, [[0, 1]]);
-  assert.deepEqual(task.details?.targetStepIds, [1]);
+  assert.deepEqual(task.details?.targetStepIds, [2]);
   assert.equal(task.scores.membench_accuracy, 1);
   assert.equal(
     result.results.aggregates.membench_accuracy_reflective_participant?.mean,

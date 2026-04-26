@@ -659,7 +659,7 @@ function appendTrajectoryTurn(
   const rememberCoordinate = () => {
     coordinateIndex.set(coordinateKey(coordinate), turns.length);
     if (coordinate.length === 1) {
-      coordinateIndex.set(coordinateKey([coordinate[0]!, 0]), turns.length);
+      coordinateIndex.set(coordinateKey([0, coordinate[0]!]), turns.length);
     }
   };
 
@@ -692,13 +692,12 @@ function appendTrajectoryTurn(
   const assistantText = firstString(turn.agent, turn.assistant, turn.assistant_message);
   if (userText || assistantText) {
     rememberCoordinate();
-    turns.push({
-      role: "assistant",
-      content: [
-        userText ? `'user': ${userText}` : undefined,
-        assistantText ? `'agent': ${assistantText}` : undefined,
-      ].filter(Boolean).join("; "),
-    });
+    if (userText) {
+      turns.push({ role: "user", content: userText });
+    }
+    if (assistantText) {
+      turns.push({ role: "assistant", content: assistantText });
+    }
     return true;
   }
   if (!speaker || !text) {
@@ -1121,9 +1120,6 @@ function parseTargetStepRefs(
         const mapped = coordinateIndex?.get(coordinateKey(numeric));
         if (mapped !== undefined) {
           candidates.add(mapped);
-        } else {
-          const [first, second] = numeric;
-          candidates.add(second * 3 + first);
         }
       } else if (numeric.length === 1) {
         candidates.add(numeric[0]!);
