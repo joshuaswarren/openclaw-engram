@@ -434,6 +434,12 @@ export async function writePeer(memoryDir: string, peer: Peer): Promise<void> {
  * `identity.md` are also skipped.
  */
 export async function listPeers(memoryDir: string): Promise<Peer[]> {
+  // Codex P1 (round 2): `fs.readdir(root)` follows a symlinked
+  // peers root, so without checking first, listing on a malicious
+  // `peers → /tmp/outside` symlink would enumerate out-of-scope
+  // contents and feed them to readPeer. Reject the symlinked root
+  // BEFORE the readdir.
+  await assertPeersRootNotSymlink(memoryDir);
   const root = peersRoot(memoryDir);
   let entries: string[];
   try {
@@ -630,13 +636,30 @@ function parsePeerProfile(raw: string, peerId: string): PeerProfile {
     const list: PeerProfileFieldProvenance[] = [];
     for (const item of v) {
       if (
-        typeof item === "object" &&
-        item !== null &&
-        typeof (item as PeerProfileFieldProvenance).observedAt === "string" &&
-        typeof (item as PeerProfileFieldProvenance).signal === "string"
+        typeof item !== "object" ||
+        item === null ||
+        Array.isArray(item)
       ) {
-        list.push(item as PeerProfileFieldProvenance);
+        continue;
       }
+      const r = item as unknown as Record<string, unknown>;
+      if (typeof r.observedAt !== "string" || typeof r.signal !== "string") {
+        continue;
+      }
+      // Codex P2: previously the optional fields were never type-
+      // checked, so a hand-edited `{sourceSessionId: 123}` survived
+      // and corrupted the PeerProfileFieldProvenance contract for
+      // downstream consumers. Build a clean record with only
+      // string-typed optional fields included.
+      const clean: PeerProfileFieldProvenance = {
+        observedAt: r.observedAt,
+        signal: r.signal,
+        ...(typeof r.sourceSessionId === "string"
+          ? { sourceSessionId: r.sourceSessionId }
+          : {}),
+        ...(typeof r.note === "string" ? { note: r.note } : {}),
+      };
+      list.push(clean);
     }
     provenance[k] = list;
   }
