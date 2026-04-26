@@ -168,10 +168,16 @@ function createOfficialParticipantDataset() {
       FirstAgentDataHighLevel: [
         {
           message_list: [
-            {
-              user: "I loved Alien (1979), especially the practical tension.",
-              agent: "Alien (1979) fits your taste for tense sci-fi.",
-            },
+            [
+              {
+                user: "I liked Toy Story when we discussed lighter animation.",
+                agent: "Toy Story is a lighter animation preference.",
+              },
+              {
+                user: "I loved Alien (1979), especially the practical tension.",
+                agent: "Alien (1979) fits your taste for tense sci-fi.",
+              },
+            ],
           ],
           QA: {
             question: "Which movie preference should the assistant remember?",
@@ -409,6 +415,29 @@ test("runBenchmark surfaces MemBench recall@10 search failures", async () => {
 
   assert.equal(result.results.tasks[0]?.scores.membench_recall_at_10, -1);
   assert.equal(result.results.aggregates.membench_recall_at_10?.mean, -1);
+});
+
+test("runBenchmark does not infer MCQ choices from recalled text without a responder", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-membench-no-responder-"));
+  const datasetDir = path.join(tmpDir, "datasets", "membench");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "ThirdAgentDataLowLevel.json"),
+    JSON.stringify(createOfficialChoiceDataset()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("membench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.expected, "B");
+  assert.notEqual(task.actual, "B");
+  assert.equal(task.scores.membench_accuracy, 0);
 });
 
 test("runBenchmark treats bare letter answers as exact-answer cases when choices are absent", async () => {

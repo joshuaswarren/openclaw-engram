@@ -40,6 +40,11 @@ interface MemBenchQuestionAnswer {
   targetStepCoordinates?: number[][];
 }
 
+interface NormalizedMemBenchTurns {
+  turns: Message[];
+  coordinateIndex: Map<string, number>;
+}
+
 const DATASET_FILENAMES = [
   "membench.json",
   "membench.jsonl",
@@ -106,7 +111,7 @@ export async function runMemBenchBenchmark(
         recalledText,
         responder: options.system.responder,
       });
-      const predictedChoice = testCase.choices
+      const predictedChoice = testCase.choices && options.system.responder
         ? extractChoice(answered.finalAnswer)
         : undefined;
       const actualAnswer = predictedChoice && testCase.choices
@@ -554,12 +559,12 @@ function normalizeTrajectoryQaRecord(
     return [];
   }
 
-  const turns = normalizeTrajectoryTurns(trajectory, `${location}.trajectory`);
-  if (!turns) {
+  const normalizedTurns = normalizeTrajectoryTurns(trajectory, `${location}.trajectory`);
+  if (!normalizedTurns) {
     return [];
   }
 
-  const qaPairs = normalizeQaPairs(qa, `${location}.qa`);
+  const qaPairs = normalizeQaPairs(qa, `${location}.qa`, normalizedTurns.coordinateIndex);
   if (qaPairs.length === 0) {
     return [];
   }
@@ -571,14 +576,14 @@ function normalizeTrajectoryQaRecord(
         memoryType: resolveMemoryType(record.memoryType, hints),
         scenario: resolveScenario(record.scenario, hints),
         level: resolveLevel(record.level, hints),
-        turns,
+        turns: normalizedTurns.turns,
         question: pair.question,
         answer: pair.answer,
-      choices: pair.choices,
-      correctChoice: pair.correctChoice,
-      questionTime: pair.questionTime,
-      targetStepIds: pair.targetStepIds,
-      targetStepCoordinates: pair.targetStepCoordinates,
+        choices: pair.choices,
+        correctChoice: pair.correctChoice,
+        questionTime: pair.questionTime,
+        targetStepIds: pair.targetStepIds,
+        targetStepCoordinates: pair.targetStepCoordinates,
       },
       `${location}.qa[${index}]`,
     ),
@@ -588,7 +593,7 @@ function normalizeTrajectoryQaRecord(
 function normalizeTrajectoryTurns(
   trajectory: unknown[],
   location: string,
-): Message[] | null {
+): NormalizedMemBenchTurns | null {
   if (trajectory.length === 0) {
     return null;
   }
@@ -596,58 +601,110 @@ function normalizeTrajectoryTurns(
   const speakerRoles = new Map<string, Message["role"]>();
   let distinctSpeakers = 0;
   const turns: Message[] = [];
+  const coordinateIndex = new Map<string, number>();
 
   for (let index = 0; index < trajectory.length; index += 1) {
     const turn = trajectory[index];
-    if (typeof turn === "string" && turn.trim().length > 0) {
-      turns.push({ role: "user", content: turn });
-      continue;
-    }
-
-    if (!isPlainObject(turn)) {
-      return null;
-    }
-
-    const directMessage = parseDirectMessageTurn(turn);
-    if (directMessage) {
-      turns.push(directMessage);
-      continue;
-    }
-
-    const speaker = typeof turn.speaker === "string" ? turn.speaker : undefined;
-    const text = typeof turn.text === "string"
-      ? turn.text
-      : typeof turn.content === "string"
-        ? turn.content
-        : typeof turn.message === "string"
-          ? turn.message
-          : undefined;
-    const userText = firstString(turn.user, turn.user_message);
-    const assistantText = firstString(turn.agent, turn.assistant, turn.assistant_message);
-    if (userText || assistantText) {
-      if (userText) {
-        turns.push({ role: "user", content: userText });
-      }
-      if (assistantText) {
-        turns.push({ role: "assistant", content: assistantText });
+    if (Array.isArray(turn)) {
+      for (let nestedIndex = 0; nestedIndex < turn.length; nestedIndex += 1) {
+        if (!appendTrajectoryTurn(
+          turn[nestedIndex],
+          `${location}[${index}][${nestedIndex}]`,
+          [nestedIndex, index],
+          turns,
+          coordinateIndex,
+          speakerRoles,
+          () => distinctSpeakers++,
+        )) {
+          return null;
+        }
       }
       continue;
     }
-    if (!speaker || !text) {
+
+    if (!appendTrajectoryTurn(
+      turn,
+      `${location}[${index}]`,
+      [index],
+      turns,
+      coordinateIndex,
+      speakerRoles,
+      () => distinctSpeakers++,
+    )) {
       return null;
     }
-
-    let role = speakerRoles.get(speaker);
-    if (!role) {
-      role = distinctSpeakers === 0 ? "user" : "assistant";
-      speakerRoles.set(speaker, role);
-      distinctSpeakers += 1;
-    }
-
-    turns.push({ role, content: text });
   }
 
-  return turns.length > 0 ? turns : null;
+  return turns.length > 0 ? { turns, coordinateIndex } : null;
+}
+
+function appendTrajectoryTurn(
+  turn: unknown,
+  _location: string,
+  coordinate: number[],
+  turns: Message[],
+  coordinateIndex: Map<string, number>,
+  speakerRoles: Map<string, Message["role"]>,
+  nextSpeakerIndex: () => number,
+): boolean {
+  const rememberCoordinate = () => {
+    coordinateIndex.set(coordinateKey(coordinate), turns.length);
+    if (coordinate.length === 1) {
+      coordinateIndex.set(coordinateKey([coordinate[0]!, 0]), turns.length);
+    }
+  };
+
+  if (typeof turn === "string" && turn.trim().length > 0) {
+    rememberCoordinate();
+    turns.push({ role: "user", content: turn });
+    return true;
+  }
+
+  if (!isPlainObject(turn)) {
+    return false;
+  }
+
+  const directMessage = parseDirectMessageTurn(turn);
+  if (directMessage) {
+    rememberCoordinate();
+    turns.push(directMessage);
+    return true;
+  }
+
+  const speaker = typeof turn.speaker === "string" ? turn.speaker : undefined;
+  const text = typeof turn.text === "string"
+    ? turn.text
+    : typeof turn.content === "string"
+      ? turn.content
+      : typeof turn.message === "string"
+        ? turn.message
+        : undefined;
+  const userText = firstString(turn.user, turn.user_message);
+  const assistantText = firstString(turn.agent, turn.assistant, turn.assistant_message);
+  if (userText || assistantText) {
+    rememberCoordinate();
+    turns.push({
+      role: "assistant",
+      content: [
+        userText ? `'user': ${userText}` : undefined,
+        assistantText ? `'agent': ${assistantText}` : undefined,
+      ].filter(Boolean).join("; "),
+    });
+    return true;
+  }
+  if (!speaker || !text) {
+    return false;
+  }
+
+  let role = speakerRoles.get(speaker);
+  if (!role) {
+    role = nextSpeakerIndex() === 0 ? "user" : "assistant";
+    speakerRoles.set(speaker, role);
+  }
+
+  rememberCoordinate();
+  turns.push({ role, content: text });
+  return true;
 }
 
 function parseDirectMessageTurn(turn: Record<string, unknown>): Message | null {
@@ -661,6 +718,7 @@ function parseDirectMessageTurn(turn: Record<string, unknown>): Message | null {
 function normalizeQaPairs(
   qa: unknown[],
   location: string,
+  coordinateIndex?: Map<string, number>,
 ): MemBenchQuestionAnswer[] {
   const pairs: MemBenchQuestionAnswer[] = [];
 
@@ -703,6 +761,7 @@ function normalizeQaPairs(
       questionTime: firstString(item.time, item.question_time, item.questionTime) ?? undefined,
       ...parseTargetStepRefs(
         item.target_step_id ?? item.target_step_ids ?? item.targetStepIds,
+        coordinateIndex,
       ),
     });
   }
@@ -1021,7 +1080,10 @@ function normalizeComparable(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function parseTargetStepRefs(value: unknown): {
+function parseTargetStepRefs(
+  value: unknown,
+  coordinateIndex?: Map<string, number>,
+): {
   targetStepIds?: number[];
   targetStepCoordinates?: number[][];
 } {
@@ -1041,8 +1103,13 @@ function parseTargetStepRefs(value: unknown): {
         typeof part === "number" && Number.isInteger(part) && part >= 0,
       );
       if (numeric.length >= 2) {
-        const [first, second] = numeric;
-        candidates.add(second * 3 + first);
+        const mapped = coordinateIndex?.get(coordinateKey(numeric));
+        if (mapped !== undefined) {
+          candidates.add(mapped);
+        } else {
+          const [first, second] = numeric;
+          candidates.add(second * 3 + first);
+        }
       } else if (numeric.length === 1) {
         candidates.add(numeric[0]!);
       }
@@ -1054,6 +1121,10 @@ function parseTargetStepRefs(value: unknown): {
     targetStepIds: ids.length > 0 ? ids : undefined,
     targetStepCoordinates: coordinates.length > 0 ? coordinates : undefined,
   };
+}
+
+function coordinateKey(coordinate: number[]): string {
+  return coordinate.join(":");
 }
 
 function normalizeLimit(limit: number | undefined): number | undefined {
