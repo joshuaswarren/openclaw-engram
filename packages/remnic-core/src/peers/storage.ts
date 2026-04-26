@@ -583,14 +583,15 @@ export async function appendInteractionLog(
   if (typeof entry.summary !== "string") {
     throw new Error("interaction entry must have a string summary");
   }
-  // Codex P2 round 6: optional sessionId must be a string OR
-  // strictly `undefined` (omitted). Round 8 follow-up: `null` was
-  // previously treated as acceptable but silently dropped during
-  // formatting; reject it explicitly so the boundary fails fast on
-  // any non-string input, matching the "fail fast" pattern of the
-  // other validators in this module.
-  if (entry.sessionId !== undefined && typeof entry.sessionId !== "string") {
-    throw new Error("interaction entry sessionId must be a string when provided");
+  // Codex P2 round 6/8/9: optional sessionId must be a non-empty
+  // string OR strictly `undefined` (omitted). null and empty string
+  // are both rejected explicitly: the previous behavior silently
+  // dropped them during formatting, which reinterprets invalid input
+  // instead of failing fast like other validators in this module.
+  if (entry.sessionId !== undefined) {
+    if (typeof entry.sessionId !== "string" || entry.sessionId === "") {
+      throw new Error("interaction entry sessionId must be a non-empty string when provided");
+    }
   }
   await assertPeersRootNotSymlink(memoryDir);
   const dir = peerDir(memoryDir, peerId);
@@ -683,12 +684,22 @@ function parsePeerProfile(raw: string, peerId: string): PeerProfile {
       ? payload.provenance
       : {};
   // Coerce values defensively. We never trust the on-disk shape.
-  const fields: Record<string, string> = {};
+  // Codex P1: use null-prototype objects so an attacker-controlled
+  // JSON key like "__proto__" cannot mutate Object.prototype when we
+  // assign into the maps. Same defense applied to fields and
+  // provenance. Reject the dangerous keys outright as well — they
+  // should never appear in legitimate peer data.
+  const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+  const fields: Record<string, string> = Object.create(null) as Record<string, string>;
   for (const [k, v] of Object.entries(fieldsObj)) {
+    if (DANGEROUS_KEYS.has(k)) continue;
     if (typeof v === "string") fields[k] = v;
   }
-  const provenance: Record<string, PeerProfileFieldProvenance[]> = {};
+  const provenance: Record<string, PeerProfileFieldProvenance[]> = Object.create(
+    null,
+  ) as Record<string, PeerProfileFieldProvenance[]>;
   for (const [k, v] of Object.entries(provenanceObj)) {
+    if (DANGEROUS_KEYS.has(k)) continue;
     if (!Array.isArray(v)) continue;
     const list: PeerProfileFieldProvenance[] = [];
     for (const item of v) {
@@ -700,21 +711,23 @@ function parsePeerProfile(raw: string, peerId: string): PeerProfile {
         continue;
       }
       const r = item as unknown as Record<string, unknown>;
-      if (typeof r.observedAt !== "string" || typeof r.signal !== "string") {
-        continue;
-      }
-      // Codex P2: previously the optional fields were never type-
-      // checked, so a hand-edited `{sourceSessionId: 123}` survived
-      // and corrupted the PeerProfileFieldProvenance contract for
-      // downstream consumers. Build a clean record with only
-      // string-typed optional fields included.
+      // Codex P2 round 9: empty observedAt/signal strings should be
+      // treated as malformed, not valid. Drop the entry.
+      if (typeof r.observedAt !== "string" || r.observedAt === "") continue;
+      if (typeof r.signal !== "string" || r.signal === "") continue;
+      // Codex P2 round 6: previously the optional fields were never
+      // type-checked, so a hand-edited `{sourceSessionId: 123}`
+      // survived and corrupted the PeerProfileFieldProvenance contract.
+      // Build a clean record with only string-typed optional fields.
       const clean: PeerProfileFieldProvenance = {
         observedAt: r.observedAt,
         signal: r.signal,
-        ...(typeof r.sourceSessionId === "string"
+        ...(typeof r.sourceSessionId === "string" && r.sourceSessionId.length > 0
           ? { sourceSessionId: r.sourceSessionId }
           : {}),
-        ...(typeof r.note === "string" ? { note: r.note } : {}),
+        ...(typeof r.note === "string" && r.note.length > 0
+          ? { note: r.note }
+          : {}),
       };
       list.push(clean);
     }
