@@ -4100,14 +4100,49 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const opts = (args[1] ?? {}) as Record<string, unknown>;
           const {
             parseCapsuleMergeOptions,
+            defaultCapsulesDir,
           } = await import("./capsule-cli.js");
           const parsed = parseCapsuleMergeOptions(archiveArg, opts);
 
           const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const capsulesDir = defaultCapsulesDir(memoryDir);
+
+          // Resolve archive path — same 3-step precedence as `capsule inspect`
+          // so that merge also accepts capsule IDs from the store directory.
+          //   1. Explicit path (starts with /, ./, ../, or contains sep) → tilde-expand and use as-is.
+          //   2. Bare name matching an existing cwd file → resolve to absolute.
+          //   3. Otherwise treat as a capsule id and look up in the capsules store.
+          const { stat: statMerge } = await import("node:fs/promises");
+          let sourceArchive = expandTildePath(parsed.archive);
+          const looksLikePath =
+            sourceArchive.startsWith("/") ||
+            sourceArchive.startsWith("./") ||
+            sourceArchive.startsWith("../") ||
+            sourceArchive.includes(path.sep);
+
+          if (!looksLikePath) {
+            const cwdResolved = path.resolve(sourceArchive);
+            const cwdSt = await statMerge(cwdResolved).catch(() => null);
+            if (cwdSt && cwdSt.isFile()) {
+              sourceArchive = cwdResolved;
+            } else {
+              const byId = path.join(capsulesDir, `${sourceArchive}.capsule.json.gz`);
+              const byIdEnc = path.join(capsulesDir, `${sourceArchive}.capsule.json.gz.enc`);
+              const stId = await statMerge(byId).catch(() => null);
+              if (stId && stId.isFile()) {
+                sourceArchive = byId;
+              } else {
+                const stEnc = await statMerge(byIdEnc).catch(() => null);
+                if (stEnc && stEnc.isFile()) {
+                  sourceArchive = byIdEnc;
+                }
+              }
+            }
+          }
 
           const { mergeCapsule } = await import("./transfer/capsule-merge.js");
           const result = await mergeCapsule({
-            sourceArchive: expandTildePath(parsed.archive),
+            sourceArchive,
             targetRoot: memoryDir,
             conflictMode: parsed.conflictMode,
           });
@@ -4158,8 +4193,16 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           let dirEntries: string[];
           try {
             dirEntries = await readdir(capsulesDir);
-          } catch {
-            // Directory does not exist yet — empty list is valid.
+          } catch (err) {
+            // ENOENT means the directory hasn't been created yet — treat as empty.
+            // Any other error (e.g. EACCES, ENOTDIR) is a real problem and must
+            // be surfaced so the user knows why the listing is empty.
+            const code = (err as NodeJS.ErrnoException).code;
+            if (code !== "ENOENT") {
+              throw new Error(
+                `capsule list: cannot read capsule store directory ${capsulesDir}: ${(err as Error).message}`,
+              );
+            }
             dirEntries = [];
           }
 
