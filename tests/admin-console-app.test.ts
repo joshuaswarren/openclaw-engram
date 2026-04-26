@@ -19,6 +19,44 @@ class FakeElement {
   }
 }
 
+/** Minimal fake canvas context — records calls but does nothing. */
+class FakeCanvasContext {
+  calls: string[] = [];
+  save() { this.calls.push("save"); }
+  restore() { this.calls.push("restore"); }
+  clearRect() { this.calls.push("clearRect"); }
+  scale() {}
+  beginPath() {}
+  arc() {}
+  fill() {}
+  stroke() {}
+  moveTo() {}
+  lineTo() {}
+  fillText() {}
+  get fillStyle() { return ""; }
+  set fillStyle(_v: string) {}
+  get strokeStyle() { return ""; }
+  set strokeStyle(_v: string) {}
+  get lineWidth() { return 1; }
+  set lineWidth(_v: number) {}
+  get globalAlpha() { return 1; }
+  set globalAlpha(_v: number) {}
+  get font() { return ""; }
+  set font(_v: string) {}
+  get textAlign() { return ""; }
+  set textAlign(_v: string) {}
+}
+
+class FakeCanvas extends FakeElement {
+  width = 0;
+  height = 0;
+  offsetWidth = 800;
+  offsetHeight = 520;
+  _ctx = new FakeCanvasContext();
+  getContext(_type: string) { return this._ctx; }
+  getBoundingClientRect() { return { left: 0, top: 0, right: 800, bottom: 520 }; }
+}
+
 async function loadAdminConsoleContext(pageSizeValue: string, extraElements: Record<string, FakeElement> = {}) {
   const scriptPath = path.resolve("admin-console/public/app.js");
   const script = await readFile(scriptPath, "utf8");
@@ -33,6 +71,8 @@ async function loadAdminConsoleContext(pageSizeValue: string, extraElements: Rec
   const context = vm.createContext({
     console,
     URLSearchParams,
+    requestAnimationFrame: (_fn: () => void) => 0,
+    cancelAnimationFrame: (_id: number) => {},
     document: {
       getElementById(id: string) {
         return elements.get(id) ?? null;
@@ -42,6 +82,7 @@ async function loadAdminConsoleContext(pageSizeValue: string, extraElements: Rec
       },
     },
     window: {
+      devicePixelRatio: 1,
       sessionStorage: {
         getItem(key: string) {
           return session.get(key) ?? "";
@@ -62,6 +103,16 @@ async function loadAdminConsoleContext(pageSizeValue: string, extraElements: Rec
     copyMemoryPath: vm.runInContext("copyMemoryPath", context) as () => void,
     renderQuality: vm.runInContext("renderQuality", context) as (response: unknown) => void,
     stepMemoryPage: vm.runInContext("stepMemoryPage", context) as (direction: number) => void,
+    graphColorForCategory: vm.runInContext("graphColorForCategory", context) as (cat: string) => string,
+    createForceSimulation: vm.runInContext("createForceSimulation", context) as (
+      nodes: Array<{ id: string; score: number; kind: string; x?: number; y?: number; vx?: number; vy?: number }>,
+      edges: Array<{ _srcNode: unknown; _tgtNode: unknown }>,
+      width: number,
+      height: number,
+    ) => { start: (fn: () => void) => void; stop: () => void },
+    drawGraph: vm.runInContext("drawGraph", context) as () => void,
+    graphData: vm.runInContext("graphData", context),
+    graphView: vm.runInContext("graphView", context) as { tx: number; ty: number; scale: number },
   };
 }
 
@@ -112,4 +163,82 @@ test("admin console copy path fails cleanly when no memory is selected", async (
 
   assert.equal(detailStatus.textContent, "No memory path to copy.");
   assert.equal(detailStatus.className, "status error");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Memory Graph pane — issue #691 PR 3/5
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("graph category colour palette returns a stable colour for known categories", async () => {
+  const { graphColorForCategory } = await loadAdminConsoleContext("25");
+  const c1 = graphColorForCategory("fact");
+  const c2 = graphColorForCategory("fact");
+  // Same category always yields the same colour.
+  assert.equal(c1, c2);
+  // Unknown / empty yields the grey fallback.
+  assert.equal(graphColorForCategory("unknown"), "#aaa");
+  assert.equal(graphColorForCategory(""), "#aaa");
+});
+
+test("graph category colour palette assigns different colours to distinct categories", async () => {
+  const { graphColorForCategory } = await loadAdminConsoleContext("25");
+  const factColor = graphColorForCategory("fact");
+  const decisionColor = graphColorForCategory("decision");
+  // Two distinct categories must not share the same colour
+  // (palette has 8 entries; the first two are always different).
+  assert.notEqual(factColor, decisionColor);
+});
+
+test("force simulation places all nodes with x/y after start", async () => {
+  const { createForceSimulation } = await loadAdminConsoleContext("25");
+
+  const nodes = [
+    { id: "a", score: 0.9, kind: "fact" },
+    { id: "b", score: 0.5, kind: "decision" },
+    { id: "c", score: 0.3, kind: "fact" },
+  ];
+  const edges = [
+    { _srcNode: nodes[0], _tgtNode: nodes[1] },
+    { _srcNode: nodes[1], _tgtNode: nodes[2] },
+  ];
+
+  const sim = createForceSimulation(nodes, edges, 800, 520);
+  // start with a no-op draw callback; raf is stubbed to 0 so no loop runs.
+  sim.start(() => {});
+  sim.stop();
+
+  for (const n of nodes) {
+    assert.ok(typeof (n as { x?: number }).x === "number", `node ${n.id} missing x`);
+    assert.ok(typeof (n as { y?: number }).y === "number", `node ${n.id} missing y`);
+    assert.ok(!Number.isNaN((n as { x?: number }).x));
+    assert.ok(!Number.isNaN((n as { y?: number }).y));
+  }
+});
+
+test("drawGraph is a no-op when graphData is null", async () => {
+  const canvas = new FakeCanvas();
+  const graphStatus = new FakeElement();
+  const { drawGraph } = await loadAdminConsoleContext("25", {
+    graphCanvas: canvas,
+    graphStatus,
+  });
+
+  // graphData starts null; drawGraph must not throw.
+  assert.doesNotThrow(() => drawGraph());
+  // Canvas context must not have been touched (no save calls).
+  assert.equal(canvas._ctx.calls.length, 0);
+});
+
+test("graph pane HTML elements are present in index.html", async () => {
+  const htmlPath = path.resolve("admin-console/public/index.html");
+  const html = await readFile(htmlPath, "utf8");
+
+  assert.ok(html.includes('id="graphCanvas"'), "graphCanvas element missing");
+  assert.ok(html.includes('id="graphTooltip"'), "graphTooltip element missing");
+  assert.ok(html.includes('id="graphStatus"'), "graphStatus element missing");
+  assert.ok(html.includes('id="graphLegend"'), "graphLegend element missing");
+  assert.ok(html.includes('id="refreshGraphButton"'), "refreshGraphButton missing");
+  assert.ok(html.includes('id="resetGraphViewButton"'), "resetGraphViewButton missing");
+  assert.ok(html.includes('id="graphLimit"'), "graphLimit select missing");
+  assert.ok(html.includes('id="graphFocusNodeId"'), "graphFocusNodeId input missing");
 });

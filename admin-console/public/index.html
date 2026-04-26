@@ -230,6 +230,62 @@
       .subgrid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
+      /* ── Memory Graph pane ─────────────────────────────────── */
+      .graph-wrap {
+        position: relative;
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fffdf9;
+        overflow: hidden;
+        margin-top: 12px;
+      }
+      #graphCanvas {
+        display: block;
+        width: 100%;
+        height: 520px;
+        cursor: grab;
+        touch-action: none;
+      }
+      #graphCanvas:active {
+        cursor: grabbing;
+      }
+      #graphTooltip {
+        position: absolute;
+        top: 0;
+        left: 0;
+        pointer-events: none;
+        background: rgba(27, 29, 34, 0.88);
+        color: #fff;
+        border-radius: 9px;
+        padding: 7px 11px;
+        font-size: 0.78rem;
+        line-height: 1.5;
+        max-width: 280px;
+        white-space: pre-wrap;
+        word-break: break-all;
+        display: none;
+        z-index: 10;
+      }
+      .graph-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 8px;
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+      .graph-legend-item {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .graph-legend-swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
       @media (max-width: 1080px) {
         .grid,
         .subgrid,
@@ -458,6 +514,33 @@
           </div>
         </section>
       </div>
+
+      <section class="card" style="margin-top: 16px;">
+        <h2>Memory Graph</h2>
+        <div class="toolbar">
+          <label>
+            Edge Limit
+            <select id="graphLimit">
+              <option value="100">100</option>
+              <option value="250" selected>250</option>
+              <option value="500">500</option>
+              <option value="1000">1000</option>
+            </select>
+          </label>
+          <label style="flex: 1;">
+            Focus Node Id
+            <input id="graphFocusNodeId" type="text" placeholder="Optional — relative memory path" />
+          </label>
+          <button id="refreshGraphButton">Refresh</button>
+          <button class="secondary" id="resetGraphViewButton">Reset View</button>
+        </div>
+        <div class="status" id="graphStatus">Graph will load after connect.</div>
+        <div class="graph-wrap">
+          <canvas id="graphCanvas"></canvas>
+          <div id="graphTooltip"></div>
+        </div>
+        <div class="graph-legend" id="graphLegend"></div>
+      </section>
 
       <section class="card" style="margin-top: 16px;">
         <h2>Maintenance</h2>

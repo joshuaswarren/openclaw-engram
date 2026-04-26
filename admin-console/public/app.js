@@ -648,6 +648,447 @@ async function seedTrustZoneDemo(dryRun) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Memory Graph — force-directed Verlet simulation (issue #691 PR 3/5)
+// No external dependencies.  ~150 lines.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Stable colour palette keyed by category string. */
+const GRAPH_CATEGORY_COLORS = [
+  "#0f6b63", // accent (fact)
+  "#8b3a22", // warn  (decision)
+  "#2563a8", // blue  (preference)
+  "#6b4f0f", // amber (entity)
+  "#3d226b", // purple (procedure)
+  "#1d7a3e", // green  (observation)
+  "#7a2b5f", // rose
+  "#2b5e7a", // teal-dark
+];
+const GRAPH_UNKNOWN_COLOR = "#aaa";
+const GRAPH_EDGE_COLORS = { entity: "#0f6b63", time: "#c9a227", causal: "#8b3a22" };
+
+/** Per-session category → colour mapping, built lazily. */
+const graphCategoryColors = new Map();
+let graphCategoryColorIndex = 0;
+
+function graphColorForCategory(cat) {
+  if (!cat || cat === "unknown") return GRAPH_UNKNOWN_COLOR;
+  if (!graphCategoryColors.has(cat)) {
+    graphCategoryColors.set(cat, GRAPH_CATEGORY_COLORS[graphCategoryColorIndex % GRAPH_CATEGORY_COLORS.length]);
+    graphCategoryColorIndex += 1;
+  }
+  return graphCategoryColors.get(cat);
+}
+
+/** Current simulation state — replaced on every refresh. */
+let graphSim = null;
+
+/**
+ * Run a Verlet-style force simulation on `nodes` / `edges`.
+ * Mutates `nodes` in-place; every element gains `.x`, `.y`, `.vx`, `.vy`.
+ * Returns a handle with `.stop()` and `.restart()`.
+ */
+function createForceSimulation(nodes, edges, width, height) {
+  const REPULSION = 6000;
+  const SPRING_LENGTH = 90;
+  const SPRING_K = 0.06;
+  const DAMPING = 0.82;
+  const CENTERING = 0.012;
+
+  // Place nodes in a circle to avoid degenerate starts.
+  nodes.forEach((n, i) => {
+    const angle = (2 * Math.PI * i) / nodes.length;
+    const r = Math.min(width, height) * 0.3;
+    n.x = width / 2 + r * Math.cos(angle);
+    n.y = height / 2 + r * Math.sin(angle);
+    n.vx = 0;
+    n.vy = 0;
+  });
+
+  let running = true;
+  let rafId = null;
+
+  function tick() {
+    if (!running) return;
+
+    // Repulsion between all pairs (O(n²) — acceptable for ≤ 1000 nodes in admin console).
+    for (let i = 0; i < nodes.length; i += 1) {
+      for (let j = i + 1; j < nodes.length; j += 1) {
+        const ni = nodes[i];
+        const nj = nodes[j];
+        const dx = ni.x - nj.x;
+        const dy = ni.y - nj.y;
+        const dist2 = dx * dx + dy * dy || 1;
+        const dist = Math.sqrt(dist2);
+        const force = REPULSION / dist2;
+        const fx = (force * dx) / dist;
+        const fy = (force * dy) / dist;
+        ni.vx += fx;
+        ni.vy += fy;
+        nj.vx -= fx;
+        nj.vy -= fy;
+      }
+    }
+
+    // Spring attraction along edges.
+    for (const edge of edges) {
+      const src = edge._srcNode;
+      const tgt = edge._tgtNode;
+      if (!src || !tgt) continue;
+      const dx = tgt.x - src.x;
+      const dy = tgt.y - src.y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const stretch = dist - SPRING_LENGTH;
+      const fx = (SPRING_K * stretch * dx) / dist;
+      const fy = (SPRING_K * stretch * dy) / dist;
+      src.vx += fx;
+      src.vy += fy;
+      tgt.vx -= fx;
+      tgt.vy -= fy;
+    }
+
+    // Centering pull.
+    for (const n of nodes) {
+      n.vx += (width / 2 - n.x) * CENTERING;
+      n.vy += (height / 2 - n.y) * CENTERING;
+      // Damping + integrate.
+      n.vx *= DAMPING;
+      n.vy *= DAMPING;
+      n.x += n.vx;
+      n.y += n.vy;
+    }
+  }
+
+  let onDraw = null;
+
+  function loop() {
+    tick();
+    if (onDraw) onDraw();
+    if (running) rafId = requestAnimationFrame(loop);
+  }
+
+  return {
+    start(drawFn) {
+      onDraw = drawFn;
+      running = true;
+      rafId = requestAnimationFrame(loop);
+    },
+    stop() {
+      running = false;
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    },
+    restart(drawFn) {
+      this.stop();
+      this.start(drawFn);
+    },
+  };
+}
+
+/** Pan/zoom transform for the canvas. */
+const graphView = { tx: 0, ty: 0, scale: 1 };
+
+/** Resets view transform to identity and re-draws. */
+function resetGraphView() {
+  graphView.tx = 0;
+  graphView.ty = 0;
+  graphView.scale = 1;
+  drawGraph();
+}
+
+/** Last rendered snapshot, kept for re-draw on resize / pan / zoom. */
+let graphData = null; // { nodes, edges }
+
+/** Node radius derived from score (clamped). */
+function nodeRadius(score) {
+  return Math.max(5, Math.min(14, 5 + score * 9));
+}
+
+/** Draw a single frame onto the canvas. */
+function drawGraph() {
+  const canvas = $("graphCanvas");
+  if (!canvas || !graphData) return;
+  const dpr = window.devicePixelRatio || 1;
+  // Keep bitmap resolution in sync with layout size.
+  const lw = canvas.offsetWidth;
+  const lh = canvas.offsetHeight;
+  if (canvas.width !== lw * dpr || canvas.height !== lh * dpr) {
+    canvas.width = lw * dpr;
+    canvas.height = lh * dpr;
+  }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.save();
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, lw, lh);
+
+  ctx.save();
+  ctx.translate(graphView.tx, graphView.ty);
+  ctx.scale(graphView.scale, graphView.scale);
+
+  // Draw edges.
+  for (const edge of graphData.edges) {
+    const src = edge._srcNode;
+    const tgt = edge._tgtNode;
+    if (!src || !tgt) continue;
+    ctx.beginPath();
+    ctx.moveTo(src.x, src.y);
+    ctx.lineTo(tgt.x, tgt.y);
+    ctx.strokeStyle = GRAPH_EDGE_COLORS[edge.kind] || "#ccc";
+    ctx.globalAlpha = 0.45 + edge.confidence * 0.45;
+    ctx.lineWidth = 0.8 + edge.confidence * 1.2;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  // Draw nodes.
+  for (const n of graphData.nodes) {
+    const r = nodeRadius(n.score);
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
+    ctx.fillStyle = graphColorForCategory(n.kind);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.6)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  ctx.restore();
+  ctx.restore();
+}
+
+/** Convert canvas-relative point to simulation space. */
+function canvasToSim(cx, cy) {
+  return {
+    x: (cx - graphView.tx) / graphView.scale,
+    y: (cy - graphView.ty) / graphView.scale,
+  };
+}
+
+/** Find the node under a canvas-relative cursor point, or null. */
+function hitTestNode(cx, cy) {
+  if (!graphData) return null;
+  const sim = canvasToSim(cx, cy);
+  for (const n of graphData.nodes) {
+    const r = nodeRadius(n.score) + 4; // slight hit-padding
+    const dx = sim.x - n.x;
+    const dy = sim.y - n.y;
+    if (dx * dx + dy * dy <= r * r) return n;
+  }
+  return null;
+}
+
+/** Find the edge under a canvas-relative cursor point, or null. */
+function hitTestEdge(cx, cy) {
+  if (!graphData) return null;
+  const sim = canvasToSim(cx, cy);
+  const THRESHOLD = 6;
+  for (const edge of graphData.edges) {
+    const src = edge._srcNode;
+    const tgt = edge._tgtNode;
+    if (!src || !tgt) continue;
+    // Point-to-segment distance.
+    const dx = tgt.x - src.x;
+    const dy = tgt.y - src.y;
+    const len2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((sim.x - src.x) * dx + (sim.y - src.y) * dy) / len2));
+    const px = src.x + t * dx - sim.x;
+    const py = src.y + t * dy - sim.y;
+    if (px * px + py * py <= THRESHOLD * THRESHOLD) return edge;
+  }
+  return null;
+}
+
+/** Show the floating tooltip near the cursor. */
+function showGraphTooltip(canvas, clientX, clientY, text) {
+  const tip = $("graphTooltip");
+  if (!tip) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = clientX - rect.left + 12;
+  const y = clientY - rect.top + 12;
+  tip.textContent = text;
+  tip.style.left = `${x}px`;
+  tip.style.top = `${y}px`;
+  tip.style.display = "block";
+}
+
+function hideGraphTooltip() {
+  const tip = $("graphTooltip");
+  if (tip) tip.style.display = "none";
+}
+
+/** Wire pan / zoom / tooltip mouse handlers onto the canvas. */
+function attachGraphInteractions(canvas) {
+  // Pan.
+  let dragging = false;
+  let dragStart = { x: 0, y: 0 };
+  let viewStart = { tx: 0, ty: 0 };
+
+  canvas.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    dragging = true;
+    dragStart = { x: e.clientX, y: e.clientY };
+    viewStart = { tx: graphView.tx, ty: graphView.ty };
+  });
+
+  canvas.addEventListener("mousemove", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+
+    if (dragging) {
+      graphView.tx = viewStart.tx + (e.clientX - dragStart.x);
+      graphView.ty = viewStart.ty + (e.clientY - dragStart.y);
+      drawGraph();
+      hideGraphTooltip();
+      return;
+    }
+
+    // Tooltip: check node first, then edge.
+    const node = hitTestNode(cx, cy);
+    if (node) {
+      const lines = [
+        `id: ${node.id}`,
+        `category: ${node.kind}`,
+        `score: ${node.score.toFixed(3)}`,
+        node.lastUpdated ? `updated: ${node.lastUpdated}` : null,
+      ].filter(Boolean).join("\n");
+      showGraphTooltip(canvas, e.clientX, e.clientY, lines);
+      return;
+    }
+    const edge = hitTestEdge(cx, cy);
+    if (edge) {
+      const text = `kind: ${edge.kind}\nconfidence: ${edge.confidence.toFixed(3)}`;
+      showGraphTooltip(canvas, e.clientX, e.clientY, text);
+      return;
+    }
+    hideGraphTooltip();
+  });
+
+  canvas.addEventListener("mouseup", () => { dragging = false; });
+  canvas.addEventListener("mouseleave", () => { dragging = false; hideGraphTooltip(); });
+
+  // Zoom via scroll wheel.
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.12 : 0.89;
+    const newScale = Math.max(0.1, Math.min(10, graphView.scale * factor));
+    // Keep the point under the cursor stationary.
+    graphView.tx = cx - (cx - graphView.tx) * (newScale / graphView.scale);
+    graphView.ty = cy - (cy - graphView.ty) * (newScale / graphView.scale);
+    graphView.scale = newScale;
+    drawGraph();
+  }, { passive: false });
+}
+
+/** Rebuild the legend strip below the canvas. */
+function renderGraphLegend() {
+  const legend = $("graphLegend");
+  if (!legend) return;
+  clearChildren(legend);
+  for (const [cat, color] of graphCategoryColors.entries()) {
+    const item = document.createElement("span");
+    item.className = "graph-legend-item";
+    const swatch = document.createElement("span");
+    swatch.className = "graph-legend-swatch";
+    swatch.style.background = color;
+    item.appendChild(swatch);
+    const label = document.createElement("span");
+    label.textContent = cat;
+    item.appendChild(label);
+    legend.appendChild(item);
+  }
+}
+
+/**
+ * Fetch `GET /engram/v1/graph/snapshot`, build simulation, and start drawing.
+ */
+async function loadMemoryGraph() {
+  const canvas = $("graphCanvas");
+  if (!canvas) return;
+
+  // Stop any running simulation.
+  if (graphSim) { graphSim.stop(); graphSim = null; }
+
+  setStatus("graphStatus", "Fetching graph snapshot...");
+
+  const params = new URLSearchParams();
+  const limit = $("graphLimit")?.value?.trim();
+  const focus = $("graphFocusNodeId")?.value?.trim();
+  if (limit) params.set("limit", limit);
+  if (focus) params.set("focusNodeId", focus);
+
+  let snapshot;
+  try {
+    snapshot = await fetchJson(`/engram/v1/graph/snapshot?${params.toString()}`);
+  } catch (err) {
+    setStatus("graphStatus", err.message || String(err), "error");
+    return;
+  }
+
+  const nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
+  const edges = Array.isArray(snapshot.edges) ? snapshot.edges : [];
+
+  if (nodes.length === 0) {
+    graphData = null;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      const dpr = window.devicePixelRatio || 1;
+      const lw = canvas.offsetWidth;
+      const lh = canvas.offsetHeight;
+      canvas.width = lw * dpr;
+      canvas.height = lh * dpr;
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, lw, lh);
+      ctx.fillStyle = "#aaa";
+      ctx.font = "14px Avenir Next, Segoe UI, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("No graph data — memory graph is empty.", lw / 2, lh / 2);
+      ctx.restore();
+    }
+    setStatus("graphStatus", "Graph snapshot is empty.", "default");
+    return;
+  }
+
+  // Reset colours on each fresh fetch so legend is consistent.
+  graphCategoryColors.clear();
+  graphCategoryColorIndex = 0;
+
+  // Pre-warm category colours in node order.
+  for (const n of nodes) graphColorForCategory(n.kind);
+
+  // Build id → node index for edge wiring.
+  const nodeIndex = new Map(nodes.map((n) => [n.id, n]));
+  for (const edge of edges) {
+    edge._srcNode = nodeIndex.get(edge.source) ?? null;
+    edge._tgtNode = nodeIndex.get(edge.target) ?? null;
+  }
+
+  graphData = { nodes, edges };
+  // Reset view on fresh load.
+  graphView.tx = 0;
+  graphView.ty = 0;
+  graphView.scale = 1;
+
+  const lw = canvas.offsetWidth || 800;
+  const lh = canvas.offsetHeight || 520;
+
+  graphSim = createForceSimulation(nodes, edges, lw, lh);
+  graphSim.start(drawGraph);
+
+  attachGraphInteractions(canvas);
+  renderGraphLegend();
+
+  setStatus(
+    "graphStatus",
+    `Loaded ${nodes.length} nodes, ${edges.length} edges. Generated ${snapshot.generatedAt}.`,
+    "ok",
+  );
+}
+
 async function connectAndBootstrap() {
   const input = $("tokenInput");
   const token = input?.value?.trim() || readToken();
@@ -668,6 +1109,7 @@ async function connectAndBootstrap() {
       loadEntities(),
       loadQuality(),
       loadMaintenance(),
+      loadMemoryGraph(),
     ]);
   } catch (error) {
     setStatus("authStatus", error.message || String(error), "error");
@@ -730,6 +1172,8 @@ function bootstrap() {
   $("refreshQueueButton")?.addEventListener("click", () => void loadReviewQueue());
   $("searchEntitiesButton")?.addEventListener("click", () => void loadEntities());
   $("copyMemoryPathButton")?.addEventListener("click", copyMemoryPath);
+  $("refreshGraphButton")?.addEventListener("click", () => void loadMemoryGraph());
+  $("resetGraphViewButton")?.addEventListener("click", resetGraphView);
 
   if (remembered) {
     void connectAndBootstrap();
