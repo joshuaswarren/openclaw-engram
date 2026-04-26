@@ -735,7 +735,53 @@ test("manifest with two entries that differ only in case is rejected before any 
 });
 
 // ---------------------------------------------------------------------------
-// 15. conflicts.archiveSha256 and localSha256 are accurate
+// 15. Directory at target path is rejected before any write
+// (Codex P1 round 2 thread on PR #748)
+// ---------------------------------------------------------------------------
+
+test("existing directory at a target path is rejected before any write — partial merge prevented", async () => {
+  // Reproducer from the codex thread: target has a directory like `profile.md/`
+  // and the archive contains both `a.md` and `profile.md`. Without the phase-1
+  // type check, `a.md` would be written successfully, then `writeFile(profile.md)`
+  // would throw EISDIR — leaving the merge partially applied.
+  const buf = makeBundle("dir-target-cap", [
+    { path: "a.md", content: "a-from-archive\n" },
+    { path: "profile.md", content: "would-fail-with-EISDIR\n" },
+  ]);
+  const archivePath = await writeBundleArchive(buf, "dir-target");
+
+  const dst = await makeTargetDir();
+  // Plant a DIRECTORY at the path the second archive entry would write to.
+  await mkdir(path.join(dst, "profile.md"), { recursive: true });
+
+  await assert.rejects(
+    mergeCapsule({ sourceArchive: archivePath, targetRoot: dst }),
+    /target is an existing directory/i,
+  );
+
+  // Critically: a.md must NOT have been written. Phase 1 must abort before
+  // any phase 2 writes, otherwise we have a partial merge.
+  const aExists = await readFile(path.join(dst, "a.md"), "utf-8").catch(() => null);
+  assert.equal(aExists, null, "directory rejection must happen before any record is written");
+});
+
+test("existing directory at a target path is rejected even when only one archive entry exists", async () => {
+  const buf = makeBundle("dir-only-cap", [
+    { path: "profile.md", content: "x\n" },
+  ]);
+  const archivePath = await writeBundleArchive(buf, "dir-only");
+
+  const dst = await makeTargetDir();
+  await mkdir(path.join(dst, "profile.md"), { recursive: true });
+
+  await assert.rejects(
+    mergeCapsule({ sourceArchive: archivePath, targetRoot: dst }),
+    /target is an existing directory/i,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 16. conflicts.archiveSha256 and localSha256 are accurate
 // ---------------------------------------------------------------------------
 
 test("conflict record contains accurate sha256 values for both sides", async () => {

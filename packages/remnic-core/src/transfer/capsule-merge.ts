@@ -299,13 +299,37 @@ export async function mergeCapsule(
     // Symlink-aware containment check (shared helper from fs-utils).
     await assertRealpathInsideRoot(rootReal, targetAbs, rec.path, "mergeCapsule");
 
-    // Target-file symlink guard: if the target already exists as a symlink,
-    // reject — writes through symlinks can redirect to unexpected locations.
+    // Target-file existence/type guard. We `lstat` the target up-front so that
+    // phase 2 only ever has to deal with one of two cases per record: the
+    // target either does not exist (write a new file) or is a regular file
+    // (potential conflict). Anything else — directory, symlink, FIFO, socket,
+    // device — is rejected here, BEFORE any writes, so a partially applied
+    // merge cannot occur (gotcha #25).
+    //
+    //   - Symlink: would redirect the write outside our safety perimeter.
+    //   - Directory (Codex P1 #748 round 2): `writeFile` on a dir throws
+    //     EISDIR mid-loop, leaving earlier records already on disk.
+    //   - Anything else: not a memory-file shape we are willing to overwrite.
     const targetLstat = await lstat(targetAbs).catch(() => null);
-    if (targetLstat !== null && targetLstat.isSymbolicLink()) {
-      throw new Error(
-        `mergeCapsule: record target is a symlink and cannot be written to safely: ${rec.path}`,
-      );
+    if (targetLstat !== null) {
+      if (targetLstat.isSymbolicLink()) {
+        throw new Error(
+          `mergeCapsule: record target is a symlink and cannot be written to safely: ${rec.path}`,
+        );
+      }
+      if (targetLstat.isDirectory()) {
+        throw new Error(
+          `mergeCapsule: record target is an existing directory: ${rec.path}`,
+        );
+      }
+      if (!targetLstat.isFile()) {
+        // Pipes, sockets, devices, etc.  Not a memory-file shape we will
+        // overwrite. Reject up-front rather than risking an obscure runtime
+        // error mid-merge.
+        throw new Error(
+          `mergeCapsule: record target is not a regular file: ${rec.path}`,
+        );
+      }
     }
 
     // Duplicate normalized target path detection (Codex P2 #748, mirrors
