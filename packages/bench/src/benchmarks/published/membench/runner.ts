@@ -1222,27 +1222,32 @@ function parseTargetStepRefs(
   targetStepCoordinates?: number[][];
 } {
   const rawValues = Array.isArray(value)
-    ? options.treatSingleArrayAsCoordinate && isCoordinateTuple(value)
-      ? [value]
+    ? options.treatSingleArrayAsCoordinate
+      ? isCoordinateTuple(value) || !value.every(Array.isArray)
+        ? [value]
+        : value
       : value
     : value === undefined
       ? []
       : [value];
   const coordinates = rawValues
     .filter(Array.isArray)
-    .map((items) => items
-      .map(normalizeTargetRefPart)
-      .filter((item): item is number => item !== undefined))
-    .filter((items) => items.length > 0);
+    .map(parseCoordinateTuple)
+    .filter((items): items is number[] => items !== undefined);
   const candidates = new Set<number>();
   for (const item of rawValues) {
     const scalar = normalizeTargetRefPart(item);
     if (scalar !== undefined) {
       candidates.add(scalar);
     } else if (Array.isArray(item)) {
-      const numeric = item
-        .map(normalizeTargetRefPart)
-        .filter((part): part is number => part !== undefined);
+      const numeric = options.treatSingleArrayAsCoordinate
+        ? parseCoordinateTuple(item)
+        : item
+          .map(normalizeTargetRefPart)
+          .filter((part): part is number => part !== undefined);
+      if (!numeric) {
+        continue;
+      }
       if (numeric.length >= 2) {
         const mapped = coordinateIndex?.get(coordinateKey(numeric));
         if (mapped !== undefined) {
@@ -1279,8 +1284,15 @@ function normalizeTargetRefPart(value: unknown): number | undefined {
 }
 
 function isCoordinateTuple(value: unknown[]): boolean {
-  return value.length > 0
-    && value.every((item) => normalizeTargetRefPart(item) !== undefined);
+  return parseCoordinateTuple(value) !== undefined;
+}
+
+function parseCoordinateTuple(value: unknown[]): number[] | undefined {
+  const parsed = value.map(normalizeTargetRefPart);
+  if (parsed.length === 0 || parsed.some((item) => item === undefined)) {
+    return undefined;
+  }
+  return parsed as number[];
 }
 
 function coordinateKey(coordinate: number[]): string {
