@@ -664,7 +664,10 @@ function appendTrajectoryTurn(
   ) => {
     coordinateIndex.set(coordinateKey(targetCoordinate), turnIndex);
     if (targetCoordinate.length === 1) {
-      coordinateIndex.set(coordinateKey([0, targetCoordinate[0]!]), turnIndex);
+      const flatAliasKey = coordinateKey([0, targetCoordinate[0]!]);
+      if (!coordinateIndex.has(flatAliasKey)) {
+        coordinateIndex.set(flatAliasKey, turnIndex);
+      }
     }
   };
 
