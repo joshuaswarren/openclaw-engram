@@ -7375,7 +7375,26 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               process.exitCode = 2;
               return;
             }
-            await replayTrace(tracePath, { speed });
+            // Codex P2: mirror the live TUI's SIGINT handling so
+            // Ctrl-C aborts replay cleanly. Without this, Node's
+            // default SIGINT terminates the process before
+            // `replayTrace`'s `finally` block restores the cursor,
+            // leaving the terminal in a hidden-cursor state.
+            const replayAbort = new AbortController();
+            const replaySigintHandler = () => replayAbort.abort();
+            process.on("SIGINT", replaySigintHandler);
+            try {
+              await replayTrace(tracePath, {
+                speed,
+                signal: replayAbort.signal,
+              });
+            } finally {
+              try {
+                process.removeListener("SIGINT", replaySigintHandler);
+              } catch {
+                // ignore
+              }
+            }
             return;
           }
           // Live TUI mode, optionally with trace recording.

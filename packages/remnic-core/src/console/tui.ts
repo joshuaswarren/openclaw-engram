@@ -123,18 +123,6 @@ export function runConsoleTui(
         renderError = describeError(err);
       }
       if (stopped) return;
-      // Trace recording happens before render so an extremely slow
-      // disk write doesn't stretch the visual refresh interval. The
-      // recorder owns its own error capture; we deliberately do not
-      // surface trace failures inside the rendered frame because
-      // they're operator-side concerns, not engine-state.
-      if (snapshot && options.traceRecorder) {
-        try {
-          await options.traceRecorder.append(snapshot);
-        } catch {
-          // recorder.append is itself try/catched, but defense-in-depth.
-        }
-      }
       let frame: string;
       try {
         frame = renderFrame({ snapshot, renderError, now });
@@ -147,6 +135,18 @@ export function runConsoleTui(
       }
       safeWrite(output, ANSI_CLEAR_HOME);
       safeWrite(output, frame);
+      // Codex P2: do NOT await trace writes inside the render tick.
+      // Awaiting holds `inFlight = true` for the duration of the disk
+      // write; on a slow / network-backed filesystem that stretches
+      // the visual refresh interval and skips ticks. The recorder
+      // already serializes appends internally via its writeChain, so
+      // fire-and-forget preserves frame order while keeping the paint
+      // path responsive. Errors are captured via `getLastError()`.
+      if (snapshot && options.traceRecorder) {
+        void options.traceRecorder.append(snapshot).catch(() => {
+          // already recorded in lastError; defense-in-depth.
+        });
+      }
     } finally {
       inFlight = false;
     }
