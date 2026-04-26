@@ -58,3 +58,51 @@ export {
   type SecureStoreMetadataKdfArgon2id,
   type SecureStoreMetadataKdfScrypt,
 } from "./metadata.js";
+
+// Issue #690 PR 2/4 — header (metadata + verifier) and CLI surface.
+export {
+  HEADER_FILENAME,
+  HEADER_FORMAT,
+  HEADER_FORMAT_VERSION,
+  SECURE_STORE_DIR_NAME,
+  buildHeader,
+  buildHeaderFromPassphrase,
+  deriveKeyFromHeader,
+  headerPath,
+  parseHeader,
+  readHeader,
+  secureStoreDir,
+  serializeHeader,
+  validateHeader,
+  verifyKey,
+  writeHeader,
+  type SecureStoreHeader,
+} from "./header.js";
+
+export * as keyring from "./keyring.js";
+
+export {
+  MIN_PASSPHRASE_LENGTH,
+  runSecureStoreInit,
+  runSecureStoreLock,
+  runSecureStoreStatus,
+  runSecureStoreUnlock,
+  type PassphraseReader,
+  type SecureStoreInitOptions,
+  type SecureStoreInitReport,
+  type SecureStoreLockOptions,
+  type SecureStoreLockReport,
+  type SecureStoreStatusOptions,
+  type SecureStoreStatusReport,
+  type SecureStoreUnlockOptions,
+  type SecureStoreUnlockReport,
+} from "./cli-handlers.js";
+
+export {
+  renderInitReport,
+  renderLockReport,
+  renderStatusReport,
+  renderUnlockReport,
+} from "./cli-renderer.js";
+
+export { createPassphraseReader } from "./passphrase-reader.js";
