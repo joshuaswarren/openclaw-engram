@@ -173,8 +173,17 @@ export function parseHeader(json: string): SecureStoreHeader {
   if (typeof obj.verifier !== "string" || obj.verifier.length === 0) {
     throw new Error("header.verifier must be a non-empty hex string");
   }
-  if (!/^[0-9a-f]+$/i.test(obj.verifier)) {
+  if (!/^[0-9a-fA-F]+$/.test(obj.verifier)) {
     throw new Error("header.verifier must be a hex-encoded string");
+  }
+  // Codex P2 on PR #737: odd-length hex strings produce a malformed
+  // Buffer via `Buffer.from(hex, "hex")` — Node silently truncates the
+  // trailing nibble, yielding a buffer that is one byte shorter than
+  // expected. Reject odd-length strings before they reach the cipher.
+  if (obj.verifier.length % 2 !== 0) {
+    throw new Error(
+      "header.verifier hex string must have even length (each byte encodes as two hex digits)",
+    );
   }
   if (typeof obj.createdAt !== "string" || obj.createdAt.length === 0) {
     throw new Error("header.createdAt must be a non-empty string");
@@ -211,8 +220,15 @@ export function validateHeader(header: SecureStoreHeader): void {
   if (typeof header.verifier !== "string" || header.verifier.length === 0) {
     throw new Error("header.verifier must be a non-empty hex string");
   }
-  if (!/^[0-9a-f]+$/i.test(header.verifier)) {
+  if (!/^[0-9a-fA-F]+$/.test(header.verifier)) {
     throw new Error("header.verifier must be a hex-encoded string");
+  }
+  // Enforce even length: odd-length hex is silently truncated by
+  // `Buffer.from(hex, "hex")` which yields a malformed envelope.
+  if (header.verifier.length % 2 !== 0) {
+    throw new Error(
+      "header.verifier hex string must have even length (each byte encodes as two hex digits)",
+    );
   }
   // The nested metadata object is already validated by `parseMetadata`
   // when read from disk; on the build path, `buildHeader` constructs
@@ -248,10 +264,11 @@ export function verifyKey(header: SecureStoreHeader, candidateKey: Buffer): bool
  */
 export function deriveKeyFromHeader(header: SecureStoreHeader, passphrase: string): Buffer {
   const salt = decodeMetadataSalt(header.metadata);
-  const params: ScryptParams | Argon2idParams =
-    header.metadata.kdf.algorithm === "scrypt"
-      ? header.metadata.kdf.params
-      : header.metadata.kdf.params;
+  // Cursor low on PR #737: a previous version branched on the
+  // algorithm and returned `header.metadata.kdf.params` from both
+  // arms — a no-op conditional. Pass the discriminated union member
+  // through directly; `deriveKey` performs the algorithm dispatch.
+  const params: ScryptParams | Argon2idParams = header.metadata.kdf.params;
   return deriveKey(header.metadata.kdf.algorithm, passphrase, salt, params);
 }
 
@@ -341,8 +358,10 @@ export function buildHeaderFromPassphrase(options: {
   if (options.createdAt !== undefined) metadataOpts.createdAt = options.createdAt;
   if (options.note !== undefined) metadataOpts.note = options.note;
   const metadata = buildMetadata(metadataOpts);
-  const params: ScryptParams | Argon2idParams =
-    metadata.kdf.algorithm === "scrypt" ? metadata.kdf.params : metadata.kdf.params;
+  // Cursor low on PR #737: same identical-branches ternary as in
+  // `deriveKeyFromHeader`. The discriminated union already carries
+  // the right shape; `deriveKey` dispatches on `algorithm`.
+  const params: ScryptParams | Argon2idParams = metadata.kdf.params;
   const derivedKey = deriveKey(algorithm, passphrase, salt, params);
   const headerOpts: { metadata: SecureStoreMetadata; derivedKey: Buffer; createdAt?: string } = {
     metadata,

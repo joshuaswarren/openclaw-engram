@@ -493,6 +493,27 @@ test("createPassphraseReader: piped non-TTY input returns the supplied line", as
   assert.equal(result, "supplied-secret");
 });
 
+test("createPassphraseReader: confirm mode preserves both lines on piped non-TTY input", async () => {
+  // Cursor medium on PR #737: a fresh readline per call breaks
+  // confirm-mode because the first interface consumes the entire
+  // prebuffered stream. With the queued line reader, both lines
+  // survive intact even when written together before the first read.
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const errorStream = new PassThrough();
+  output.on("data", () => {});
+  errorStream.on("data", () => {});
+  const reader = createPassphraseReader({ input, output, errorStream });
+  const promise = reader("Enter passphrase: ", { confirm: true });
+  // Both lines arrive in a single contiguous write — the worst case
+  // for the previous bug. Even after `end()` the queue should hand
+  // out both lines in order.
+  input.write("matching-secret\nmatching-secret\n");
+  input.end();
+  const result = await promise;
+  assert.equal(result, "matching-secret");
+});
+
 test("createPassphraseReader: confirm mode mismatches throw a clear error", async () => {
   const input = new PassThrough();
   const output = new PassThrough();

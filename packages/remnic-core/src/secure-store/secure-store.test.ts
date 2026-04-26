@@ -14,6 +14,7 @@
  * silently regress them.
  */
 
+import { PassThrough } from "node:stream";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -28,6 +29,13 @@ import {
   parseEnvelope,
   seal,
 } from "./cipher.js";
+import {
+  HEADER_FORMAT,
+  HEADER_FORMAT_VERSION,
+  buildHeaderFromPassphrase,
+  parseHeader,
+  validateHeader,
+} from "./header.js";
 import {
   DEFAULT_ARGON2ID_PARAMS,
   DEFAULT_SCRYPT_PARAMS,
@@ -48,6 +56,7 @@ import {
   serializeMetadata,
   validateMetadata,
 } from "./metadata.js";
+import { createPassphraseReader } from "./passphrase-reader.js";
 
 /** Cheap scrypt params for tests — still hex-correct but ~milliseconds. */
 const FAST_SCRYPT: ScryptParams = {
@@ -521,4 +530,184 @@ test("metadata rejects keyLength != 32 (codex P2 — match cipher AES-256)", () 
     () => validateMetadata(meta as unknown as Parameters<typeof validateMetadata>[0]),
     /keyLength must be 32/,
   );
+});
+
+// ─── header.ts — Thread 6: even-length hex verifier (#737) ──────────────
+
+test("parseHeader rejects odd-length verifier hex (thread 6 — even-length guard)", () => {
+  // Build a valid header, then manually patch the verifier to odd length.
+  const salt = Buffer.alloc(KDF_SALT_LENGTH, 0x11);
+  const { header } = buildHeaderFromPassphrase({
+    passphrase: "test-pass",
+    salt,
+    algorithm: "scrypt",
+    params: { N: 1 << 10, r: 8, p: 1, keyLength: 32, maxmem: 64 * 1024 * 1024 },
+  });
+  // Make the verifier odd-length by trimming one hex char.
+  const badJson = JSON.stringify({
+    format: HEADER_FORMAT,
+    formatVersion: HEADER_FORMAT_VERSION,
+    metadata: JSON.parse(
+      JSON.stringify(header.metadata),
+    ),
+    verifier: header.verifier.slice(0, -1), // odd length
+    createdAt: header.createdAt,
+  });
+  assert.throws(
+    () => parseHeader(badJson),
+    /even length|even/i,
+  );
+});
+
+test("validateHeader rejects odd-length verifier hex (thread 6 — even-length guard)", () => {
+  const salt = Buffer.alloc(KDF_SALT_LENGTH, 0x22);
+  const { header } = buildHeaderFromPassphrase({
+    passphrase: "test-pass-2",
+    salt,
+    algorithm: "scrypt",
+    params: { N: 1 << 10, r: 8, p: 1, keyLength: 32, maxmem: 64 * 1024 * 1024 },
+  });
+  const bad = { ...header, verifier: header.verifier.slice(0, -1) }; // odd length
+  assert.throws(
+    () => validateHeader(bad),
+    /even length|even/i,
+  );
+});
+
+test("parseHeader rejects non-hex characters in verifier (thread 6)", () => {
+  const salt = Buffer.alloc(KDF_SALT_LENGTH, 0x33);
+  const { header } = buildHeaderFromPassphrase({
+    passphrase: "test-pass-3",
+    salt,
+    algorithm: "scrypt",
+    params: { N: 1 << 10, r: 8, p: 1, keyLength: 32, maxmem: 64 * 1024 * 1024 },
+  });
+  const badJson = JSON.stringify({
+    format: HEADER_FORMAT,
+    formatVersion: HEADER_FORMAT_VERSION,
+    metadata: JSON.parse(JSON.stringify(header.metadata)),
+    verifier: "zz" + header.verifier.slice(2), // non-hex prefix
+    createdAt: header.createdAt,
+  });
+  assert.throws(
+    () => parseHeader(badJson),
+    /hex/i,
+  );
+});
+
+// ─── passphrase-reader.ts — Thread 5: prompts to stderr (#737) ──────────
+
+test("non-TTY prompt is written to errorStream, not output (thread 5)", async () => {
+  // Build an in-memory PassThrough pair to act as piped stdin.
+  const inputStream = new PassThrough();
+  // Write the passphrase line before creating the reader so the stream
+  // is already buffered and the readline interface drains it immediately.
+  inputStream.end("test-passphrase\n");
+
+  const stdoutChunks: string[] = [];
+  const stderrChunks: string[] = [];
+
+  const fakeOutput = new PassThrough();
+  fakeOutput.on("data", (d: Buffer) => stdoutChunks.push(d.toString()));
+
+  const fakeError = new PassThrough();
+  fakeError.on("data", (d: Buffer) => stderrChunks.push(d.toString()));
+
+  const reader = createPassphraseReader({
+    input: inputStream,
+    output: fakeOutput,
+    errorStream: fakeError,
+  });
+
+  const passphrase = await reader("Enter passphrase: ");
+
+  assert.equal(passphrase, "test-passphrase");
+  // The prompt must appear on stderr, not stdout.
+  const stderr = stderrChunks.join("");
+  const stdout = stdoutChunks.join("");
+  assert.ok(
+    stderr.includes("Enter passphrase: "),
+    `expected prompt on stderr but got: ${JSON.stringify(stderr)}`,
+  );
+  assert.ok(
+    !stdout.includes("Enter passphrase: "),
+    `prompt must not appear on stdout but got: ${JSON.stringify(stdout)}`,
+  );
+});
+
+// ─── passphrase-reader.ts — Thread 7: surrogate-safe backspace (#737) ───
+
+test("backspace removes full non-BMP (emoji) code point atomically (thread 7)", async () => {
+  // Simulate TTY raw-mode input with a PassThrough that claims isTTY.
+  const inputStream = new PassThrough() as PassThrough & {
+    isTTY: boolean;
+    isRaw: boolean;
+    setRawMode(raw: boolean): void;
+  };
+  inputStream.isTTY = true;
+  inputStream.isRaw = false;
+  inputStream.setRawMode = (_: boolean): void => {};
+
+  const outputChunks: Buffer[] = [];
+  const fakeOutput = new PassThrough();
+  fakeOutput.on("data", (d: Buffer) => outputChunks.push(d));
+
+  const reader = createPassphraseReader({
+    input: inputStream,
+    output: fakeOutput,
+  });
+
+  const readPromise = reader("Passphrase: ");
+
+  // Type: 'a', then emoji U+1F511 (KEY, encodes as surrogate pair in
+  // UTF-16: 🔑), then backspace (DEL = 0x7f), then Enter.
+  // After the backspace the emoji must be fully removed, leaving just 'a'.
+  // We encode as UTF-8 bytes the way a terminal would send them.
+  const aBytes = Buffer.from("a", "utf8");
+  const emojiBytes = Buffer.from("\u{1F511}", "utf8"); // 4 bytes in UTF-8
+  const delByte = Buffer.from([0x7f]);
+  const enterByte = Buffer.from([0x0d]);
+
+  inputStream.push(aBytes);
+  inputStream.push(emojiBytes);
+  inputStream.push(delByte);
+  inputStream.push(enterByte);
+
+  const result = await readPromise;
+
+  assert.equal(
+    result,
+    "a",
+    `expected 'a' after backspace removed the emoji, but got: ${JSON.stringify(result)}`,
+  );
+});
+
+test("backspace on BMP character removes exactly one character (thread 7 — regression)", async () => {
+  const inputStream = new PassThrough() as PassThrough & {
+    isTTY: boolean;
+    isRaw: boolean;
+    setRawMode(raw: boolean): void;
+  };
+  inputStream.isTTY = true;
+  inputStream.isRaw = false;
+  inputStream.setRawMode = (_: boolean): void => {};
+
+  const fakeOutput = new PassThrough();
+
+  const reader = createPassphraseReader({
+    input: inputStream,
+    output: fakeOutput,
+  });
+
+  const readPromise = reader("Passphrase: ");
+
+  // Type 'abc', backspace twice, then Enter — should yield 'a'.
+  inputStream.push(Buffer.from("abc", "utf8"));
+  inputStream.push(Buffer.from([0x7f]));
+  inputStream.push(Buffer.from([0x7f]));
+  inputStream.push(Buffer.from([0x0d]));
+
+  const result = await readPromise;
+
+  assert.equal(result, "a");
 });
