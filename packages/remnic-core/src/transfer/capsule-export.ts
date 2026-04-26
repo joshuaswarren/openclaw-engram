@@ -130,6 +130,12 @@ export async function exportCapsule(
   const outDirAbs = path.resolve(opts.outDir ?? path.join(rootAbs, ".capsules"));
   await mkdir(outDirAbs, { recursive: true });
 
+  // If the output directory lives inside the export root, scan results would
+  // re-import previous capsule archives on subsequent runs. Compute the
+  // posix-relative path of the outDir under rootAbs (or `null` when it sits
+  // outside) so {@link shouldInclude} can skip the entire subtree.
+  const outDirRelPosix = computeOutDirRel(rootAbs, outDirAbs);
+
   const filesAbs = await listFilesRecursive(rootAbs);
 
   const records: ExportMemoryRecordV1[] = [];
@@ -137,7 +143,7 @@ export async function exportCapsule(
 
   for (const abs of filesAbs) {
     const relPosix = toPosixRelPath(abs, rootAbs);
-    if (!shouldInclude(relPosix, includeKinds, peerFilter)) continue;
+    if (!shouldInclude(relPosix, includeKinds, peerFilter, outDirRelPosix)) continue;
 
     if (sinceMs !== null) {
       const st = await stat(abs);
@@ -263,6 +269,23 @@ function normalizePeerIds(
   return set;
 }
 
+/**
+ * Return the posix-relative path of {@link outDirAbs} under {@link rootAbs},
+ * or `null` if the output directory sits outside the export root. Used to
+ * exclude the output directory's subtree from the input scan so re-running
+ * the export does not package prior archives back into the new bundle.
+ *
+ * Both inputs are expected to be absolute paths already (post-`path.resolve`).
+ */
+function computeOutDirRel(rootAbs: string, outDirAbs: string): string | null {
+  const rel = path.relative(rootAbs, outDirAbs);
+  // outDir == root: degenerate, skip the whole tree by treating as ".".
+  if (rel === "") return ".";
+  // outDir outside root: nothing to exclude.
+  if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
+  return rel.split(path.sep).join("/");
+}
+
 async function assertIsDirectory(absPath: string): Promise<void> {
   // Mirror gotcha #24: existsSync returns true for files. The export root
   // MUST be a directory or the walk silently succeeds with zero entries.
@@ -278,9 +301,19 @@ function shouldInclude(
   relPosix: string,
   includeKinds: ReadonlySet<string> | null,
   peerFilter: ReadonlySet<string> | null,
+  outDirRelPosix: string | null,
 ): boolean {
   const parts = relPosix.split("/");
   if (parts.some((p) => DEFAULT_EXCLUDE_DIRS.has(p))) return false;
+
+  // Exclude the output directory subtree. Without this, re-running against
+  // the same root packages prior `.capsule.json.gz` archives and sidecar
+  // manifests as records, causing bundle bloat and leaking stale exports.
+  if (outDirRelPosix !== null) {
+    if (outDirRelPosix === ".") return false; // degenerate: outDir == root
+    if (relPosix === outDirRelPosix) return false;
+    if (relPosix.startsWith(`${outDirRelPosix}/`)) return false;
+  }
 
   const top = parts[0];
 

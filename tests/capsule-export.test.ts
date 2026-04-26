@@ -298,6 +298,72 @@ test("capsule overrides flow into the manifest", async () => {
   assert.equal(result.manifest.capsule.includes.taxonomy, true);
 });
 
+test("default outDir under root is excluded from the input scan (idempotent re-export)", async () => {
+  const root = await makeFixture([
+    { rel: "facts/a.md", content: "a\n" },
+  ]);
+
+  // First export — outDir defaults to <root>/.capsules and writes archive +
+  // sidecar there. Without the outDir filter, the SECOND run would re-
+  // package those artifacts as records under `.capsules/...`.
+  const first = await exportCapsule({ name: "round-1", root });
+  assert.equal(first.manifest.files.length, 1);
+  assert.equal(first.manifest.files[0].path, "facts/a.md");
+
+  const second = await exportCapsule({ name: "round-2", root });
+  // Still only the original fixture file. No `.capsules/` entries leak in.
+  assert.deepEqual(
+    second.manifest.files.map((f) => f.path),
+    ["facts/a.md"],
+  );
+  assert.ok(
+    !second.manifest.files.some((f) => f.path.startsWith(".capsules/")),
+    "default outDir contents must never appear in the manifest",
+  );
+});
+
+test("explicit outDir under root is also excluded from the input scan", async () => {
+  const root = await makeFixture([
+    { rel: "facts/a.md", content: "a\n" },
+  ]);
+  const customOut = path.join(root, "exports", "nested");
+
+  await exportCapsule({ name: "first", root, outDir: customOut });
+  const second = await exportCapsule({
+    name: "second",
+    root,
+    outDir: customOut,
+  });
+
+  assert.deepEqual(
+    second.manifest.files.map((f) => f.path),
+    ["facts/a.md"],
+  );
+  assert.ok(
+    !second.manifest.files.some((f) => f.path.startsWith("exports/")),
+    "files under the custom outDir must be excluded",
+  );
+});
+
+test("outDir outside root does not affect inclusion", async () => {
+  const root = await makeFixture([
+    { rel: "facts/a.md", content: "a\n" },
+    { rel: "exports/note.md", content: "n\n" },
+  ]);
+  const outsideOut = await mkdtemp(path.join(tmpdir(), "capsule-outside-"));
+
+  const result = await exportCapsule({
+    name: "outside",
+    root,
+    outDir: outsideOut,
+  });
+  // exports/note.md is NOT the outDir; it must still be included.
+  assert.deepEqual(
+    result.manifest.files.map((f) => f.path).sort(),
+    ["exports/note.md", "facts/a.md"],
+  );
+});
+
 test("default-excluded directories (.git, node_modules) are skipped", async () => {
   const root = await makeFixture([
     { rel: "facts/a.md", content: "a\n" },
