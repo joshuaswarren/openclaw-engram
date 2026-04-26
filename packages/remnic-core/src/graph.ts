@@ -692,13 +692,25 @@ export function applyPageRankRefinement(
   // Pre-compute confidence-weighted out-edge totals for normalization.
   // Done once per refinement, not per iteration, since adjacency is
   // immutable inside the loop.
+  //
+  // Codex P1 (#735): the denominator MUST be computed over the same
+  // eligible-neighbor set the iteration redistributes into — i.e.
+  // edges whose neighbor is in `scores`. Counting edges-to-seeds (or
+  // edges-to-unseen-nodes) in the denominator while dropping their
+  // flow during iteration leaks `safeDamping × score` every pass and
+  // collapses leaf candidates' scores instead of just re-ranking them.
+  const eligible = (edge: GraphEdge, fromNode: string): boolean => {
+    if (readEdgeConfidence(edge) < floor) return false;
+    const neighbor = edge.to === fromNode ? edge.from : edge.to;
+    return scores.has(neighbor);
+  };
   const outboundTotal = new Map<string, number>();
   for (const [node, edges] of adj.entries()) {
+    if (!scores.has(node)) continue; // only candidate nodes redistribute
     let sum = 0;
     for (const edge of edges) {
-      const conf = readEdgeConfidence(edge);
-      if (conf < floor) continue;
-      sum += conf * edge.weight;
+      if (!eligible(edge, node)) continue;
+      sum += readEdgeConfidence(edge) * edge.weight;
     }
     if (sum > 0) outboundTotal.set(node, sum);
   }
@@ -712,18 +724,20 @@ export function applyPageRankRefinement(
     }
     for (const [node, score] of scores) {
       const outEdges = adj.get(node);
-      if (!outEdges || outEdges.length === 0) continue;
       const total = outboundTotal.get(node);
-      if (!total || total <= 0) continue;
+      // Dangling-node fallback: when a candidate has zero eligible
+      // outflow (no in-scores neighbors above the floor), the
+      // `safeDamping × score` portion would otherwise evaporate. Keep
+      // it on `node` so total mass is conserved and the score reflects
+      // the candidate's standing rather than its in-degree topology.
+      if (!outEdges || outEdges.length === 0 || !total || total <= 0) {
+        next.set(node, (next.get(node) ?? 0) + safeDamping * score);
+        continue;
+      }
       for (const edge of outEdges) {
+        if (!eligible(edge, node)) continue;
         const conf = readEdgeConfidence(edge);
-        if (conf < floor) continue;
         const neighbor = edge.to === node ? edge.from : edge.to;
-        // Only redistribute into nodes the BFS already discovered. PageRank
-        // refinement is a re-ranker, not a discovery mechanism — admitting
-        // unseen nodes here would re-introduce sub-floor or unreachable
-        // candidates and break the BFS invariants downstream.
-        if (!scores.has(neighbor)) continue;
         const flow = safeDamping * score * ((conf * edge.weight) / total);
         next.set(neighbor, (next.get(neighbor) ?? 0) + flow);
       }

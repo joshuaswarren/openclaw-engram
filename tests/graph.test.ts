@@ -510,6 +510,77 @@ describe("GraphIndex.spreadingActivation — confidence weighting (#681 PR 3/3)"
     assert.equal(clampPageRankIterations(undefined), 0);
     assert.equal(clampPageRankIterations(7.6), 7);
   });
+
+  it("PageRank does not collapse leaf candidates (codex P1 #735)", async () => {
+    // Codex P1 review thread regression: a leaf candidate B whose only
+    // out-edge points back to a seed (excluded from `scores`) must not
+    // have its score driven toward zero by repeated iterations. The
+    // previous denominator counted that edge but dropped its flow,
+    // leaking `safeDamping × score` per pass. With the fix, the
+    // dangling-node fallback keeps the leaf's mass on itself.
+    const dir = await mkdtemp(path.join(tmpdir(), "engram-sa-pr-leaf-"));
+    try {
+      const cfgWithPR: GraphConfig = {
+        ...baseCfg,
+        graphTraversalPageRankIterations: 16,
+      } as GraphConfig;
+      const gi = new GraphIndex(dir, cfgWithPR);
+      // Seed S → B at confidence 0.9 (time edges synthesize a reverse
+      // B → S, so B's only out-neighbor is the seed S, which is
+      // excluded from `scores`).
+      await appendEdge(dir, {
+        from: "S.md",
+        to: "B.md",
+        type: "time",
+        weight: 1.0,
+        label: "t",
+        ts: new Date().toISOString(),
+        confidence: 0.9,
+      });
+      const results = await gi.spreadingActivation(["S.md"], 2);
+      const b = results.find((r) => r.path === "B.md");
+      assert.ok(b, "B should be in results after refinement");
+      // Pre-fix: leaking flow would shrink B's score by damping^16.
+      // Post-fix: B's score should still reflect the original BFS
+      // contribution (1.0 * 0.9 * 0.7 = 0.63) within a small tolerance
+      // — refinement is a re-ranker, not a leak.
+      assert.ok(
+        (b?.score ?? 0) >= 0.6,
+        `B's score must not collapse from refinement leakage; got ${b?.score}`,
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("PageRank refinement is mass-bounded (no negative or NaN scores)", async () => {
+    // Defense in depth: regardless of topology / iteration count, the
+    // refinement must produce finite, non-negative scores. Catches any
+    // future arithmetic regression where damping or normalization is
+    // miscomputed.
+    const dir = await mkdtemp(path.join(tmpdir(), "engram-sa-pr-finite-"));
+    try {
+      const cfgWithPR: GraphConfig = {
+        ...baseCfg,
+        graphTraversalPageRankIterations: 32,
+      } as GraphConfig;
+      const gi = new GraphIndex(dir, cfgWithPR);
+      const ts = new Date().toISOString();
+      await appendEdge(dir, { from: "A.md", to: "B.md", type: "entity", weight: 1.0, label: "e", ts, confidence: 0.7 });
+      await appendEdge(dir, { from: "A.md", to: "C.md", type: "entity", weight: 1.0, label: "e", ts, confidence: 0.5 });
+      await appendEdge(dir, { from: "B.md", to: "C.md", type: "entity", weight: 1.0, label: "e", ts, confidence: 0.9 });
+      await appendEdge(dir, { from: "B.md", to: "D.md", type: "entity", weight: 1.0, label: "e", ts, confidence: 0.6 });
+      await appendEdge(dir, { from: "C.md", to: "D.md", type: "entity", weight: 1.0, label: "e", ts, confidence: 0.8 });
+      const results = await gi.spreadingActivation(["A.md"], 4);
+      assert.ok(results.length > 0);
+      for (const r of results) {
+        assert.ok(Number.isFinite(r.score), `score must be finite: ${r.path} → ${r.score}`);
+        assert.ok(r.score >= 0, `score must be non-negative: ${r.path} → ${r.score}`);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("Integration: multiGraphMemoryEnabled=false baseline", () => {

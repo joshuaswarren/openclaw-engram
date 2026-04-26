@@ -350,20 +350,38 @@ function cloneResult(result: RecallXrayResult): RecallXrayResult {
     ? result.graphPath.filter((x): x is string => typeof x === "string")
     : undefined;
   // Issue #681 PR 3/3 — per-edge confidences alongside graph path.
-  // Each entry is clamped into [0, 1]; non-finite or missing values are
-  // dropped so a malformed snapshot can't poison the renderer. The
-  // alignment invariant (length === graphPath.length - 1) is enforced
-  // here so downstream surfaces can rely on it.
+  // Each entry is clamped into [0, 1]; the array is rejected wholesale
+  // when alignment cannot be verified so downstream surfaces can rely
+  // on `graphEdgeConfidences[i]` describing the edge between
+  // `graphPath[i]` and `graphPath[i+1]`.
+  //
+  // Cursor review (#735): the input array length MUST match
+  // `graphPath.length - 1` *before* any per-element filtering. The
+  // earlier implementation skipped non-finite entries via `continue`
+  // and then length-checked the cleaned array — that would silently
+  // shift surviving values to earlier positions. Example: input
+  // `[0.5, NaN, 0.7]` for a 3-edge path would collapse to
+  // `[0.5, 0.7]`, length-check would pass against `expected = 2`, and
+  // the renderer would mis-attribute `0.7` to edge B→C when it really
+  // came from edge C→D. Reject on either size mismatch or any
+  // non-finite entry so misalignment is impossible.
   let graphEdgeConfidences: number[] | undefined;
   if (Array.isArray(result.graphEdgeConfidences) && graphPath && graphPath.length > 1) {
     const expected = graphPath.length - 1;
-    const cleaned: number[] = [];
-    for (const raw of result.graphEdgeConfidences) {
-      if (typeof raw !== "number" || !Number.isFinite(raw)) continue;
-      cleaned.push(Math.min(1, Math.max(0, raw)));
-    }
-    if (cleaned.length === expected) {
-      graphEdgeConfidences = cleaned;
+    const raw = result.graphEdgeConfidences;
+    if (raw.length === expected) {
+      const cleaned: number[] = [];
+      let allFinite = true;
+      for (const value of raw) {
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+          allFinite = false;
+          break;
+        }
+        cleaned.push(Math.min(1, Math.max(0, value)));
+      }
+      if (allFinite) {
+        graphEdgeConfidences = cleaned;
+      }
     }
   }
   const auditEntryId = nonEmptyString(result.auditEntryId);
