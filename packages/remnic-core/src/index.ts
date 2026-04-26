@@ -907,3 +907,28 @@ export {
   RECALL_DISCLOSURE_LEVELS,
   isRecallDisclosure,
 } from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Peer registry (issue #679 PR 1/5)
+// ---------------------------------------------------------------------------
+
+export type {
+  Peer,
+  PeerKind,
+  PeerProfile,
+  PeerProfileFieldProvenance,
+  PeerInteractionLogEntry,
+} from "./peers/index.js";
+export {
+  PEER_ID_PATTERN,
+  PEER_ID_MAX_LENGTH,
+  PEERS_DIR_NAME,
+  assertValidPeerId,
+  readPeer,
+  writePeer,
+  listPeers,
+  appendInteractionLog,
+  readInteractionLogRaw,
+  readPeerProfile,
+  writePeerProfile,
+} from "./peers/index.js";
