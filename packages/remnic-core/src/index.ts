@@ -558,6 +558,36 @@ export {
 export { coerceInstallExtension } from "./connectors/coerce.js";
 
 // ---------------------------------------------------------------------------
+// Live Connectors framework (#683 PR 1/N)
+// ---------------------------------------------------------------------------
+//
+// Pure framework — interface, registry, and cursor state store. Concrete
+// connectors (Drive, Notion, Gmail, GitHub) ship in PRs 2–5; the maintenance
+// scheduler hookup and CLI surface land in later PRs.
+//
+// NOTE: lives under `connectors/live/` to avoid colliding with the existing
+// Codex marketplace integration above. Do not flatten.
+
+export {
+  CONNECTOR_ID_PATTERN,
+  isValidConnectorId,
+  LiveConnectorRegistry,
+  LiveConnectorRegistryError,
+  listConnectorStates,
+  readConnectorState,
+  writeConnectorState,
+  type ConnectorConfig,
+  type ConnectorCursor,
+  type ConnectorDocument,
+  type ConnectorDocumentSource,
+  type ConnectorState,
+  type ConnectorSyncStatus,
+  type LiveConnector,
+  type SyncIncrementalArgs,
+  type SyncIncrementalResult,
+} from "./connectors/live/index.js";
+
+// ---------------------------------------------------------------------------
 // Spaces + Collaboration
 // ---------------------------------------------------------------------------
 
