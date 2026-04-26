@@ -1,0 +1,335 @@
+/**
+ * Operator console TUI for issue #688 (PR 2/3).
+ *
+ * Renders a five-panel one-screen layout that periodically polls
+ * `gatherConsoleState` and repaints the terminal. Deliberately uses
+ * the minimal-deps "clear + repaint" approach (no curses / blessed /
+ * ink) — we just emit ANSI control sequences directly to the output
+ * stream. This keeps the surface portable and dependency-free.
+ *
+ * PR 1/3 (#721) shipped `gatherConsoleState` plus the CLI's
+ * `--state-only` flag (one-shot JSON snapshot). PR 2/3 wires the
+ * interactive surface. Trace replay (`--trace <session-id>`) is
+ * deferred to PR 3/3.
+ *
+ * Design contract:
+ *   - Read-only: never mutates orchestrator state.
+ *   - Resilient: a thrown error in one refresh cycle must NOT crash
+ *     the loop. Errors are surfaced inside the rendered frame.
+ *   - Cleanly stoppable: `runConsoleTui` returns a `stop()` that
+ *     clears the interval, restores the cursor, and resolves the
+ *     pending exit promise. SIGINT triggers the same cleanup.
+ *   - No external deps: only ANSI control sequences.
+ */
+
+import type { Writable } from "node:stream";
+
+import {
+  gatherConsoleState,
+  type ConsoleStateOrchestratorLike,
+  type ConsoleStateSnapshot,
+} from "./state.js";
+
+/** ANSI: clear screen + move cursor to home (top-left). */
+const ANSI_CLEAR_HOME = "\x1b[2J\x1b[H";
+/** ANSI: hide / show the cursor (we hide during the loop, restore on exit). */
+const ANSI_HIDE_CURSOR = "\x1b[?25l";
+const ANSI_SHOW_CURSOR = "\x1b[?25h";
+
+/** Total inner width of the rendered frame (between the box borders). */
+const FRAME_INNER_WIDTH = 70;
+
+/** Default refresh interval in milliseconds. Chosen to match the spec. */
+const DEFAULT_REFRESH_INTERVAL_MS = 2000;
+
+export interface RunConsoleTuiOptions {
+  /** Polling interval in milliseconds. Defaults to 2000ms. */
+  refreshIntervalMs?: number;
+  /** Output stream. Defaults to `process.stdout`. */
+  output?: Writable;
+  /**
+   * Optional clock injection — primarily for tests so the rendered
+   * timestamp is deterministic. Defaults to `Date.now`.
+   */
+  now?: () => number;
+  /**
+   * If true, install a SIGINT handler that calls `stop()` and resolves
+   * the returned promise. Defaults to true. Tests typically pass false.
+   */
+  installSigintHandler?: boolean;
+}
+
+export interface RunConsoleTuiHandle {
+  /** Stop the refresh loop, restore the cursor, and resolve `done`. */
+  stop: () => void;
+  /** Resolves once `stop()` has been invoked and cleanup ran. */
+  done: Promise<void>;
+}
+
+/**
+ * Start the operator console TUI. Returns immediately with a handle
+ * exposing `stop()` and a `done` promise that resolves once the loop
+ * has been torn down. The caller can `await handle.done` to block
+ * until the user (or a SIGINT) exits.
+ */
+export function runConsoleTui(
+  orchestrator: ConsoleStateOrchestratorLike,
+  options: RunConsoleTuiOptions = {},
+): RunConsoleTuiHandle {
+  const refreshIntervalMs = Math.max(
+    50,
+    options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS,
+  );
+  const output: Writable = options.output ?? process.stdout;
+  const now = options.now ?? (() => Date.now());
+  const installSigintHandler = options.installSigintHandler ?? true;
+
+  let stopped = false;
+  let inFlight = false;
+  let resolveDone!: () => void;
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+
+  // Hide the cursor while the loop runs so the repaint doesn't flicker.
+  safeWrite(output, ANSI_HIDE_CURSOR);
+
+  const tick = async () => {
+    if (stopped || inFlight) return;
+    inFlight = true;
+    let snapshot: ConsoleStateSnapshot | null = null;
+    let renderError: string | null = null;
+    try {
+      snapshot = await gatherConsoleState(orchestrator);
+    } catch (err) {
+      renderError = describeError(err);
+    }
+    if (stopped) {
+      inFlight = false;
+      return;
+    }
+    const frame = renderFrame({ snapshot, renderError, now });
+    safeWrite(output, ANSI_CLEAR_HOME);
+    safeWrite(output, frame);
+    inFlight = false;
+  };
+
+  // Kick off an immediate first paint, then schedule the interval.
+  void tick();
+  const handle = setInterval(() => {
+    void tick();
+  }, refreshIntervalMs);
+  // Don't keep the event loop alive solely on the interval. Hosts that
+  // want the process to stay up should `await handle.done`.
+  if (typeof handle.unref === "function") handle.unref();
+
+  const sigintHandler = () => {
+    stop();
+  };
+  if (installSigintHandler) {
+    process.on("SIGINT", sigintHandler);
+  }
+
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(handle);
+    if (installSigintHandler) {
+      try {
+        process.removeListener("SIGINT", sigintHandler);
+      } catch {
+        // ignore
+      }
+    }
+    safeWrite(output, ANSI_SHOW_CURSOR);
+    resolveDone();
+  };
+
+  return { stop, done };
+}
+
+interface RenderFrameInput {
+  snapshot: ConsoleStateSnapshot | null;
+  renderError: string | null;
+  now: () => number;
+}
+
+/**
+ * Build the full rendered frame as a single string. Pure — exposed
+ * for testing.
+ */
+export function renderFrame(input: RenderFrameInput): string {
+  const ts = new Date(input.now()).toISOString();
+  const lines: string[] = [];
+  lines.push(renderHeader(ts));
+  for (const panel of renderPanels(input)) {
+    lines.push(panel);
+  }
+  lines.push(renderFooter());
+  return lines.join("\n") + "\n";
+}
+
+function renderHeader(ts: string): string {
+  // ╔═ remnic console ════════════════════════════════ <ts> ═╗
+  const title = " remnic console ";
+  const trailing = ` ${ts} `;
+  // 2 corner chars + title + ts + filler. Filler at minimum 1 char.
+  const fillerLen = Math.max(
+    1,
+    FRAME_INNER_WIDTH - title.length - trailing.length,
+  );
+  const filler = "═".repeat(fillerLen);
+  return `╔${title}${filler}${trailing}╗`;
+}
+
+function renderFooter(): string {
+  return `╚${"═".repeat(FRAME_INNER_WIDTH)}╝`;
+}
+
+function renderPanels(input: RenderFrameInput): string[] {
+  const lines: string[] = [];
+  const snap = input.snapshot;
+
+  if (input.renderError !== null) {
+    lines.push(panelLine("Error", `refresh failed: ${input.renderError}`));
+    // Even on error we still print the section headers so the layout
+    // stays stable for the operator and tests can locate them.
+    lines.push(panelLine("Buffer", "(unavailable)"));
+    lines.push(panelLine("Extraction", "(unavailable)"));
+    lines.push(panelLine("Dedup", "(unavailable)"));
+    lines.push(panelLine("Maintenance", "(unavailable)"));
+    lines.push(panelLine("QMD", "(unavailable)"));
+    return lines;
+  }
+
+  // Buffer panel.
+  if (snap) {
+    lines.push(
+      panelLine(
+        "Buffer",
+        `turns=${snap.bufferState.turnsCount} bytes=${snap.bufferState.byteCount}`,
+      ),
+    );
+
+    // Extraction panel.
+    const verdicts = snap.extractionQueue.recentVerdicts;
+    const accepts = verdicts.filter((v) => v.kind === "accept").length;
+    const rejects = verdicts.filter((v) => v.kind === "reject").length;
+    lines.push(
+      panelLine(
+        "Extraction",
+        `queue=${snap.extractionQueue.depth}  recent verdicts: accept(${accepts})/reject(${rejects})`,
+      ),
+    );
+
+    // Dedup panel.
+    const dedupSummary = formatDedupSummary(snap.dedupRecent, input.now);
+    lines.push(panelLine("Dedup", dedupSummary));
+
+    // Maintenance panel.
+    const maintSummary = formatMaintenanceTail(snap.maintenanceLedgerTail);
+    lines.push(panelLine("Maintenance", maintSummary));
+
+    // QMD panel.
+    lines.push(panelLine("QMD", formatQmdSummary(snap)));
+  }
+
+  // Surface aggregator-level read errors (e.g. ledger I/O failures)
+  // without crashing the loop. These are not fatal — the snapshot is
+  // still partially usable.
+  if (snap && snap.errors.length > 0) {
+    const head = snap.errors[0];
+    lines.push(panelLine("Errors", head ?? ""));
+  }
+
+  return lines;
+}
+
+function formatDedupSummary(
+  decisions: ConsoleStateSnapshot["dedupRecent"],
+  now: () => number,
+): string {
+  if (decisions.length === 0) return "no recent decisions";
+  const last = decisions[decisions.length - 1];
+  if (!last) return "no recent decisions";
+  const ageMs = ageMsFromIso(last.ts, now);
+  const ageStr = ageMs === null ? "T-?" : `T-${Math.round(ageMs / 1000)}s`;
+  const fp = last.fingerprint ? `hash=${last.fingerprint}` : "hash=?";
+  return `recent: ${fp} decision=${last.decision} (${ageStr})`;
+}
+
+function formatMaintenanceTail(
+  events: ConsoleStateSnapshot["maintenanceLedgerTail"],
+): string {
+  if (events.length === 0) return "no events";
+  const last = events[events.length - 1];
+  if (!last) return "no events";
+  // Show count + most-recent event line.
+  return `n=${events.length}  last: ${last.category} ${truncate(last.summary, 40)}`;
+}
+
+function formatQmdSummary(snap: ConsoleStateSnapshot): string {
+  const probe = snap.qmdProbe.available ? "ok" : "down";
+  const uptimeH = snap.daemon.uptimeMs / 3_600_000;
+  const uptimeStr = uptimeH < 1
+    ? `${Math.round(snap.daemon.uptimeMs / 1000)}s`
+    : `${uptimeH.toFixed(1)}h`;
+  const mode = snap.qmdProbe.daemonMode ? "daemon" : "cli";
+  return `probe=${probe}  mode=${mode}  uptime=${uptimeStr}`;
+}
+
+function panelLine(label: string, value: string): string {
+  // ║ <label padded to 13> <value padded to inner-width-15> ║
+  const labelCol = padRight(label, 13);
+  const remaining = FRAME_INNER_WIDTH - 1 - labelCol.length - 1;
+  // -1 for leading space, -1 for trailing space. We deliberately keep
+  // the layout simple — overflow is truncated rather than wrapped.
+  const valueCol = padRight(truncate(value, remaining), remaining);
+  return `║ ${labelCol}${valueCol}║`;
+}
+
+function padRight(s: string, width: number): string {
+  if (s.length >= width) return s;
+  return s + " ".repeat(width - s.length);
+}
+
+function truncate(s: string, max: number): string {
+  if (max <= 0) return "";
+  if (s.length <= max) return s;
+  if (max <= 1) return s.slice(0, max);
+  return s.slice(0, max - 1) + "…";
+}
+
+function ageMsFromIso(iso: string, now: () => number): number | null {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  const delta = now() - ms;
+  return delta < 0 ? 0 : delta;
+}
+
+function safeWrite(output: Writable, chunk: string): void {
+  try {
+    output.write(chunk);
+  } catch {
+    // Writing to a closed / broken stream is non-fatal for the TUI;
+    // the next tick will retry.
+  }
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  try {
+    return String(err);
+  } catch {
+    return "unknown error";
+  }
+}
+
+/**
+ * Strip ANSI escape sequences from a string. Exposed for tests so the
+ * rendered frame can be asserted against plain text.
+ */
+export function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+}
