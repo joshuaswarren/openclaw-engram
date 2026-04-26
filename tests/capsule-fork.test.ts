@@ -9,7 +9,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -34,16 +34,9 @@ async function makeMemoryDir(files: FixtureFile[]): Promise<string> {
   for (const f of files) {
     const abs = path.join(root, ...f.rel.split("/"));
     await mkdir(path.dirname(abs), { recursive: true });
-    await mkdirp(path.dirname(abs));
-    await import("node:fs/promises").then(({ writeFile }) =>
-      writeFile(abs, f.content, "utf-8"),
-    );
+    await writeFile(abs, f.content, "utf-8");
   }
   return root;
-}
-
-async function mkdirp(dir: string): Promise<void> {
-  await mkdir(dir, { recursive: true });
 }
 
 async function makeEmptyDir(): Promise<string> {
@@ -68,9 +61,9 @@ async function exportFixture(
 }
 
 async function listAll(dir: string): Promise<string[]> {
+  const { readdir } = await import("node:fs/promises");
   const out: string[] = [];
   async function walk(d: string, prefix: string): Promise<void> {
-    const { readdir } = await import("node:fs/promises");
     const entries = await readdir(d, { withFileTypes: true });
     for (const e of entries) {
       const rel = prefix ? `${prefix}/${e.name}` : e.name;
@@ -307,9 +300,8 @@ test("exportCapsule: parent field survives JSON round-trip", async () => {
   });
 
   // Re-read manifest from sidecar.
-  const { default: nodePath } = await import("node:path");
   const manifestRaw = await readFile(
-    nodePath.join(nodePath.dirname(result.archivePath), "fork-with-parent.manifest.json"),
+    path.join(path.dirname(result.archivePath), "fork-with-parent.manifest.json"),
     "utf-8",
   );
   const manifest = JSON.parse(manifestRaw);
