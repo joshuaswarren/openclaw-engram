@@ -174,12 +174,20 @@ test("parsePatternsSince round-trips a valid ISO timestamp", () => {
 test("parsePatternsSince rejects non-date strings", () => {
   assert.throws(
     () => parsePatternsSince("not-a-date"),
-    /--since expects a valid ISO 8601 timestamp/,
+    /ISO 8601/,
   );
   assert.throws(
     () => parsePatternsSince(""),
     /--since expects an ISO 8601 timestamp/,
   );
+});
+
+test("parsePatternsSince rejects non-ISO date formats (strict validation)", () => {
+  // Non-ISO locale-style dates must be rejected even though Date.parse accepts them.
+  assert.throws(() => parsePatternsSince("04/01/2026"), /ISO 8601/);
+  assert.throws(() => parsePatternsSince("December 25 2026"), /ISO 8601/);
+  // Calendar overflow must be rejected.
+  assert.throws(() => parsePatternsSince("2026-02-30T00:00:00Z"), /overflow|out of range|calendar/i);
 });
 
 test("parsePatternsSince rejects non-string values", () => {
@@ -277,6 +285,24 @@ test("collectPatternMemories sorts by reinforcementCount desc, then lastReinforc
   assert.equal(rows[1].id, "d");
   assert.equal(rows[2].id, "b");
   assert.equal(rows[3].id, "c");
+});
+
+test("collectPatternMemories sort treats malformed lastReinforcedAt as 0 (NaN guard)", () => {
+  // A malformed timestamp must not produce NaN from the comparator, which
+  // would violate the sort contract and produce non-deterministic ordering
+  // (CLAUDE.md rule 19 + Cursor Medium review comment).
+  const memories = [
+    makeMemory("a", { reinforcementCount: 2, lastReinforcedAt: "pending" }),  // malformed
+    makeMemory("b", { reinforcementCount: 2, lastReinforcedAt: "2026-04-10T00:00:00Z" }),  // valid
+    makeMemory("c", { reinforcementCount: 2 }),  // absent
+  ];
+  // Should not throw and must produce a deterministic result.
+  const rows = collectPatternMemories(memories, { format: "text" });
+  assert.equal(rows.length, 3);
+  // b has a valid ts so it sorts first; a and c both resolve to 0 so id asc breaks the tie.
+  assert.equal(rows[0].id, "b");
+  assert.equal(rows[1].id, "a");
+  assert.equal(rows[2].id, "c");
 });
 
 test("collectPatternMemories applies category filter", () => {
@@ -427,6 +453,24 @@ test("explainPatternMemory collects cluster members sorted supersededAt desc the
   assert.equal(detail.clusterMembers[2].id, "member-c");
 });
 
+test("explainPatternMemory cluster sort treats malformed supersededAt as 0 (NaN guard)", () => {
+  // Malformed supersededAt must not produce NaN from comparator (same fix as
+  // collectPatternMemories — Cursor Medium review comment, both locations).
+  const memories = [
+    makeMemory("canon", { reinforcementCount: 2 }),
+    makeMemory("mx", { supersededBy: "canon", supersededAt: "not-a-date", status: "superseded" }),
+    makeMemory("my", { supersededBy: "canon", supersededAt: "2026-04-05T00:00:00Z", status: "superseded" }),
+    makeMemory("mz", { supersededBy: "canon", status: "superseded" }),  // absent
+  ];
+  // Should not throw, must produce deterministic result.
+  const detail = explainPatternMemory(memories, "canon")!;
+  assert.equal(detail.clusterMembers.length, 3);
+  // my has a valid ts so it sorts first; mx (malformed→0) and mz (absent→0) follow by id asc.
+  assert.equal(detail.clusterMembers[0].id, "my");
+  assert.equal(detail.clusterMembers[1].id, "mx");
+  assert.equal(detail.clusterMembers[2].id, "mz");
+});
+
 test("explainPatternMemory does not include memories that supersede a different id", () => {
   const memories = [
     makeMemory("canon", { reinforcementCount: 2 }),
@@ -496,6 +540,24 @@ test("renderPatternsList json format produces valid JSON with rows array", () =>
 test("renderPatternsList json format on empty input has empty rows array", () => {
   const parsed = JSON.parse(renderPatternsList([], "json"));
   assert.deepEqual(parsed.rows, []);
+});
+
+test("renderPatternsList markdown escapes backslashes before pipes in preview (CodeQL fix)", () => {
+  // Backslash must be escaped before pipe so a literal `\` in content is not
+  // misinterpreted as part of a `\|` escape sequence by Markdown renderers.
+  const rows: PatternListRow[] = [
+    {
+      id: "mem-bs",
+      category: "fact",
+      reinforcementCount: 1,
+      status: "active",
+      preview: "path\\to\\file|extra",
+      path: "facts/mem-bs.md",
+    },
+  ];
+  const output = renderPatternsList(rows, "markdown");
+  // Backslash should be doubled; pipe should be escaped.
+  assert.ok(output.includes("path\\\\to\\\\file\\|extra"), `Got: ${output}`);
 });
 
 const sampleDetail: PatternExplainDetail = {

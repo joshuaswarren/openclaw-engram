@@ -28,6 +28,7 @@
  */
 
 import type { MemoryCategory, MemoryFile } from "./types.js";
+import { parseStrictCliDate } from "./training-export/date-parse.js";
 
 export const PATTERNS_OUTPUT_FORMATS = ["text", "markdown", "json"] as const;
 export type PatternsOutputFormat = (typeof PATTERNS_OUTPUT_FORMATS)[number];
@@ -106,11 +107,12 @@ export function parsePatternsCategory(value: unknown): string[] | undefined {
 }
 
 /**
- * Validate `--since <ISO>`.  Accepts any ISO 8601 string that
- * `Date.parse()` understands; rejects anything else with a listed-
- * options error.  Returns the canonical ISO string (round-trip
- * through `toISOString`) so downstream comparisons use a consistent
- * form.
+ * Validate `--since <ISO>`.  Delegates to `parseStrictCliDate` which
+ * enforces a strict ISO 8601 shape and rejects calendar overflows and
+ * non-ISO formats (e.g. "12/25/2026", "Dec 25 2026") that bare
+ * `Date.parse()` would silently accept.  Returns the canonical ISO
+ * string (round-trip through `toISOString`) so downstream comparisons
+ * use a consistent form.
  */
 export function parsePatternsSince(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
@@ -119,13 +121,8 @@ export function parsePatternsSince(value: unknown): string | undefined {
       `--since expects an ISO 8601 timestamp (e.g. 2026-04-01T00:00:00Z); got ${JSON.stringify(value)}`,
     );
   }
-  const ms = Date.parse(value);
-  if (!Number.isFinite(ms)) {
-    throw new Error(
-      `--since expects a valid ISO 8601 timestamp; got ${JSON.stringify(value)}`,
-    );
-  }
-  return new Date(ms).toISOString();
+  // parseStrictCliDate throws with a descriptive message on invalid input.
+  return parseStrictCliDate(value.trim(), "--since").toISOString();
 }
 
 export interface ParsedPatternsListOptions {
@@ -253,8 +250,13 @@ export function collectPatternMemories(
     if (b.reinforcementCount !== a.reinforcementCount) {
       return b.reinforcementCount - a.reinforcementCount;
     }
-    const aTs = a.lastReinforcedAt ? Date.parse(a.lastReinforcedAt) : 0;
-    const bTs = b.lastReinforcedAt ? Date.parse(b.lastReinforcedAt) : 0;
+    // Guard NaN: malformed date strings make Date.parse return NaN, which
+    // breaks the sort contract (NaN comparator return == non-deterministic
+    // ordering).  Treat invalid/missing timestamps as 0 (oldest possible).
+    const aRaw = a.lastReinforcedAt ? Date.parse(a.lastReinforcedAt) : NaN;
+    const bRaw = b.lastReinforcedAt ? Date.parse(b.lastReinforcedAt) : NaN;
+    const aTs = Number.isFinite(aRaw) ? aRaw : 0;
+    const bTs = Number.isFinite(bRaw) ? bRaw : 0;
     if (bTs !== aTs) return bTs - aTs;
     if (a.id < b.id) return -1;
     if (a.id > b.id) return 1;
@@ -349,8 +351,12 @@ export function explainPatternMemory(
     }
   }
   members.sort((a, b) => {
-    const aTs = a.supersededAt ? Date.parse(a.supersededAt) : 0;
-    const bTs = b.supersededAt ? Date.parse(b.supersededAt) : 0;
+    // Guard NaN: same rationale as collectPatternMemories sort — malformed
+    // supersededAt strings must not produce a NaN return from the comparator.
+    const aRaw = a.supersededAt ? Date.parse(a.supersededAt) : NaN;
+    const bRaw = b.supersededAt ? Date.parse(b.supersededAt) : NaN;
+    const aTs = Number.isFinite(aRaw) ? aRaw : 0;
+    const bTs = Number.isFinite(bRaw) ? bRaw : 0;
     if (bTs !== aTs) return bTs - aTs;
     if (a.id < b.id) return -1;
     if (a.id > b.id) return 1;
@@ -525,6 +531,15 @@ function extractPreview(content: string): string {
   return collapsed.slice(0, 117) + "...";
 }
 
+/**
+ * Escape characters that would break a Markdown table cell:
+ *   - backslashes first (so the `\|` escape below isn't double-escaped)
+ *   - then pipe characters
+ *
+ * CodeQL "Incomplete string escaping or encoding": backslash must be
+ * escaped before pipe so that a literal `\` in content isn't
+ * misinterpreted as part of a `\|` escape sequence.
+ */
 function escapePipes(value: string): string {
-  return value.replace(/\|/g, "\\|");
+  return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
 }
