@@ -831,6 +831,32 @@ export interface PluginConfig {
    * `chooseConsolidationOperator`.  Issue #561 PR 3.
    */
   operatorAwareConsolidationEnabled: boolean;
+  /**
+   * Async peer profile reasoner — issue #679 PR 2/5.
+   *
+   * Default `false` (opt-in). When enabled, the reasoner runs after
+   * `runSemanticConsolidation` (the REM phase of the dreams pipeline)
+   * and updates per-peer profile.md files with provenance-tagged
+   * field updates derived from the peer's interaction log.
+   */
+  peerProfileReasonerEnabled: boolean;
+  /**
+   * Model identifier used by the peer profile reasoner. Logged for
+   * telemetry only — actual dispatch is via the same FallbackLlmClient
+   * the orchestrator uses for semantic consolidation. Default `gpt-5.2`.
+   */
+  peerProfileReasonerModel: string;
+  /**
+   * Minimum new interaction-log entries a peer must accumulate since
+   * the previous reasoner run before being processed again. Default 5.
+   * Setting to 0 forces every run to consider every peer.
+   */
+  peerProfileReasonerMinInteractions: number;
+  /**
+   * Hard cap on the total number of profile fields the reasoner will
+   * apply across all peers in a single run. Default 8.
+   */
+  peerProfileReasonerMaxFieldsPerRun: number;
   // Creation-memory foundation
   creationMemoryEnabled: boolean;
   memoryUtilityLearningEnabled: boolean;
