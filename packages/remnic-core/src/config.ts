@@ -1591,6 +1591,29 @@ export function parseConfig(raw: unknown): PluginConfig {
           .map((v) => v.trim())
           .filter((v) => v.length > 0)
       : ["preference", "fact", "decision"],
+    // issue #687 PR 3/4: reinforcement recall boost config.
+    reinforcementRecallBoostEnabled:
+      coerceBool(cfg.reinforcementRecallBoostEnabled) ?? false,
+    reinforcementRecallBoostWeight: (() => {
+      if (cfg.reinforcementRecallBoostWeight === undefined) return 0.05;
+      const n = coerceNumber(cfg.reinforcementRecallBoostWeight);
+      if (n === undefined || !Number.isFinite(n) || n < 0 || n > 1) {
+        throw new Error(
+          `reinforcementRecallBoostWeight must be a number in [0, 1] (got ${JSON.stringify(cfg.reinforcementRecallBoostWeight)}).`,
+        );
+      }
+      return n;
+    })(),
+    reinforcementRecallBoostMax: (() => {
+      if (cfg.reinforcementRecallBoostMax === undefined) return 0.3;
+      const n = coerceNumber(cfg.reinforcementRecallBoostMax);
+      if (n === undefined || !Number.isFinite(n) || n < 0 || n > 1) {
+        throw new Error(
+          `reinforcementRecallBoostMax must be a number in [0, 1] (got ${JSON.stringify(cfg.reinforcementRecallBoostMax)}).`,
+        );
+      }
+      return n;
+    })(),
     // Async peer profile reasoner (issue #679 PR 2/5). Defaults to
     // `false` (opt-in) per Gotchas #30/#48 — least-privileged default.
     // `coerceBool` handles "true"/"1"/"yes"/"on" CLI strings (Gotcha
