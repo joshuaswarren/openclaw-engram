@@ -125,6 +125,17 @@ interface GitHubCursorPayload {
    * `kind` is one of `"issue-comment"`, `"pr-review-comment"`, `"discussion"`.
    */
   watermarks: Record<string, string>;
+  /**
+   * Same-second dedup map: maps `{repo}/{kind}/{commentId}` → `updated_at`
+   * ISO string for every comment processed within the same second as the
+   * current watermark. Cleared when the watermark advances past that second
+   * boundary. Prevents re-importing comments whose `updated_at` matches the
+   * watermark exactly — GitHub's `since=` filter is inclusive, so comments at
+   * the exact watermark timestamp are re-returned on every subsequent poll.
+   *
+   * Mirrors the Gmail connector's `seenIds` pattern from #745.
+   */
+  seenIds: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -315,7 +326,12 @@ function parseCursorPayload(cursor: ConnectorCursor): GitHubCursorPayload {
     typeof p.watermarks === "object" && p.watermarks !== null && !Array.isArray(p.watermarks)
       ? (p.watermarks as Record<string, string>)
       : {};
-  return { watermarks };
+  // seenIds: tolerate missing key (old cursors lack it).
+  const seenIds: Record<string, string> =
+    typeof p.seenIds === "object" && p.seenIds !== null && !Array.isArray(p.seenIds)
+      ? (p.seenIds as Record<string, string>)
+      : {};
+  return { watermarks, seenIds };
 }
 
 function watermarkKey(repo: string, kind: string): string {
@@ -504,7 +520,7 @@ export function createGitHubConnector(
 
       // Short-circuit: nothing to do if no repos are configured.
       if (config.repos.length === 0) {
-        const emptyPayload: GitHubCursorPayload = { watermarks: {} };
+        const emptyPayload: GitHubCursorPayload = { watermarks: {}, seenIds: {} };
         const result: GitHubSyncResult = {
           newDocs: [],
           nextCursor: makeCursor(emptyPayload),
@@ -518,7 +534,7 @@ export function createGitHubConnector(
       // Parse or seed cursor.
       const isFirstSync = args.cursor === null;
       const payload: GitHubCursorPayload = isFirstSync
-        ? { watermarks: {} }
+        ? { watermarks: {}, seenIds: {} }
         : parseCursorPayload(args.cursor);
 
       if (isFirstSync) {
@@ -553,6 +569,7 @@ async function seedWatermarks(
   signal: AbortSignal | undefined,
 ): Promise<GitHubCursorPayload> {
   const watermarks = { ...initial.watermarks };
+  // seenIds starts empty for first-sync; nothing has been processed yet.
 
   for (const repo of config.repos) {
     throwIfAborted(signal);
@@ -606,7 +623,7 @@ async function seedWatermarks(
     }
   }
 
-  return { watermarks };
+  return { watermarks, seenIds: {} };
 }
 
 /**
@@ -646,6 +663,14 @@ async function incrementalSync(
   let skippedTooLarge = 0;
   let totalConsumed = 0;
 
+  // P1 fix (same-timestamp dedup): carry seenIds forward from the cursor.
+  // Maps `{repo}/{kind}/{commentId}` → `updated_at` ISO string for all
+  // comments processed within the same second as their resource watermark.
+  // Cleared per-resource when the watermark advances into a new second.
+  const currentSeenIds: Record<string, string> = { ...payload.seenIds };
+  // Accumulate seenIds updates for each resource; merged into nextSeenIds below.
+  const updatedSeenIds: Record<string, string> = { ...payload.seenIds };
+
   for (const repo of config.repos) {
     if (totalConsumed >= MAX_ITEMS_PER_PASS) break;
     throwIfAborted(signal);
@@ -665,6 +690,7 @@ async function incrementalSync(
           since,
           fetchedAt,
           MAX_ITEMS_PER_PASS - totalConsumed,
+          currentSeenIds,
           signal,
         );
         for (const doc of result.docs) newDocs.push(doc);
@@ -673,7 +699,19 @@ async function incrementalSync(
         skippedTooLarge += result.skippedTooLarge;
         totalConsumed += result.consumed;
         if (result.latestWatermark) {
-          updatedWatermarks[wmKey] = result.latestWatermark;
+          const prevWm = updatedWatermarks[wmKey];
+          const nextWm = result.latestWatermark;
+          updatedWatermarks[wmKey] = nextWm;
+          // Clear seenIds for this resource if the watermark crossed a second
+          // boundary; otherwise merge the newly-seen ids.
+          if (prevWm && watermarkCrossedSecond(prevWm, nextWm)) {
+            for (const k of Object.keys(updatedSeenIds)) {
+              if (k.startsWith(`${repo}/issue-comment/`)) delete updatedSeenIds[k];
+            }
+          }
+          for (const [k, v] of Object.entries(result.newSeenIds)) {
+            updatedSeenIds[k] = v;
+          }
         }
       } catch (err) {
         if (isTransientGitHubError(err)) throw err;
@@ -699,6 +737,7 @@ async function incrementalSync(
           since,
           fetchedAt,
           MAX_ITEMS_PER_PASS - totalConsumed,
+          currentSeenIds,
           signal,
         );
         for (const doc of result.docs) newDocs.push(doc);
@@ -707,7 +746,17 @@ async function incrementalSync(
         skippedTooLarge += result.skippedTooLarge;
         totalConsumed += result.consumed;
         if (result.latestWatermark) {
-          updatedWatermarks[wmKey] = result.latestWatermark;
+          const prevWm = updatedWatermarks[wmKey];
+          const nextWm = result.latestWatermark;
+          updatedWatermarks[wmKey] = nextWm;
+          if (prevWm && watermarkCrossedSecond(prevWm, nextWm)) {
+            for (const k of Object.keys(updatedSeenIds)) {
+              if (k.startsWith(`${repo}/pr-review-comment/`)) delete updatedSeenIds[k];
+            }
+          }
+          for (const [k, v] of Object.entries(result.newSeenIds)) {
+            updatedSeenIds[k] = v;
+          }
         }
       } catch (err) {
         if (isTransientGitHubError(err)) throw err;
@@ -730,6 +779,7 @@ async function incrementalSync(
           since,
           fetchedAt,
           MAX_ITEMS_PER_PASS - totalConsumed,
+          currentSeenIds,
           signal,
         );
         for (const doc of result.docs) newDocs.push(doc);
@@ -738,7 +788,17 @@ async function incrementalSync(
         skippedTooLarge += result.skippedTooLarge;
         totalConsumed += result.consumed;
         if (result.latestWatermark) {
-          updatedWatermarks[wmKey] = result.latestWatermark;
+          const prevWm = updatedWatermarks[wmKey];
+          const nextWm = result.latestWatermark;
+          updatedWatermarks[wmKey] = nextWm;
+          if (prevWm && watermarkCrossedSecond(prevWm, nextWm)) {
+            for (const k of Object.keys(updatedSeenIds)) {
+              if (k.startsWith(`${repo}/discussion/`)) delete updatedSeenIds[k];
+            }
+          }
+          for (const [k, v] of Object.entries(result.newSeenIds)) {
+            updatedSeenIds[k] = v;
+          }
         }
       } catch (err) {
         if (isTransientGitHubError(err)) throw err;
@@ -748,11 +808,20 @@ async function incrementalSync(
 
   return {
     newDocs,
-    nextCursor: makeCursor({ watermarks: updatedWatermarks }),
+    nextCursor: makeCursor({ watermarks: updatedWatermarks, seenIds: updatedSeenIds }),
     skippedOtherAuthor,
     skippedEmpty,
     skippedTooLarge,
   };
+}
+
+/**
+ * Returns true when the new watermark has crossed into a new second relative
+ * to the previous watermark. ISO 8601 strings sort lexicographically and the
+ * second boundary is at the 19-character prefix (e.g. "2026-04-26T09:00:01").
+ */
+function watermarkCrossedSecond(prev: string, next: string): boolean {
+  return prev.slice(0, 19) < next.slice(0, 19);
 }
 
 // ---------------------------------------------------------------------------
@@ -785,15 +854,36 @@ interface FetchAndFilterResult {
   skippedOtherAuthor: number;
   skippedEmpty: number;
   skippedTooLarge: number;
+  /** Count of items that were actually ingested (budget-counted). Skipped
+   *  items (wrong author, empty body, too-large, seenIds dedup) do NOT
+   *  consume budget — see P1 fix `PRRT_kwDORJXyws59sfBs`. */
   consumed: number;
-  /** Latest `updated_at` we saw in this batch (only from matching author). */
+  /** Latest `updated_at` we saw in this batch (includes skipped items so the
+   *  watermark can advance past them). */
   latestWatermark: string | undefined;
+  /**
+   * New seenId entries accumulated during this pass. Maps
+   * `{repo}/{kind}/{commentId}` → `updated_at` ISO string for every ingested
+   * comment. Used by the caller to build the next cursor's `seenIds` map
+   * (P1 fix `PRRT_kwDORJXyws59sfBq`).
+   */
+  newSeenIds: Record<string, string>;
 }
 
 /**
  * Page through the comments at `firstPageUrl`, filter to comments authored
  * by `userLogin`, and build `ConnectorDocument` instances. Respects the
  * per-pass cap via `remainingBudget`.
+ *
+ * Budget fix (P1 `PRRT_kwDORJXyws59sfBs`): only count ingested records
+ * against the budget. Items skipped for wrong author, empty/too-large body,
+ * or same-second seenId dedup do NOT advance the cap counter — they should
+ * not starve valid records.
+ *
+ * Same-timestamp dedup (P1 `PRRT_kwDORJXyws59sfBq`): `seenIds` carries
+ * comment ids already processed within the same second as the current
+ * watermark. If GitHub re-returns them because `since=` is inclusive and
+ * matches the exact watermark second, we skip them without re-importing.
  *
  * Uses `since` as a client-side lower-bound filter in addition to the
  * server-side `?since=` param (the server may return items exactly at
@@ -809,6 +899,7 @@ async function fetchAndFilterComments(
   since: string | undefined,
   fetchedAt: string,
   remainingBudget: number,
+  seenIds: Record<string, string>,
   signal: AbortSignal | undefined,
 ): Promise<FetchAndFilterResult> {
   const docs: ConnectorDocument[] = [];
@@ -817,6 +908,7 @@ async function fetchAndFilterComments(
   let skippedTooLarge = 0;
   let consumed = 0;
   let latestWatermark: string | undefined = undefined;
+  const newSeenIds: Record<string, string> = {};
   let nextUrl: string | undefined = firstPageUrl;
 
   while (nextUrl && consumed < remainingBudget) {
@@ -830,15 +922,26 @@ async function fetchAndFilterComments(
       throwIfAborted(signal);
 
       const comment = item as GitHubComment;
-      consumed++;
 
       // Skip items at or before the watermark (server returns inclusive).
+      // These are cursor artifacts — do NOT count them against the budget.
       if (since && comment.updated_at <= since) {
-        // Don't count toward skippedOtherAuthor — this is a cursor artifact.
         continue;
       }
 
-      // Author filter (client-side).
+      // P1 fix (same-timestamp dedup): skip comments already processed in the
+      // same second as the watermark. GitHub's `since=` filter is inclusive at
+      // second granularity, so on the next poll it re-returns any comment whose
+      // `updated_at` ISO second matches the watermark second exactly. We use
+      // the seenIds map (keyed by `{repo}/{kind}/{commentId}`) to detect and
+      // skip these without re-importing or consuming budget.
+      const seenKey = `${repo}/${kind}/${comment.id}`;
+      if (seenIds[seenKey] !== undefined) {
+        continue;
+      }
+
+      // Author filter (client-side). Not counted against budget —
+      // P1 fix `PRRT_kwDORJXyws59sfBs`: only ingested records consume budget.
       const authorLogin = comment.user?.login ?? null;
       if (authorLogin !== userLogin) {
         skippedOtherAuthor++;
@@ -850,7 +953,7 @@ async function fetchAndFilterComments(
         continue;
       }
 
-      // Body validation.
+      // Body validation. Also not counted against budget.
       const body = comment.body ?? "";
       const trimmed = body.trim();
       if (trimmed.length === 0) {
@@ -868,6 +971,9 @@ async function fetchAndFilterComments(
         continue;
       }
 
+      // This item will be ingested — count it against the budget.
+      consumed++;
+
       // Build document.
       const doc = buildDocument(comment, repo, kind, fetchedAt);
       docs.push(doc);
@@ -875,6 +981,9 @@ async function fetchAndFilterComments(
       if (!latestWatermark || comment.updated_at > latestWatermark) {
         latestWatermark = comment.updated_at;
       }
+
+      // Record in newSeenIds for same-second dedup on subsequent polls.
+      newSeenIds[seenKey] = comment.updated_at;
     }
 
     // Follow GitHub's `Link: <url>; rel="next"` header for pagination.
@@ -890,7 +999,7 @@ async function fetchAndFilterComments(
     }
   }
 
-  return { docs, skippedOtherAuthor, skippedEmpty, skippedTooLarge, consumed, latestWatermark };
+  return { docs, skippedOtherAuthor, skippedEmpty, skippedTooLarge, consumed, latestWatermark, newSeenIds };
 }
 
 /**

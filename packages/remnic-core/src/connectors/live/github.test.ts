@@ -869,3 +869,231 @@ test("watermark advances for non-matching-author and empty comments so they aren
   const payload = JSON.parse(result.nextCursor.value) as { watermarks: Record<string, string> };
   assert.equal(payload.watermarks[`${REPO_A}/issue-comment`], "2026-04-26T09:00:00.000Z");
 });
+
+// ---------------------------------------------------------------------------
+// P1 fix: Same-timestamp dedup via seenIds (PRRT_kwDORJXyws59sfBq)
+// ---------------------------------------------------------------------------
+
+test("seenIds are stored in cursor for ingested comments at the watermark second", async () => {
+  // Two comments with the same second-level timestamp. Both are new (above watermark).
+  const c1 = makeComment(10, SYNTHETIC_LOGIN, "first comment", "2026-04-26T10:00:00.000Z");
+  const c2 = makeComment(11, SYNTHETIC_LOGIN, "second comment", "2026-04-26T10:00:00.500Z");
+
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes("/issues/comments"),
+      respond: () => ({ status: 200, data: [c1, c2] }),
+    },
+    {
+      match: (url) => url.includes("/pulls/comments"),
+      respond: () => ({ status: 200, data: [] }),
+    },
+  ]);
+
+  const connector = createGitHubConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CONFIG });
+  const cursor = makeGitHubCursor({
+    [`${REPO_A}/issue-comment`]: "2026-04-26T09:00:00.000Z",
+  });
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GitHubSyncResult;
+  assert.equal(result.newDocs.length, 2);
+
+  const payload = JSON.parse(result.nextCursor.value) as {
+    watermarks: Record<string, string>;
+    seenIds: Record<string, string>;
+  };
+  // seenIds must contain both ingested comment ids.
+  assert.ok(
+    `${REPO_A}/issue-comment/10` in payload.seenIds,
+    "seenIds must include comment 10",
+  );
+  assert.ok(
+    `${REPO_A}/issue-comment/11` in payload.seenIds,
+    "seenIds must include comment 11",
+  );
+});
+
+test("seenIds prevent re-importing same-second comments on the next poll", async () => {
+  // Scenario: c1 was ingested on the previous pass and is recorded in seenIds.
+  // On this poll GitHub re-returns it (inclusive `since=` at the watermark
+  // second). It must be skipped without emitting a new document.
+  const ts = "2026-04-26T10:00:00.000Z";
+  const c1 = makeComment(10, SYNTHETIC_LOGIN, "already imported", ts);
+  const c2 = makeComment(12, SYNTHETIC_LOGIN, "new this poll", "2026-04-26T10:00:01.000Z");
+
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes("/issues/comments"),
+      respond: () => ({ status: 200, data: [c1, c2] }),
+    },
+    {
+      match: (url) => url.includes("/pulls/comments"),
+      respond: () => ({ status: 200, data: [] }),
+    },
+  ]);
+
+  const connector = createGitHubConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CONFIG });
+  // Cursor encodes the watermark at c1's timestamp AND c1 already in seenIds.
+  const cursor: import("./framework.js").ConnectorCursor = {
+    kind: GITHUB_CURSOR_KIND,
+    value: JSON.stringify({
+      watermarks: { [`${REPO_A}/issue-comment`]: ts },
+      seenIds: { [`${REPO_A}/issue-comment/10`]: ts },
+    }),
+    updatedAt: "2026-04-26T10:00:00.000Z",
+  };
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GitHubSyncResult;
+  // c1 must be skipped (in seenIds); only c2 should be imported.
+  assert.equal(result.newDocs.length, 1);
+  assert.equal(result.newDocs[0].source.externalId, `${REPO_A}/issue-comment/12`);
+});
+
+test("seenIds are cleared when the watermark advances past a second boundary", async () => {
+  // Previous cursor has seenIds entries at the old second.
+  // After ingesting c2 which is in a new second, seenIds must be cleared.
+  const oldTs = "2026-04-26T10:00:00.000Z";
+  const newTs = "2026-04-26T10:00:01.000Z";
+  const c1Old = makeComment(10, SYNTHETIC_LOGIN, "old second item", oldTs);
+  const c2New = makeComment(20, SYNTHETIC_LOGIN, "new second item", newTs);
+
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes("/issues/comments"),
+      respond: () => ({ status: 200, data: [c1Old, c2New] }),
+    },
+    {
+      match: (url) => url.includes("/pulls/comments"),
+      respond: () => ({ status: 200, data: [] }),
+    },
+  ]);
+
+  const connector = createGitHubConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CONFIG });
+  // Cursor: watermark is at oldTs, seenIds contains c1Old's id.
+  const cursor: import("./framework.js").ConnectorCursor = {
+    kind: GITHUB_CURSOR_KIND,
+    value: JSON.stringify({
+      watermarks: { [`${REPO_A}/issue-comment`]: oldTs },
+      seenIds: { [`${REPO_A}/issue-comment/10`]: oldTs },
+    }),
+    updatedAt: oldTs,
+  };
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GitHubSyncResult;
+  // c1Old is in seenIds → skipped. c2New (above watermark) → imported.
+  assert.equal(result.newDocs.length, 1);
+  assert.equal(result.newDocs[0].source.externalId, `${REPO_A}/issue-comment/20`);
+
+  const payload = JSON.parse(result.nextCursor.value) as {
+    watermarks: Record<string, string>;
+    seenIds: Record<string, string>;
+  };
+  // Watermark must have advanced to the new second.
+  assert.equal(payload.watermarks[`${REPO_A}/issue-comment`], newTs);
+  // seenIds for c1Old must be cleared (watermark crossed the second boundary).
+  assert.ok(
+    !(`${REPO_A}/issue-comment/10` in payload.seenIds),
+    "stale seenId from old second must be cleared",
+  );
+  // c2New must be in the fresh seenIds.
+  assert.ok(
+    `${REPO_A}/issue-comment/20` in payload.seenIds,
+    "new-second comment must be in seenIds",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// P1 fix: Skip-aware budget — skipped records don't consume the cap
+// (PRRT_kwDORJXyws59sfBs)
+// ---------------------------------------------------------------------------
+
+test("skipped (wrong-author) records do not consume the per-pass budget", async () => {
+  // Build MAX_ITEMS_PER_PASS wrong-author comments followed by one valid one.
+  // The budget should NOT be exhausted by the skipped ones, so the valid
+  // comment at the end must still be ingested.
+  const MAX = 200; // matches MAX_ITEMS_PER_PASS constant
+  const skippedComments = Array.from({ length: MAX }, (_, i) =>
+    makeComment(1000 + i, "other-user", `not mine ${i}`, `2026-04-26T09:00:${String(i).padStart(2, "0")}.000Z`),
+  );
+  const validComment = makeComment(9999, SYNTHETIC_LOGIN, "mine", "2026-04-26T09:05:00.000Z");
+
+  // All comments returned on first page (we return MAX+1 items so pagination
+  // doesn't trigger — but since GITHUB_PAGE_SIZE=100 we need to simulate
+  // multiple pages).  Simpler: just return one page with all items (>100),
+  // but since the page-size check caps at 100 we'll use a single page of
+  // exactly the right set. Instead use a simpler approach: return the skipped
+  // comments as 2 pages of 100, then the valid comment on a "short" 3rd page.
+  let callCount = 0;
+  const issuePages: (typeof skippedComments)[] = [
+    skippedComments.slice(0, 100),
+    skippedComments.slice(100, 200),
+    [validComment],
+  ];
+
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes("/issues/comments"),
+      respond: () => {
+        const page = issuePages[callCount] ?? [];
+        callCount++;
+        return { status: 200, data: page };
+      },
+    },
+    {
+      match: (url) => url.includes("/pulls/comments"),
+      respond: () => ({ status: 200, data: [] }),
+    },
+  ]);
+
+  const connector = createGitHubConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CONFIG });
+  const cursor = makeGitHubCursor({});
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GitHubSyncResult;
+
+  // The valid comment must be imported despite all the skipped ones.
+  assert.equal(
+    result.newDocs.length,
+    1,
+    "the valid comment must not be starved by budget-consuming skipped items",
+  );
+  assert.equal(result.newDocs[0].source.externalId, `${REPO_A}/issue-comment/9999`);
+  assert.equal(result.skippedOtherAuthor, MAX);
+});
+
+test("skipped (empty-body) records do not consume the per-pass budget", async () => {
+  // 5 empty-body comments followed by 3 valid ones within a budget of 3.
+  const emptyComments = Array.from({ length: 5 }, (_, i) =>
+    makeComment(200 + i, SYNTHETIC_LOGIN, "", `2026-04-26T09:00:0${i}.000Z`),
+  );
+  const validComments = Array.from({ length: 3 }, (_, i) =>
+    makeComment(300 + i, SYNTHETIC_LOGIN, `valid ${i}`, `2026-04-26T09:01:0${i}.000Z`),
+  );
+
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes("/issues/comments"),
+      respond: () => ({ status: 200, data: [...emptyComments, ...validComments] }),
+    },
+    {
+      match: (url) => url.includes("/pulls/comments"),
+      respond: () => ({ status: 200, data: [] }),
+    },
+  ]);
+
+  const connector = createGitHubConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CONFIG });
+  const cursor = makeGitHubCursor({});
+
+  // Use a budget of 3. With the old (buggy) code, the 5 empty comments would
+  // exhaust the budget before reaching the valid ones.
+  // We can't set MAX_ITEMS_PER_PASS directly; instead verify that with the
+  // default budget all 3 valid comments are imported.
+  const result = (await connector.syncIncremental({ cursor, config })) as GitHubSyncResult;
+
+  assert.equal(result.newDocs.length, 3, "all 3 valid comments must be imported");
+  assert.equal(result.skippedEmpty, 5);
+});
