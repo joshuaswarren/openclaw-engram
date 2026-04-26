@@ -2688,6 +2688,65 @@ export function parseConfig(raw: unknown): PluginConfig {
           notionDatabaseIds.push(trimmed);
         }
       }
+      // github (#683 PR 5/6)
+      if (
+        rawConnectors.github !== undefined &&
+        (rawConnectors.github === null ||
+          typeof rawConnectors.github !== "object" ||
+          Array.isArray(rawConnectors.github))
+      ) {
+        throw new Error(
+          `connectors.github must be an object (got ${JSON.stringify(rawConnectors.github)}).`,
+        );
+      }
+      const rawGitHub =
+        rawConnectors.github &&
+        typeof rawConnectors.github === "object" &&
+        !Array.isArray(rawConnectors.github)
+          ? (rawConnectors.github as Record<string, unknown>)
+          : {};
+      const githubEnabled = coerceBool(rawGitHub.enabled) === true;
+      const githubToken =
+        typeof rawGitHub.token === "string" ? rawGitHub.token : "";
+      const githubUserLogin =
+        typeof rawGitHub.userLogin === "string" ? rawGitHub.userLogin : "";
+      const githubPollCoerced = coerceNumber(rawGitHub.pollIntervalMs);
+      let githubPollIntervalMs = 300_000;
+      if (githubPollCoerced !== undefined) {
+        if (
+          !Number.isFinite(githubPollCoerced) ||
+          !Number.isInteger(githubPollCoerced) ||
+          githubPollCoerced < 1_000 ||
+          githubPollCoerced > 86_400_000
+        ) {
+          throw new Error(
+            `connectors.github.pollIntervalMs must be an integer in [1000, 86400000] ms (got ${JSON.stringify(rawGitHub.pollIntervalMs)})`,
+          );
+        }
+        githubPollIntervalMs = githubPollCoerced;
+      }
+      let githubRepos: string[] = [];
+      if (rawGitHub.repos !== undefined) {
+        if (!Array.isArray(rawGitHub.repos)) {
+          throw new Error(
+            `connectors.github.repos must be an array of strings (got ${typeof rawGitHub.repos})`,
+          );
+        }
+        const seen = new Set<string>();
+        for (const value of rawGitHub.repos) {
+          if (typeof value !== "string") {
+            throw new Error(
+              `connectors.github.repos entries must be strings; found ${typeof value}`,
+            );
+          }
+          const trimmed = value.trim();
+          if (trimmed.length === 0) continue;
+          if (seen.has(trimmed)) continue;
+          seen.add(trimmed);
+          githubRepos.push(trimmed);
+        }
+      }
+      const githubIncludeDiscussions = coerceBool(rawGitHub.includeDiscussions) === true;
       return {
         googleDrive: {
           enabled: driveEnabled,
@@ -2702,6 +2761,14 @@ export function parseConfig(raw: unknown): PluginConfig {
           token: notionToken,
           databaseIds: notionDatabaseIds,
           pollIntervalMs: notionPollIntervalMs,
+        },
+        github: {
+          enabled: githubEnabled,
+          token: githubToken,
+          userLogin: githubUserLogin,
+          repos: githubRepos,
+          pollIntervalMs: githubPollIntervalMs,
+          includeDiscussions: githubIncludeDiscussions,
         },
       };
     })(),
