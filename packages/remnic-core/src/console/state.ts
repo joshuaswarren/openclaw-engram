@@ -228,9 +228,14 @@ function readDedupRecent(
   errors: string[],
 ): ConsoleDedupDecision[] {
   try {
-    const getter = orchestrator.getConsoleDedupRecentDecisions;
-    if (typeof getter !== "function") return [];
-    const raw = getter() ?? [];
+    // Cursor Medium: call directly on `orchestrator` to preserve the
+    // `this` binding. Extracting the method into a local and invoking
+    // it bare loses `this`, so a non-arrow implementation that
+    // references `this` would fail at runtime. Mirrors how
+    // `readExtractionQueue` and `readMaintenanceLedgerTail` invoke
+    // their orchestrator methods.
+    if (typeof orchestrator.getConsoleDedupRecentDecisions !== "function") return [];
+    const raw = orchestrator.getConsoleDedupRecentDecisions() ?? [];
     return raw.slice(-MAX_DEDUP_TAIL).map((d) => ({
       ts: typeof d?.ts === "string" ? d.ts : "",
       decision: typeof d?.decision === "string" ? d.decision : "unknown",
