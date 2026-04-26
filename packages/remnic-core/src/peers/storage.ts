@@ -398,10 +398,20 @@ export async function readPeer(
   assertValidKind(kind);
   const displayName = fields.displayName ?? "";
   const createdAt = fields.createdAt ?? "";
-  const updatedAt = fields.updatedAt ?? createdAt;
   if (createdAt === "") {
     throw new Error(`peer "${peerId}" is missing createdAt`);
   }
+  // Codex P2: nullish-coalescing alone treated `updatedAt: ""` as a
+  // valid empty timestamp, contradicting writePeer's non-empty
+  // validation and the module's "malformed files throw" contract.
+  // Treat empty string as missing and fall back to createdAt; throw
+  // only when the field is malformed in some other way (caught by
+  // the typeof check).
+  const rawUpdatedAt = fields.updatedAt;
+  const updatedAt =
+    typeof rawUpdatedAt === "string" && rawUpdatedAt.length > 0
+      ? rawUpdatedAt
+      : createdAt;
   // Codex P2 + CodeQL: previously used `body.replace(/^\s+/, "")`
   // which stripped ALL leading whitespace — including indentation in
   // notes. The `\s+` patterns also flagged as polynomial-regex risk
