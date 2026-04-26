@@ -684,20 +684,20 @@ function parsePeerProfile(raw: string, peerId: string): PeerProfile {
       ? payload.provenance
       : {};
   // Coerce values defensively. We never trust the on-disk shape.
-  // Codex P1: use null-prototype objects so an attacker-controlled
-  // JSON key like "__proto__" cannot mutate Object.prototype when we
-  // assign into the maps. Same defense applied to fields and
-  // provenance. Reject the dangerous keys outright as well — they
-  // should never appear in legitimate peer data.
+  // Codex P1: skip prototype-pollution keys explicitly. We don't use
+  // null-prototype objects in the returned shape because callers
+  // (tests, downstream consumers) expect plain objects with normal
+  // semantics — the assertion `assert.deepEqual` differentiates by
+  // prototype. The skip-list is the load-bearing defense; iteration
+  // via Object.entries() of attacker-controlled JSON objects is safe
+  // as long as we never assign through dangerous keys.
   const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
-  const fields: Record<string, string> = Object.create(null) as Record<string, string>;
+  const fields: Record<string, string> = {};
   for (const [k, v] of Object.entries(fieldsObj)) {
     if (DANGEROUS_KEYS.has(k)) continue;
     if (typeof v === "string") fields[k] = v;
   }
-  const provenance: Record<string, PeerProfileFieldProvenance[]> = Object.create(
-    null,
-  ) as Record<string, PeerProfileFieldProvenance[]>;
+  const provenance: Record<string, PeerProfileFieldProvenance[]> = {};
   for (const [k, v] of Object.entries(provenanceObj)) {
     if (DANGEROUS_KEYS.has(k)) continue;
     if (!Array.isArray(v)) continue;
