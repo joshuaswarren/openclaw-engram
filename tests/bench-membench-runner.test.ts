@@ -173,6 +173,8 @@ function createOfficialParticipantDataset() {
                 user: "I liked Toy Story when we discussed lighter animation.",
                 agent: "Toy Story is a lighter animation preference.",
               },
+            ],
+            [
               {
                 user: "I loved Alien (1979), especially the practical tension.",
                 agent: "Alien (1979) fits your taste for tense sci-fi.",
@@ -183,7 +185,7 @@ function createOfficialParticipantDataset() {
             question: "Which movie preference should the assistant remember?",
             choices: ["Toy Story", "Alien (1979)", "Heat", "Jaws"],
             answer: "Alien (1979)",
-            target_step_id: [[1, 0]],
+            target_step_id: [[0, 1]],
           },
         },
       ],
@@ -307,7 +309,7 @@ test("runBenchmark scores official MemBench multiple-choice accuracy and recall"
   adapter.responder = {
     async respond() {
       return {
-        text: "A is plausible, but the final answer is B.",
+        text: "Option A is plausible, but the final answer is B.",
         tokens: { input: 3, output: 1 },
         latencyMs: 2,
         model: "fake-choice-model",
@@ -374,7 +376,7 @@ test("runBenchmark accepts official first-agent message_list and QA records", as
   assert.equal(task.details?.memoryType, "reflective");
   assert.equal(task.details?.scenario, "participant");
   assert.equal(task.details?.turnCount, 2);
-  assert.deepEqual(task.details?.targetStepCoordinates, [[1, 0]]);
+  assert.deepEqual(task.details?.targetStepCoordinates, [[0, 1]]);
   assert.deepEqual(task.details?.targetStepIds, [1]);
   assert.equal(task.scores.membench_accuracy, 1);
   assert.equal(

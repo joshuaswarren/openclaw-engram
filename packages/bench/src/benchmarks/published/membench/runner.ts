@@ -406,7 +406,12 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
 
   const parsedChoices = parseChoices(choices, location);
   const parsedCorrectChoice = parseCorrectChoice(correctChoice, answer, parsedChoices, location);
-  const targetRefs = parseTargetStepRefs(targetStepCoordinates ?? targetStepIds);
+  const idRefs = parseTargetStepRefs(targetStepIds);
+  const coordinateRefs = parseTargetStepRefs(targetStepCoordinates);
+  const targetRefs = {
+    targetStepIds: idRefs.targetStepIds ?? coordinateRefs.targetStepIds,
+    targetStepCoordinates: coordinateRefs.targetStepCoordinates ?? idRefs.targetStepCoordinates,
+  };
   const parsedAnswer = parsedChoices && parsedCorrectChoice
     ? parsedChoices[parsedCorrectChoice]
     : answer;
@@ -922,11 +927,13 @@ function extractChoice(answer: string): MemBenchChoice | undefined {
     return jsonChoice[1] as MemBenchChoice;
   }
 
-  const finalAnswer = trimmed.match(
-    /(?:FINAL\s+ANSWER|ANSWER|CHOICE|OPTION)\s*(?:IS|:|-)?\s*([ABCD])\b/,
-  );
-  if (finalAnswer?.[1]) {
-    return finalAnswer[1] as MemBenchChoice;
+  const answerMarkers = [
+    ...trimmed.matchAll(
+      /(?:FINAL\s+ANSWER|ANSWER|CHOICE|OPTION)\s*(?:IS|:|-)?\s*([ABCD])\b/g,
+    ),
+  ].map((match) => match[1] as MemBenchChoice);
+  if (answerMarkers.length > 0) {
+    return answerMarkers.at(-1);
   }
 
   const optionTokens = [...trimmed.matchAll(/\b([ABCD])\b/g)].map(
