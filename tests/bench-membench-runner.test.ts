@@ -185,6 +185,25 @@ function createOfficialParticipantDataset() {
   };
 }
 
+function createLetterAnswerNonChoiceDataset() {
+  return [
+    {
+      id: "letter-answer-no-choices",
+      memoryType: "factual",
+      scenario: "participant",
+      level: "surface",
+      turns: [
+        {
+          role: "user",
+          content: "A",
+        },
+      ],
+      question: "What single-letter code did I give?",
+      answer: "A",
+    },
+  ];
+}
+
 test("runBenchmark executes membench in quick mode through the phase-1 package API", async () => {
   const adapter = new FakeMemoryAdapter();
 
@@ -282,7 +301,7 @@ test("runBenchmark scores official MemBench multiple-choice accuracy and recall"
   adapter.responder = {
     async respond() {
       return {
-        text: '{"choice":"B"}',
+        text: "A is plausible, but the final answer is B.",
         tokens: { input: 3, output: 1 },
         latencyMs: 2,
         model: "fake-choice-model",
@@ -354,6 +373,65 @@ test("runBenchmark accepts official first-agent message_list and QA records", as
     result.results.aggregates.membench_accuracy_reflective_participant?.mean,
     1,
   );
+});
+
+test("runBenchmark surfaces MemBench recall@10 search failures", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-membench-search-error-"));
+  const datasetDir = path.join(tmpDir, "datasets", "membench");
+  const adapter = new FakeMemoryAdapter();
+  adapter.search = async () => {
+    throw new Error("search offline");
+  };
+  adapter.responder = {
+    async respond() {
+      return {
+        text: "B",
+        tokens: { input: 3, output: 1 },
+        latencyMs: 2,
+        model: "fake-choice-model",
+      };
+    },
+  };
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "ThirdAgentDataLowLevel.json"),
+    JSON.stringify(createOfficialChoiceDataset()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("membench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.scores.membench_recall_at_10, -1);
+  assert.equal(result.results.aggregates.membench_recall_at_10?.mean, -1);
+});
+
+test("runBenchmark treats bare letter answers as exact-answer cases when choices are absent", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-membench-letter-answer-"));
+  const datasetDir = path.join(tmpDir, "datasets", "membench");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "membench.json"),
+    JSON.stringify(createLetterAnswerNonChoiceDataset()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("membench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.expected, "A");
+  assert.equal(task.actual, "A");
+  assert.equal(task.details?.correctChoice, undefined);
+  assert.equal(task.details?.officialProtocol, "exact_answer_accuracy");
+  assert.equal(task.scores.membench_accuracy, 1);
 });
 
 test("runBenchmark rejects membench full mode without datasetDir", async () => {

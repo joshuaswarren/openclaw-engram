@@ -857,8 +857,17 @@ function extractChoice(answer: string): MemBenchChoice | undefined {
     return jsonChoice[1] as MemBenchChoice;
   }
 
-  const firstOption = trimmed.match(/\b([ABCD])\b/);
-  return firstOption?.[1] as MemBenchChoice | undefined;
+  const finalAnswer = trimmed.match(
+    /(?:FINAL\s+ANSWER|ANSWER|CHOICE|OPTION)\s*(?:IS|:|-)?\s*([ABCD])\b/,
+  );
+  if (finalAnswer?.[1]) {
+    return finalAnswer[1] as MemBenchChoice;
+  }
+
+  const optionTokens = [...trimmed.matchAll(/\b([ABCD])\b/g)].map(
+    (match) => match[1] as MemBenchChoice,
+  );
+  return optionTokens.at(-1);
 }
 
 async function scoreRecallAt10(
@@ -881,7 +890,7 @@ async function scoreRecallAt10(
     const relevant = new Set(testCase.targetStepIds);
     return results.some((result) => relevant.has(result.turnIndex)) ? 1 : 0;
   } catch {
-    return undefined;
+    return -1;
   }
 }
 
@@ -961,6 +970,10 @@ function parseCorrectChoice(
   choices: Record<MemBenchChoice, string> | undefined,
   location: string,
 ): MemBenchChoice | undefined {
+  if (!choices) {
+    return undefined;
+  }
+
   const normalizedDirect = normalizeChoice(directChoice);
   if (normalizedDirect) {
     return normalizedDirect;
@@ -969,10 +982,6 @@ function parseCorrectChoice(
   const normalizedAnswer = normalizeChoice(answer);
   if (normalizedAnswer) {
     return normalizedAnswer;
-  }
-
-  if (!choices) {
-    return undefined;
   }
 
   const answerText = firstString(answer);
