@@ -31,7 +31,7 @@
  * is a strict superset.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { open, seal } from "./cipher.js";
@@ -275,38 +275,46 @@ export async function readHeader(memoryDir: string): Promise<SecureStoreHeader |
 }
 
 /**
- * Write the header atomically: serialize → write to a temp file in
- * the same directory → fsync-by-rename → done.
+ * Write the header with atomic exclusive-create semantics.
  *
- * Refuses to overwrite an existing header; the caller must explicitly
- * remove the existing header first. This guards against accidental
- * reinitialization.
+ * Uses the `wx` flag (`O_CREAT | O_EXCL`) so the OS rejects the call
+ * atomically when the file already exists. Two concurrent
+ * `secure-store init` invocations cannot both observe "missing" and
+ * race to overwrite each other — the second writer reliably gets
+ * `EEXIST` and surfaces "Refusing to overwrite".
+ *
+ * Codex P1 on PR #737: a previous version pre-checked existence with
+ * `readFile` then `writeFile`+`rename`, which is a check-then-act
+ * race. The `wx` flag closes that window at the kernel layer.
+ *
+ * Crash safety: if the write is interrupted mid-flight, a partial
+ * `header.json` may remain on disk. `parseHeader` rejects partial
+ * files cleanly and the operator can delete the stub and retry. We
+ * don't use temp+rename here because (a) headers are tiny (≤ 1 KiB),
+ * (b) there is no prior valid file to destroy, and (c) `wx` already
+ * gives us atomic exclusivity — the rename trick (CLAUDE.md gotcha
+ * #54) is for replacing an existing valid file, which is exactly the
+ * scenario this function refuses.
  */
 export async function writeHeader(memoryDir: string, header: SecureStoreHeader): Promise<string> {
   validateHeader(header);
   const dir = secureStoreDir(memoryDir);
   await mkdir(dir, { recursive: true });
   const target = headerPath(memoryDir);
-  // Existence check via readFile: writeFile with `wx` flag would also
-  // work, but readFile gives a clearer error message.
-  let exists = false;
   try {
-    await readFile(target, "utf8");
-    exists = true;
+    await writeFile(target, serializeHeader(header), {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw e;
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error(
+        `secure-store header already exists at ${target}. Refusing to overwrite — initialize a fresh store or remove the existing header explicitly.`,
+      );
     }
+    throw e;
   }
-  if (exists) {
-    throw new Error(
-      `secure-store header already exists at ${target}. Refusing to overwrite — initialize a fresh store or remove the existing header explicitly.`,
-    );
-  }
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`;
-  // Per CLAUDE.md gotcha #54: write tmp first, rename atomically.
-  await writeFile(tmp, serializeHeader(header), { encoding: "utf8", mode: 0o600 });
-  await rename(tmp, target);
   return target;
 }
 

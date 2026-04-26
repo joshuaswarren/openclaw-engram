@@ -467,3 +467,36 @@ test("readHeader rejects a tampered header file", async () => {
     await assert.rejects(readHeader(memoryDir), /not valid JSON/);
   });
 });
+
+// ─── concurrent writeHeader: exactly one wins ────────────────────────
+
+test("concurrent writeHeader calls — exactly one succeeds, the rest get EEXIST", async () => {
+  // Codex P1 on PR #737: the previous read-then-write existence check
+  // was a check-then-act race. With the `wx` flag, the OS guarantees
+  // exactly one writer succeeds even when multiple inits are in
+  // flight simultaneously.
+  await withTmpMemoryDir(async (memoryDir) => {
+    const builds = Array.from({ length: 5 }, () =>
+      buildHeaderFromPassphrase({
+        passphrase: TEST_PASSPHRASE,
+        salt: generateSalt(),
+        algorithm: "scrypt",
+        params: FAST_SCRYPT,
+      }),
+    );
+    const results = await Promise.allSettled(
+      builds.map((b) => writeHeader(memoryDir, b.header)),
+    );
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    assert.equal(fulfilled.length, 1, "exactly one writer should succeed");
+    assert.equal(rejected.length, builds.length - 1);
+    for (const r of rejected) {
+      assert.match(
+        (r as PromiseRejectedResult).reason.message,
+        /Refusing to overwrite/,
+      );
+    }
+    for (const b of builds) b.derivedKey.fill(0);
+  });
+});
