@@ -252,6 +252,38 @@ function readDedupRecent(
   }
 }
 
+/**
+ * Read the tail of a JSONL file capped at TAIL_BYTES so we never load
+ * gigabytes into memory just to surface the most recent rows.
+ */
+async function readJsonlTail(
+  ledgerPath: string,
+  tailBytes: number,
+): Promise<string | null> {
+  try {
+    const stat = await fs.stat(ledgerPath);
+    const fileSize = stat.size;
+    if (fileSize <= tailBytes) {
+      return await fs.readFile(ledgerPath, "utf-8");
+    }
+    const fh = await fs.open(ledgerPath, "r");
+    try {
+      const offset = fileSize - tailBytes;
+      const buf = Buffer.alloc(tailBytes);
+      await fh.read(buf, 0, tailBytes, offset);
+      const slice = buf.toString("utf-8");
+      const firstNewline = slice.indexOf("\n");
+      return firstNewline >= 0 ? slice.slice(firstNewline + 1) : slice;
+    } finally {
+      await fh.close();
+    }
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return null;
+    throw err;
+  }
+}
+
 async function readMaintenanceLedgerTail(
   orchestrator: ConsoleStateOrchestratorLike,
   errors: string[],
@@ -259,65 +291,46 @@ async function readMaintenanceLedgerTail(
   try {
     const memoryDir = orchestrator.config?.memoryDir;
     if (!memoryDir || typeof memoryDir !== "string") return [];
-    // Standard observation-ledger location used by extraction judge,
-    // turn-count, and other categories. Keep this in sync with
-    // `state/observation-ledger/` paths in extraction-judge-telemetry.ts
-    // and maintenance/observation-ledger-utils.ts.
-    const ledgerPath = path.join(
-      memoryDir,
-      "state",
-      "observation-ledger",
-      "rebuilt-observations.jsonl",
-    );
-    // Codex P2: read only the tail rather than the full file so
-    // `gatherConsoleState()` doesn't scale with ledger size. JSONL
-    // rows are bounded in practice; capping at 256 KiB still returns
-    // far more than `MAX_LEDGER_TAIL=50` rows in any realistic case
-    // and protects the console surface from a multi-GB observation
-    // ledger.
+    const ledgerDir = path.join(memoryDir, "state", "observation-ledger");
+    // Codex P2 (round 2): read BOTH canonical ledger files and merge
+    // them. `extraction-judge-verdicts.jsonl` is the live verdict
+    // append-log written by extraction-judge-telemetry.ts;
+    // `rebuilt-observations.jsonl` is the periodic aggregate from
+    // maintenance/rebuild-observations.ts. Without the verdicts file,
+    // the snapshot misses recent judge events when no rebuild has
+    // run. Sort the merged set by `ts` descending afterward so the
+    // tail reflects global recency, not the on-disk row order
+    // (rebuilt rows are sorted by sessionKey/hour, not recency —
+    // codex P2 round 2).
     const TAIL_BYTES = 256 * 1024;
-    let raw: string;
-    try {
-      const stat = await fs.stat(ledgerPath);
-      const fileSize = stat.size;
-      if (fileSize <= TAIL_BYTES) {
-        raw = await fs.readFile(ledgerPath, "utf-8");
-      } else {
-        const fh = await fs.open(ledgerPath, "r");
-        try {
-          const offset = fileSize - TAIL_BYTES;
-          const buf = Buffer.alloc(TAIL_BYTES);
-          await fh.read(buf, 0, TAIL_BYTES, offset);
-          // Drop everything before the first newline so we don't try
-          // to parse a partial JSON row at the start of the window.
-          const slice = buf.toString("utf-8");
-          const firstNewline = slice.indexOf("\n");
-          raw = firstNewline >= 0 ? slice.slice(firstNewline + 1) : slice;
-        } finally {
-          await fh.close();
-        }
-      }
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") return [];
-      throw err;
-    }
+    const verdictsRaw = await readJsonlTail(
+      path.join(ledgerDir, "extraction-judge-verdicts.jsonl"),
+      TAIL_BYTES,
+    );
+    const rebuiltRaw = await readJsonlTail(
+      path.join(ledgerDir, "rebuilt-observations.jsonl"),
+      TAIL_BYTES,
+    );
+    if (verdictsRaw === null && rebuiltRaw === null) return [];
     const events: ConsoleMaintenanceLedgerEvent[] = [];
-    const lines = raw.split("\n");
-    // Iterate from the tail to bound work for large ledgers.
-    for (let i = lines.length - 1; i >= 0 && events.length < MAX_LEDGER_TAIL; i--) {
-      const line = lines[i]?.trim();
-      if (!line) continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-        continue;
-      }
-      const p = parsed as Record<string, unknown>;
+    const sources: Array<{ raw: string }> = [];
+    if (verdictsRaw !== null) sources.push({ raw: verdictsRaw });
+    if (rebuiltRaw !== null) sources.push({ raw: rebuiltRaw });
+    for (const { raw } of sources) {
+      const lines = raw.split("\n");
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(trimmed);
+        } catch {
+          continue;
+        }
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          continue;
+        }
+        const p = parsed as Record<string, unknown>;
       // Codex P2: the canonical writers (`rebuildObservations` and
       // `migrateObservations`) emit rows shaped like
       // `{sessionKey, hour, turnCount, userTurns, assistantTurns,
@@ -345,10 +358,27 @@ async function readMaintenanceLedgerTail(
               ? "observation"
               : "unknown";
       const summary = summarizeLedgerEvent(p);
-      events.push({ ts, category, summary });
+        events.push({ ts, category, summary });
+      }
     }
+    // Codex P2 round 2: rebuilt-observations rows are written sorted
+    // by sessionKey then hour, NOT by global recency. Sort the merged
+    // set by `ts` descending and take the most recent MAX_LEDGER_TAIL
+    // so the snapshot reflects what just happened, regardless of
+    // on-disk row order. Rows with no parseable `ts` sort last.
+    events.sort((a, b) => {
+      const aMs = a.ts ? Date.parse(a.ts) : NaN;
+      const bMs = b.ts ? Date.parse(b.ts) : NaN;
+      const aOk = Number.isFinite(aMs);
+      const bOk = Number.isFinite(bMs);
+      if (aOk && bOk) return bMs - aMs;
+      if (aOk) return -1;
+      if (bOk) return 1;
+      return 0;
+    });
+    const tail = events.slice(0, MAX_LEDGER_TAIL);
     // Reverse so the caller sees oldest-first within the tail window.
-    return events.reverse();
+    return tail.reverse();
   } catch (err) {
     errors.push(`maintenanceLedgerTail: ${describeError(err)}`);
     return [];
