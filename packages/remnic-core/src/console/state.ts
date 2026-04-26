@@ -269,9 +269,34 @@ async function readMaintenanceLedgerTail(
       "observation-ledger",
       "rebuilt-observations.jsonl",
     );
+    // Codex P2: read only the tail rather than the full file so
+    // `gatherConsoleState()` doesn't scale with ledger size. JSONL
+    // rows are bounded in practice; capping at 256 KiB still returns
+    // far more than `MAX_LEDGER_TAIL=50` rows in any realistic case
+    // and protects the console surface from a multi-GB observation
+    // ledger.
+    const TAIL_BYTES = 256 * 1024;
     let raw: string;
     try {
-      raw = await fs.readFile(ledgerPath, "utf-8");
+      const stat = await fs.stat(ledgerPath);
+      const fileSize = stat.size;
+      if (fileSize <= TAIL_BYTES) {
+        raw = await fs.readFile(ledgerPath, "utf-8");
+      } else {
+        const fh = await fs.open(ledgerPath, "r");
+        try {
+          const offset = fileSize - TAIL_BYTES;
+          const buf = Buffer.alloc(TAIL_BYTES);
+          await fh.read(buf, 0, TAIL_BYTES, offset);
+          // Drop everything before the first newline so we don't try
+          // to parse a partial JSON row at the start of the window.
+          const slice = buf.toString("utf-8");
+          const firstNewline = slice.indexOf("\n");
+          raw = firstNewline >= 0 ? slice.slice(firstNewline + 1) : slice;
+        } finally {
+          await fh.close();
+        }
+      }
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "ENOENT") return [];
