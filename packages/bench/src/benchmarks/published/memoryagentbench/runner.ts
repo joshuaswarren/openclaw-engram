@@ -3,7 +3,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Message } from "../../../adapters/types.js";
 import { answerBenchmarkQuestion } from "../../../answering.js";
@@ -25,6 +25,7 @@ import {
   containsAnswer,
   f1Score,
   llmJudgeScoreDetailed,
+  recallAtK,
   rougeL,
   timed,
 } from "../../../scorer.js";
@@ -84,6 +85,23 @@ const DATASET_BUNDLE_CANDIDATES = [
   "MemoryAgentBench.jsonl",
 ] as const;
 
+type MemoryAgentBenchProtocol =
+  | "ruler_qa"
+  | "longmemeval"
+  | "eventqa"
+  | "in_context_learning"
+  | "recsys_redial"
+  | "infbench_sum"
+  | "detective_qa"
+  | "factconsolidation";
+
+interface RecSysEntityMapping {
+  idToName: Map<number, string>;
+  movieCandidates: string[];
+  aliasCounts: Map<string, number>;
+  sourcePath: string;
+}
+
 export const memoryAgentBenchDefinition: BenchmarkDefinition = {
   id: "memoryagentbench",
   title: "MemoryAgentBench",
@@ -105,6 +123,8 @@ export async function runMemoryAgentBenchBenchmark(
   options: ResolvedRunBenchmarkOptions,
 ): Promise<BenchmarkResult> {
   const dataset = await loadDataset(options.mode, options.datasetDir, options.limit);
+  let recsysMappingLoaded = false;
+  let recsysMapping: RecSysEntityMapping | null = null;
   const tasks: TaskResult[] = [];
 
   const totalQuestions = dataset.reduce(
@@ -133,38 +153,94 @@ export async function runMemoryAgentBenchBenchmark(
       const taskResultId =
         item.metadata.qa_pair_ids?.[questionIndex] ??
         `${item.metadata.source}-q${questionIndex}`;
+      let protocol: MemoryAgentBenchProtocol | undefined;
 
       try {
+        protocol = getProtocolForSource(item.metadata.source);
+        const officialQuestion = buildOfficialQuery(protocol, question);
         const { result: recalledText, durationMs } = await timed(async () => {
           const recalledSessions = await Promise.all(
-            sessionIds.map((sessionId) => options.system.recall(sessionId, question)),
+            sessionIds.map((sessionId) =>
+              options.system.recall(sessionId, question),
+            ),
           );
           return recalledSessions.filter(Boolean).join("\n\n");
         });
         const answered = await answerBenchmarkQuestion({
-          question,
+          question: officialQuestion,
           recalledText,
           responder: options.system.responder,
         });
-        const bestExpectedAnswer = selectBestMatchingAnswer(answered.finalAnswer, answerVariants);
+        if (protocol === "recsys_redial" && !recsysMappingLoaded) {
+          recsysMapping = await loadRecSysEntityMapping(options.datasetDir);
+          recsysMappingLoaded = true;
+        }
+        const officialScoring = scoreOfficialProtocol({
+          protocol,
+          actual: answered.finalAnswer,
+          answerVariants,
+          recsysMapping: protocol === "recsys_redial" ? recsysMapping : null,
+        });
+        const bestExpectedAnswer = selectBestMatchingAnswer(
+          officialScoring.parsedAnswer ?? answered.finalAnswer,
+          answerVariants,
+        );
         const judgeResult = await llmJudgeScoreDetailed(
           options.system.judge,
           question,
-          answered.finalAnswer,
+          officialScoring.parsedAnswer ?? answered.finalAnswer,
           bestExpectedAnswer,
         );
 
         const scores: Record<string, number> = {
-          f1: scoreAgainstVariants(answered.finalAnswer, answerVariants, f1Score),
+          f1: scoreAgainstVariants(
+            officialScoring.parsedAnswer ?? answered.finalAnswer,
+            answerVariants,
+            f1Score,
+          ),
           contains_answer: answerVariants.some((variant) =>
-            containsAnswer(answered.finalAnswer, variant),
+            containsAnswer(officialScoring.parsedAnswer ?? answered.finalAnswer, variant),
           )
             ? 1
             : 0,
-          rouge_l: scoreAgainstVariants(answered.finalAnswer, answerVariants, rougeL),
+          rouge_l: scoreAgainstVariants(
+            officialScoring.parsedAnswer ?? answered.finalAnswer,
+            answerVariants,
+            rougeL,
+          ),
+          ...officialScoring.scores,
         };
         if (judgeResult.score >= 0) {
           scores.llm_judge = judgeResult.score;
+        }
+
+        const details: Record<string, unknown> = {
+          competency: item.metadata.competency,
+          source: item.metadata.source,
+          questionType: item.metadata.question_types?.[questionIndex],
+          questionId: item.metadata.question_ids?.[questionIndex],
+          questionDate: item.metadata.question_dates?.[questionIndex],
+          previousEvent: item.metadata.previous_events?.[questionIndex],
+          keypoints: item.metadata.keypoints ?? [],
+          officialProtocol: protocol,
+          officialQuestion,
+          answerVariants,
+          bestExpectedAnswer,
+          parsedOfficialAnswer: officialScoring.parsedAnswer,
+          sessionIds,
+          storedSessionCount: sessionIds.length,
+          recalledLength: recalledText.length,
+          answeredLength: answered.finalAnswer.length,
+          recalledText,
+          answeredText: answered.finalAnswer,
+          responderModel: answered.model,
+          judgeModel: judgeResult.model,
+        };
+        if (protocol === "recsys_redial") {
+          details.recsysScoringReady = officialScoring.recsysScoringReady;
+          details.recsysEntityMappingPath = recsysMapping?.sourcePath;
+          details.recsysGroundTruthMovies = officialScoring.groundTruthMovies;
+          details.recsysPredictedMovies = officialScoring.predictedMovies;
         }
 
         tasks.push({
@@ -178,25 +254,7 @@ export async function runMemoryAgentBenchBenchmark(
             input: answered.tokens.input + judgeResult.tokens.input,
             output: answered.tokens.output + judgeResult.tokens.output,
           },
-          details: {
-            competency: item.metadata.competency,
-            source: item.metadata.source,
-            questionType: item.metadata.question_types?.[questionIndex],
-            questionId: item.metadata.question_ids?.[questionIndex],
-            questionDate: item.metadata.question_dates?.[questionIndex],
-            previousEvent: item.metadata.previous_events?.[questionIndex],
-            keypoints: item.metadata.keypoints ?? [],
-            answerVariants,
-            bestExpectedAnswer,
-            sessionIds,
-            storedSessionCount: sessionIds.length,
-            recalledLength: recalledText.length,
-            answeredLength: answered.finalAnswer.length,
-            recalledText,
-            answeredText: answered.finalAnswer,
-            responderModel: answered.model,
-            judgeModel: judgeResult.model,
-          },
+          details,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -206,7 +264,7 @@ export async function runMemoryAgentBenchBenchmark(
           question,
           expected: answerVariants[0]!,
           actual: `(error: ${message})`,
-          scores: { f1: -1, contains_answer: -1, rouge_l: -1, llm_judge: -1 },
+          scores: errorScoresForProtocol(protocol),
           latencyMs: 0,
           tokens: { input: 0, output: 0 },
           details: { error: message },
@@ -259,6 +317,682 @@ export async function runMemoryAgentBenchBenchmark(
       hardware: process.arch,
     },
   };
+}
+
+function errorScoresForProtocol(
+  protocol: MemoryAgentBenchProtocol | undefined,
+): Record<string, number> {
+  const scores: Record<string, number> = {
+    f1: -1,
+    contains_answer: -1,
+    rouge_l: -1,
+    llm_judge: -1,
+    official_protocol_ready: 0,
+  };
+  if (protocol !== "recsys_redial") {
+    scores.official_exact_match = -1;
+    scores.official_f1 = -1;
+    scores.official_substring_exact_match = -1;
+    scores.official_rouge_l = -1;
+  }
+  if (protocol === "eventqa") {
+    scores.eventqa_recall = -1;
+  }
+  if (protocol === "recsys_redial") {
+    scores.recsys_recall_at_1 = -1;
+    scores.recsys_recall_at_5 = -1;
+    scores.recsys_recall_at_10 = -1;
+  }
+  return scores;
+}
+
+function getProtocolForSource(source: string): MemoryAgentBenchProtocol {
+  const normalized = source.toLowerCase();
+  if (normalized.startsWith("ruler_")) {
+    return "ruler_qa";
+  }
+  if (normalized.startsWith("longmemeval")) {
+    return "longmemeval";
+  }
+  if (normalized.startsWith("eventqa")) {
+    return "eventqa";
+  }
+  if (normalized.startsWith("icl_")) {
+    return "in_context_learning";
+  }
+  if (normalized.startsWith("recsys_")) {
+    return "recsys_redial";
+  }
+  if (normalized.startsWith("infbench_")) {
+    return "infbench_sum";
+  }
+  if (normalized.startsWith("detective_")) {
+    return "detective_qa";
+  }
+  if (normalized.startsWith("factconsolidation")) {
+    return "factconsolidation";
+  }
+  throw new Error(
+    `MemoryAgentBench metadata.source "${source}" does not map to a supported official protocol.`,
+  );
+}
+
+function buildOfficialQuery(
+  protocol: MemoryAgentBenchProtocol,
+  question: string,
+): string {
+  switch (protocol) {
+    case "ruler_qa":
+      return [
+        "Answer the question based on the memorized documents. Only give me the answer and do not output any other words.",
+        "",
+        `Question: ${question}`,
+        "",
+        "Answer:",
+      ].join("\n");
+    case "longmemeval":
+      return [
+        "The history chats are between you and a user. Based on the relevant chat history, answer the question as concisely as you can, using a single phrase if possible.",
+        "",
+        question,
+        "",
+        "Answer:",
+      ].join("\n");
+    case "eventqa":
+      return [
+        "Based on the context you memorized, complete the task below:",
+        "",
+        question,
+        "",
+        "The event that happens next is:",
+      ].join("\n");
+    case "in_context_learning":
+      return [
+        "Use the provided mapping from the context to numerical label to assign a numerical label to the context.",
+        'Only output "label: {label}" and nothing else.',
+        "",
+        question,
+        "",
+        "label:",
+      ].join("\n");
+    case "recsys_redial":
+      return [
+        "Pretend you are a movie recommender system. You need to recommend movies based on the dialogues you have memorized.",
+        "Now I will give you a new conversation between a user and you, a recommender system.",
+        "Based on the conversation, reply with 20 movie recommendations without extra sentences.",
+        "",
+        "For Example:",
+        "",
+        "[Conversation]",
+        "",
+        "The recommendations are:",
+        "1. movie1",
+        "2. movie2",
+        "...",
+        "",
+        `Here is the conversation: ${question}`,
+        "",
+        "The recommendations are:",
+      ].join("\n");
+    case "infbench_sum":
+      return [
+        "You are given a book above and you are tasked to summarize it.",
+        "",
+        question,
+        "",
+        "Now summarize the book.",
+      ].join("\n");
+    case "detective_qa":
+      return [
+        "Based on the context you memorized, answer the question below. You are required to answer the question based on the strict output format.",
+        "",
+        question,
+      ].join("\n");
+    case "factconsolidation":
+      return [
+        "Pretend you are a knowledge management system. Each fact in the knowledge pool is provided with a serial number at the beginning, and the newer fact has larger serial number.",
+        "You need to solve conflicts in the knowledge pool by finding the newest fact with the larger serial number.",
+        "Answer only from the knowledge pool you memorized, not from real-world facts. Give a very concise answer without other words.",
+        "",
+        "For example:",
+        "",
+        "[Knowledge Pool]",
+        "",
+        "Question: Based on the provided Knowledge Pool, what is the name of the current president of Russia?",
+        "Answer: Donald Trump",
+        "",
+        `Now Answer the Question: Based on the provided Knowledge Pool, ${question}`,
+        "Answer:",
+      ].join("\n");
+  }
+}
+
+function scoreOfficialProtocol(options: {
+  protocol: MemoryAgentBenchProtocol;
+  actual: string;
+  answerVariants: string[];
+  recsysMapping: RecSysEntityMapping | null;
+}): {
+  scores: Record<string, number>;
+  parsedAnswer: string | undefined;
+  recsysScoringReady?: boolean;
+  predictedMovies?: string[];
+  groundTruthMovies?: string[];
+} {
+  if (options.protocol === "recsys_redial") {
+    return scoreRecSysRedial(options.actual, options.answerVariants, options.recsysMapping);
+  }
+
+  const parsedAnswer =
+    options.protocol === "in_context_learning"
+      ? parseIclLabel(options.actual)
+      : options.protocol === "eventqa"
+        ? parseEventQaAnswer(options.actual)
+        : parseOfficialAnswer(options.actual);
+  const answerForScoring = parsedAnswer ?? options.actual;
+  const textScores = calculateOfficialTextScores(answerForScoring, options.answerVariants);
+  const scores: Record<string, number> = {
+    official_exact_match: textScores.exactMatch,
+    official_f1: textScores.f1,
+    official_substring_exact_match: textScores.substringExactMatch,
+    official_rouge_l: scoreAgainstVariants(answerForScoring, options.answerVariants, rougeL),
+    official_protocol_ready: 1,
+  };
+
+  if (options.protocol === "eventqa") {
+    scores.eventqa_recall =
+      options.answerVariants.some((variant) =>
+        answerForScoring.toLowerCase().includes(variant.toLowerCase()),
+      )
+        ? 1
+        : 0;
+  }
+
+  return { scores, parsedAnswer: answerForScoring };
+}
+
+function calculateOfficialTextScores(
+  prediction: string,
+  answerVariants: string[],
+): {
+  exactMatch: number;
+  f1: number;
+  substringExactMatch: number;
+} {
+  return answerVariants.reduce(
+    (best, answer) => {
+      const normalizedPrediction = normalizeOfficialAnswer(prediction);
+      const normalizedAnswer = normalizeOfficialAnswer(answer);
+      return {
+        exactMatch: Math.max(
+          best.exactMatch,
+          normalizedPrediction === normalizedAnswer ? 1 : 0,
+        ),
+        f1: Math.max(best.f1, officialF1(prediction, answer)),
+        substringExactMatch: Math.max(
+          best.substringExactMatch,
+          normalizedPrediction.includes(normalizedAnswer) ? 1 : 0,
+        ),
+      };
+    },
+    { exactMatch: 0, f1: 0, substringExactMatch: 0 },
+  );
+}
+
+function scoreRecSysRedial(
+  actual: string,
+  answerVariants: string[],
+  recsysMapping: RecSysEntityMapping | null,
+): {
+  scores: Record<string, number>;
+  parsedAnswer: string | undefined;
+  recsysScoringReady: boolean;
+  predictedMovies?: string[];
+  groundTruthMovies?: string[];
+} {
+  if (!recsysMapping) {
+    return {
+      scores: { official_protocol_ready: 0 },
+      parsedAnswer: parseOfficialAnswer(actual),
+      recsysScoringReady: false,
+    };
+  }
+
+  const predictedMovies = extractRecommendationMovies(
+    actual,
+    recsysMapping.movieCandidates,
+    recsysMapping.aliasCounts,
+  );
+  const groundTruthIds = answerVariants.map((answer) =>
+    Number.parseInt(answer.trim(), 10),
+  );
+  const hasIncompleteGroundTruthMapping =
+    groundTruthIds.length === 0 ||
+    groundTruthIds.some(
+      (id) => !Number.isInteger(id) || !recsysMapping.idToName.has(id),
+    );
+
+  if (hasIncompleteGroundTruthMapping) {
+    return {
+      scores: { official_protocol_ready: 0 },
+      parsedAnswer: predictedMovies.join("\n"),
+      recsysScoringReady: false,
+      predictedMovies,
+    };
+  }
+
+  const groundTruthMovies = groundTruthIds.map((id) => recsysMapping.idToName.get(id)!);
+
+  return {
+    scores: {
+      recsys_recall_at_1: recallAtK(predictedMovies, groundTruthMovies, 1),
+      recsys_recall_at_5: recallAtK(predictedMovies, groundTruthMovies, 5),
+      recsys_recall_at_10: recallAtK(predictedMovies, groundTruthMovies, 10),
+      official_protocol_ready: 1,
+    },
+    parsedAnswer: predictedMovies.join("\n"),
+    recsysScoringReady: true,
+    predictedMovies,
+    groundTruthMovies,
+  };
+}
+
+function parseOfficialAnswer(output: string): string {
+  const matches = [...output.matchAll(/answer:\s*/gi)];
+  const lastMatch = matches.at(-1);
+  if (lastMatch?.index !== undefined) {
+    const answerStart = lastMatch.index + lastMatch[0].length;
+    const answer = output.slice(answerStart).trim();
+    if (answer.length > 0) {
+      return answer;
+    }
+  }
+  return output.trim();
+}
+
+function parseIclLabel(output: string): string {
+  const officialAnswer = parseOfficialAnswer(output);
+  const finalTokenMatch =
+    /\blabel\s*:\s*([A-Za-z0-9_-]+)\s*[.!?]?\s*$/i.exec(officialAnswer);
+  if (finalTokenMatch?.[1]) {
+    return finalTokenMatch[1].trim();
+  }
+  return officialAnswer;
+}
+
+function parseEventQaAnswer(output: string): string {
+  return parseOfficialAnswer(output)
+    .replace(/^the event that happens next is\s*:?\s*/i, "")
+    .trim();
+}
+
+function normalizeOfficialAnswer(answer: string): string {
+  return answer
+    .toLowerCase()
+    .replace(/[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/g, "")
+    .replace(/\b(a|an|the)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function officialF1(prediction: string, groundTruth: string): number {
+  const normalizedPrediction = normalizeOfficialAnswer(prediction);
+  const normalizedGroundTruth = normalizeOfficialAnswer(groundTruth);
+  if (
+    new Set(["yes", "no", "noanswer"]).has(normalizedPrediction) !==
+      new Set(["yes", "no", "noanswer"]).has(normalizedGroundTruth) ||
+    (new Set(["yes", "no", "noanswer"]).has(normalizedPrediction) &&
+      normalizedPrediction !== normalizedGroundTruth)
+  ) {
+    return 0;
+  }
+
+  const predictionTokens = normalizedPrediction.split(" ").filter(Boolean);
+  const groundTruthTokens = normalizedGroundTruth.split(" ").filter(Boolean);
+  if (predictionTokens.length === 0 || groundTruthTokens.length === 0) {
+    return 0;
+  }
+
+  const predictionCounts = countTokens(predictionTokens);
+  const groundTruthCounts = countTokens(groundTruthTokens);
+  let common = 0;
+  for (const [token, predictionCount] of predictionCounts) {
+    common += Math.min(predictionCount, groundTruthCounts.get(token) ?? 0);
+  }
+  if (common === 0) {
+    return 0;
+  }
+  const precision = common / predictionTokens.length;
+  const recall = common / groundTruthTokens.length;
+  return (2 * precision * recall) / (precision + recall);
+}
+
+function countTokens(tokens: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const token of tokens) {
+    counts.set(token, (counts.get(token) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function extractRecommendationMovies(
+  output: string,
+  movieCandidates: string[],
+  aliasCounts: Map<string, number>,
+): string[] {
+  let recommendationText = output;
+  const numberedStart = output.search(/\b1\.\s*/);
+  if (numberedStart >= 0) {
+    recommendationText = output.slice(numberedStart).replace(/^\s*1\.\s*/, "");
+  }
+
+  return recommendationText
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/^\s*\d+[\.)]\s*/, "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    )
+    .filter(Boolean)
+    .flatMap((line) =>
+      extractRecommendationMoviesFromLine(line, movieCandidates, aliasCounts),
+    );
+}
+
+function extractRecommendationMoviesFromLine(
+  line: string,
+  movieCandidates: string[],
+  aliasCounts: Map<string, number>,
+): string[] {
+  const exactMatches = findMovieCandidateMentions(line, movieCandidates, aliasCounts);
+  if (exactMatches.length > 0) {
+    return exactMatches;
+  }
+
+  const commaSeparatedMovies = line
+    .split(/\s*,\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (commaSeparatedMovies.length > 1) {
+    return commaSeparatedMovies.flatMap((movie) =>
+      /\(\d{4}\)/.test(movie)
+        ? findNearestMovieIfClose(movie, movieCandidates)
+        : extractRecommendationMoviesFromLine(movie, movieCandidates, aliasCounts),
+    );
+  }
+
+  if (/\(\d{4}\)/.test(line)) {
+    return findNearestMovieIfClose(line, movieCandidates);
+  }
+
+  return [];
+}
+
+function findMovieCandidateMentions(
+  line: string,
+  movieCandidates: string[],
+  aliasCounts: Map<string, number>,
+): string[] {
+  const normalizedLine = line.toLowerCase();
+  const mentions = movieCandidates
+    .map((movie) => findMovieCandidateMention(normalizedLine, movie, aliasCounts))
+    .filter((mention): mention is { movie: string; index: number; end: number } =>
+      mention !== null,
+    )
+    .sort((a, b) => b.movie.length - a.movie.length || a.index - b.index);
+
+  const selected: typeof mentions = [];
+  for (const mention of mentions) {
+    if (
+      selected.some(
+        (existing) => mention.index < existing.end && existing.index < mention.end,
+      )
+    ) {
+      continue;
+    }
+    selected.push(mention);
+  }
+
+  return selected.sort((a, b) => a.index - b.index).map((mention) => mention.movie);
+}
+
+function findMovieCandidateMention(
+  normalizedLine: string,
+  movie: string,
+  aliasCounts: Map<string, number>,
+): { movie: string; index: number; end: number } | null {
+  for (const alias of movieAliases(movie)) {
+    const normalizedAlias = alias.toLowerCase();
+    if ((aliasCounts.get(normalizedAlias) ?? 0) > 1) {
+      continue;
+    }
+    if (
+      normalizedAlias.length < 4 &&
+      stripTrailingRecommendationPunctuation(normalizedLine) !== normalizedAlias
+    ) {
+      continue;
+    }
+    const index = findDelimitedIndex(normalizedLine, normalizedAlias);
+    if (index >= 0) {
+      return { movie, index, end: index + alias.length };
+    }
+  }
+  return null;
+}
+
+function stripTrailingRecommendationPunctuation(value: string): string {
+  return value
+    .replace(/^["'`]+/g, "")
+    .replace(/["'`.!?;:]+$/g, "")
+    .trim();
+}
+
+function countMovieAliases(movieCandidates: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const movie of movieCandidates) {
+    for (const alias of movieAliases(movie)) {
+      const normalizedAlias = alias.toLowerCase();
+      counts.set(normalizedAlias, (counts.get(normalizedAlias) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+function movieAliases(movie: string): string[] {
+  const aliases = [movie];
+  const titleWithoutYear = movie.replace(/\s*\(\d{4}\)\s*$/, "").trim();
+  if (titleWithoutYear.length >= 2 && titleWithoutYear !== movie) {
+    aliases.push(titleWithoutYear);
+  }
+  const titleWithoutArticle = titleWithoutYear.replace(/^(?:the|a|an)\s+/i, "").trim();
+  if (titleWithoutArticle.length >= 2 && titleWithoutArticle !== titleWithoutYear) {
+    aliases.push(titleWithoutArticle);
+  }
+  return aliases;
+}
+
+function findDelimitedIndex(haystack: string, needle: string): number {
+  let start = 0;
+  while (start < haystack.length) {
+    const index = haystack.indexOf(needle, start);
+    if (index < 0) {
+      return -1;
+    }
+    const before = index > 0 ? haystack[index - 1] : undefined;
+    const after = haystack[index + needle.length];
+    if (isMovieAliasBoundary(before) && isMovieAliasBoundary(after)) {
+      return index;
+    }
+    start = index + 1;
+  }
+  return -1;
+}
+
+function isMovieAliasBoundary(char: string | undefined): boolean {
+  return char === undefined || !/[a-z0-9]/i.test(char);
+}
+
+function findNearestMovieIfClose(
+  targetName: string,
+  movieCandidates: string[],
+): string[] {
+  const match = findNearestMovieMatch(targetName, movieCandidates);
+  if (!match) {
+    return [];
+  }
+  const maxLength = Math.max(targetName.length, match.movie.length);
+  const maxDistance = Math.max(3, Math.ceil(maxLength * 0.35));
+  return match.distance <= maxDistance ? [match.movie] : [];
+}
+
+function findNearestMovieMatch(
+  targetName: string,
+  movieCandidates: string[],
+): { movie: string; distance: number } | null {
+  if (movieCandidates.length === 0) {
+    return null;
+  }
+  let bestMovie = movieCandidates[0] ?? targetName;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  const normalizedTarget = targetName.toLowerCase();
+
+  for (const candidate of movieCandidates) {
+    const distance = editDistance(normalizedTarget, candidate.toLowerCase());
+    if (distance < bestDistance) {
+      bestMovie = candidate;
+      bestDistance = distance;
+    }
+  }
+
+  return { movie: bestMovie, distance: bestDistance };
+}
+
+function editDistance(a: string, b: string): number {
+  const previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  const current = new Array<number>(b.length + 1);
+
+  for (let i = 1; i <= a.length; i += 1) {
+    current[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const substitutionCost = a[i - 1] === b[j - 1] ? 0 : 1;
+      current[j] = Math.min(
+        previous[j]! + 1,
+        current[j - 1]! + 1,
+        previous[j - 1]! + substitutionCost,
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+
+  return previous[b.length] ?? 0;
+}
+
+async function loadRecSysEntityMapping(
+  datasetDir: string | undefined,
+): Promise<RecSysEntityMapping | null> {
+  const candidates = recsysEntityMappingCandidates(datasetDir);
+  for (const candidate of candidates) {
+    if (!(await fileExists(candidate))) {
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readFile(candidate, "utf8")) as unknown;
+    } catch (error) {
+      console.error(
+        `  [WARN] MemoryAgentBench ReDial entity mapping ${candidate} is invalid JSON; trying the next candidate: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      console.error(
+        `  [WARN] MemoryAgentBench ReDial entity mapping ${candidate} must be an object; trying the next candidate.`,
+      );
+      continue;
+    }
+
+    const idToName = new Map<number, string>();
+    let invalidMapping = false;
+    for (const [rawName, rawId] of Object.entries(parsed)) {
+      const id = typeof rawId === "number" ? rawId : Number(rawId);
+      if (!Number.isInteger(id)) {
+        console.error(
+          `  [WARN] MemoryAgentBench ReDial entity mapping ${candidate} has non-integer id for ${rawName}; trying the next candidate.`,
+        );
+        invalidMapping = true;
+        break;
+      }
+      idToName.set(id, extractMovieName(rawName));
+    }
+    if (invalidMapping) {
+      continue;
+    }
+    if (idToName.size === 0) {
+      console.error(
+        `  [WARN] MemoryAgentBench ReDial entity mapping ${candidate} is empty; trying the next candidate.`,
+      );
+      continue;
+    }
+
+    return {
+      idToName,
+      movieCandidates: [...new Set(idToName.values())],
+      aliasCounts: countMovieAliases([...new Set(idToName.values())]),
+      sourcePath: candidate,
+    };
+  }
+  return null;
+}
+
+function recsysEntityMappingCandidates(datasetDir: string | undefined): string[] {
+  if (!datasetDir) {
+    return [];
+  }
+  const absoluteDatasetDir = path.resolve(datasetDir);
+  const roots = [
+    absoluteDatasetDir,
+    path.dirname(absoluteDatasetDir),
+  ];
+
+  const canonicalSuffixes = [
+    path.join("processed_data", "Recsys_Redial", "entity2id.json"),
+    path.join("Recsys_Redial", "entity2id.json"),
+  ];
+  const looseSuffixes = ["entity2id.json"];
+
+  return [
+    ...roots.flatMap((root) =>
+      canonicalSuffixes.map((suffix) => path.join(root, suffix)),
+    ),
+    ...looseSuffixes.map((suffix) => path.join(absoluteDatasetDir, suffix)),
+  ];
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function extractMovieName(rawName: string): string {
+  const filename = rawName.split("/").pop() ?? rawName;
+  const decodedFilename = decodeUrlComponentSafely(filename);
+  return decodedFilename
+    .replace(/[_>]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function decodeUrlComponentSafely(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 async function loadDataset(
