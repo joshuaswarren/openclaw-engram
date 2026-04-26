@@ -7402,7 +7402,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           let recorder:
             | {
                 append: (snapshot: import("./console/state.js").ConsoleStateSnapshot) => Promise<void>;
-                close: () => Promise<void>;
+                close: (signal?: AbortSignal) => Promise<void>;
               }
             | null = null;
           if (
@@ -7435,12 +7435,27 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               const CLOSE_TIMEOUT_MS = 2000;
               const { flushWithTimeout } = await import("./console/trace.js");
               const flushResult = await flushWithTimeout(
-                () => recorder!.close(),
+                (signal) => recorder!.close(signal),
                 CLOSE_TIMEOUT_MS,
               );
               if (flushResult.timedOut) {
                 console.warn(
                   `[remnic console] trace flush timed out after ${CLOSE_TIMEOUT_MS}ms; some final frames may be lost`,
+                );
+              }
+              // Codex P2 (PR #732 round 5): surface flush errors at
+              // warn level so operators learn about I/O failures instead
+              // of silently losing them. The error message is
+              // stringified (not spread with %o) to avoid accidentally
+              // logging object internals that might contain paths or
+              // other sensitive strings.
+              if (flushResult.error != null) {
+                const msg =
+                  flushResult.error instanceof Error
+                    ? flushResult.error.message
+                    : String(flushResult.error);
+                console.warn(
+                  `[remnic console] trace flush error: ${msg}`,
                 );
               }
             }

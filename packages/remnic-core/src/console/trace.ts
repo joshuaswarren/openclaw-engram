@@ -67,8 +67,16 @@ export interface TraceRecorder {
    * crash because tracing failed.
    */
   append: (snapshot: ConsoleStateSnapshot) => Promise<void>;
-  /** Close the underlying file handle. Idempotent. */
-  close: () => Promise<void>;
+  /**
+   * Close the underlying file handle. Idempotent.
+   *
+   * The optional `signal` parameter is forwarded from
+   * `flushWithTimeout` when the deadline wins the race. When the
+   * signal fires, the pending write-chain drain is abandoned and the
+   * file handle is closed immediately, releasing OS resources instead
+   * of leaving the handle open until the orphaned writeChain resolves.
+   */
+  close: (signal?: AbortSignal) => Promise<void>;
   /** Returns the most recent error (or null) without throwing. */
   getLastError: () => string | null;
 }
@@ -147,7 +155,7 @@ export async function openTraceRecorder(
         // already captured in lastError via queueWrite
       }
     },
-    close: async () => {
+    close: async (signal?: AbortSignal) => {
       if (closed) return;
       // Codex P1: do NOT set `closed = true` before draining. Each
       // queued write begins with `if (closed) return;`, so flipping the
@@ -157,10 +165,31 @@ export async function openTraceRecorder(
       // THEN flip `closed` to reject any further appends, THEN close
       // the file handle. This honors the documented "drain pending
       // writes" contract of `close()`.
+      //
+      // Codex P1 (PR #732 round 5): when `flushWithTimeout` races the
+      // drain against a deadline and the timeout wins, it fires the
+      // `signal` passed here. We race the writeChain drain against that
+      // signal so the file handle is closed promptly instead of being
+      // held open until the orphaned writeChain eventually resolves.
       try {
-        await writeChain;
+        if (signal) {
+          await Promise.race([
+            writeChain,
+            new Promise<void>((_, reject) => {
+              if (signal.aborted) {
+                reject(makeAbortError());
+                return;
+              }
+              signal.addEventListener("abort", () => reject(makeAbortError()), {
+                once: true,
+              });
+            }),
+          ]);
+        } else {
+          await writeChain;
+        }
       } catch {
-        // ignore — already in lastError
+        // ignore — abort or I/O error already in lastError
       }
       closed = true;
       try {
@@ -489,15 +518,30 @@ export interface FlushWithTimeoutResult {
  *
  * Errors raised by the flush are captured in `result.error` rather
  * than re-thrown.
+ *
+ * The `flush` factory receives an `AbortSignal` that fires when the
+ * timeout wins the race. Callers should forward the signal into
+ * whatever I/O the flush performs so the underlying operation is
+ * actually cancelled rather than just orphaned. The signal is fired
+ * exactly once, immediately after the timeout sentinel wins. The flush
+ * promise is still awaited in the background; any subsequent error is
+ * silently discarded (it was already abandoned by the caller).
  */
 export async function flushWithTimeout(
-  flush: () => Promise<void>,
+  flush: (signal: AbortSignal) => Promise<void>,
   timeoutMs: number,
 ): Promise<FlushWithTimeoutResult> {
   const TIMEOUT_SENTINEL = Symbol("flush-timeout");
   let error: unknown = null;
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-  const flushPromise = flush().then(
+  // Codex P1 (PR #732 round 5): give the flush an AbortSignal so the
+  // underlying close() can stop holding resources when the timeout
+  // wins. Previously the close kept running silently after the race
+  // resolved — the AbortController lets callers wire cancellation into
+  // their I/O path (e.g., by aborting a stream or write chain) instead
+  // of merely abandoning the orphaned promise.
+  const ac = new AbortController();
+  const flushPromise = flush(ac.signal).then(
     () => undefined,
     (err) => {
       error = err;
@@ -523,6 +567,9 @@ export async function flushWithTimeout(
       timeoutPromise,
     ]);
     if (winner === TIMEOUT_SENTINEL) {
+      // Fire the abort signal so the flush's underlying I/O can
+      // release its resources rather than staying open indefinitely.
+      ac.abort();
       return { flushed: false, timedOut: true, error: null };
     }
     return { flushed: true, timedOut: false, error };

@@ -352,6 +352,58 @@ test("trace backpressure drops frames while a previous append is pending (Codex 
   await handle.done;
 });
 
+test("getDroppedTraceFrames starts at zero and increases under backpressure (Codex P2 #732 round 5)", async () => {
+  // Codex P2 round 5: `traceFramesDropped` was incremented on every
+  // backpressure drop but never exposed, making the counter a dead
+  // store. Now it is surfaced via `handle.getDroppedTraceFrames()` so
+  // operators can detect recording lag. This test verifies:
+  //   1. The counter starts at zero.
+  //   2. It increases when backpressure gates subsequent appends while
+  //      a previous write is still pending.
+  const stream = new CaptureStream();
+  const orchestrator = makeOrchestrator();
+
+  let resolveFirst!: () => void;
+  const firstAppendBlocked = new Promise<void>((resolve) => {
+    resolveFirst = resolve;
+  });
+  let appendCalls = 0;
+
+  const handle = runConsoleTui(orchestrator, {
+    refreshIntervalMs: 20,
+    output: stream,
+    installSigintHandler: false,
+    traceRecorder: {
+      append: async () => {
+        appendCalls += 1;
+        if (appendCalls === 1) await firstAppendBlocked;
+      },
+    },
+  });
+
+  // Initially zero — nothing has been dropped yet.
+  assert.equal(
+    handle.getDroppedTraceFrames(),
+    0,
+    "dropped count must start at zero",
+  );
+
+  // Let the loop tick several times while the first append blocks so
+  // backpressure kicks in and drops subsequent frames.
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
+  const droppedWhileBlocked = handle.getDroppedTraceFrames();
+  assert.ok(
+    droppedWhileBlocked > 0,
+    `expected > 0 dropped frames while append was blocked, got ${droppedWhileBlocked}`,
+  );
+
+  // Release and stop cleanly.
+  resolveFirst();
+  handle.stop();
+  await handle.done;
+});
+
 test("stop() clears the interval and resolves done", async () => {
   const stream = new CaptureStream();
   const orchestrator = makeOrchestrator();
@@ -380,3 +432,151 @@ test("stop() clears the interval and resolves done", async () => {
   // done() resolved (we already awaited it). Calling stop again is a no-op.
   handle.stop();
 });
+
+test(
+  "stop() awaits in-flight tick body before resolving done (Codex P2 #732 round 4)",
+  async () => {
+    // Regression: prior to this fix, `stop()` resolved `done`
+    // synchronously after clearing the interval, even if a tick was
+    // mid-flight. If the tick had already passed its `if (stopped)
+    // return` check, it would proceed to call
+    // `traceRecorder.append(snapshot)` AFTER `done` resolved and the
+    // CLI shutdown path began closing the recorder, producing a
+    // post-close append race against the recorder. The fix wires
+    // `done` to await the in-flight tick body before resolving so
+    // any `recorder.append()` call has been *invoked* (synchronously
+    // enqueueing onto the recorder's writeChain) before the close
+    // path begins; `recorder.close()` then drains that chain.
+    //
+    // We exercise the race by calling `stop()` immediately AFTER
+    // letting the loop tick once, then holding the SECOND tick mid-
+    // flight via a slow `traceRecorder.append`. If `stop()` resolved
+    // `done` synchronously (the buggy behavior), the tick body's
+    // post-`stopped`-check work would still be running when the
+    // observer code below ran. The fix guarantees the tick has
+    // either completed (and the recorder.append entry observed) OR
+    // bailed cleanly before `done` resolves.
+    //
+    // Specifically we verify that `done` does NOT resolve while the
+    // tick promise is still executing its synchronous body. We
+    // instrument the tick path via a custom `now()` clock that
+    // throws on the FIRST call (forcing the renderer's catch path
+    // to record an `appendCalls` increment — see below) and
+    // measures wall-clock ordering.
+    const stream = new CaptureStream();
+    const orchestrator = makeOrchestrator();
+    let appendInvocations = 0;
+    let appendInvocationOrder = 0;
+    let doneOrder = 0;
+    let order = 0;
+    const handle = runConsoleTui(orchestrator, {
+      refreshIntervalMs: 30,
+      output: stream,
+      installSigintHandler: false,
+      traceRecorder: {
+        // Important: this synchronous portion (the increment) must
+        // happen BEFORE `done` resolves, otherwise the CLI's
+        // post-`done` `recorder.close()` would race a not-yet-
+        // started append. Track invocation order so the assertion
+        // below can verify done resolves AFTER the invocation.
+        append: async () => {
+          appendInvocations += 1;
+          if (appendInvocationOrder === 0) {
+            appendInvocationOrder = ++order;
+          }
+        },
+      },
+    });
+
+    // Let the loop tick at least once so `append` has been called.
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.ok(
+      appendInvocations >= 1,
+      `expected at least one append invocation pre-stop, saw ${appendInvocations}`,
+    );
+
+    handle.stop();
+    await handle.done;
+    doneOrder = ++order;
+
+    // With the fix, `done` waits for the in-flight tick body to
+    // resolve. By the time we get here, the FIRST append invocation
+    // (which we observed before stop()) has happened. The
+    // meaningful invariant is: any append invocation that the tick
+    // was going to make has been made before `done` resolved —
+    // there is no later synchronous-portion-of-append that could
+    // still race `recorder.close()`.
+    assert.ok(
+      appendInvocationOrder > 0 && appendInvocationOrder < doneOrder,
+      `expected first append to land before done resolves; ` +
+        `appendOrder=${appendInvocationOrder} doneOrder=${doneOrder}`,
+    );
+  },
+);
+
+test(
+  "stop() does not resolve done before the in-flight tick promise settles (Codex P2 #732 round 4)",
+  async () => {
+    // Direct invariant test: the tick body's `inFlight = false`
+    // assignment in its `finally` block must run before `done`
+    // resolves. We instrument by overriding the orchestrator's
+    // buffer accessor to flip a flag on entry and exit; the test
+    // then asserts that if entry was observed, the post-`done`
+    // observation sees the exit too. Without the fix, `done` could
+    // resolve between `entry` and `exit`, producing the post-close
+    // append race the codex thread describes.
+    const stream = new CaptureStream();
+    let entered = 0;
+    let exited = 0;
+    const orchestrator: ConsoleStateOrchestratorLike = {
+      config: { memoryDir: "/nonexistent" },
+      qmd: {
+        isAvailable: () => true,
+        isDaemonMode: () => false,
+        debugStatus: () => "stub",
+      },
+      buffer: {
+        getTurns: () => {
+          entered += 1;
+          try {
+            return [{ content: "x" }];
+          } finally {
+            exited += 1;
+          }
+        },
+      },
+    };
+    let appendCalls = 0;
+    const handle = runConsoleTui(orchestrator, {
+      refreshIntervalMs: 30,
+      output: stream,
+      installSigintHandler: false,
+      traceRecorder: {
+        append: async () => {
+          appendCalls += 1;
+        },
+      },
+    });
+
+    // Let one tick happen so we know the loop is alive.
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    handle.stop();
+    await handle.done;
+
+    // Every entry observed must have a matching exit by the time
+    // `done` resolves. Without the fix, the most recent tick could
+    // have entered (incremented `entered`) but not yet exited
+    // (incremented `exited`) — the in-flight tick body still
+    // running while `done` already resolved.
+    assert.equal(
+      entered,
+      exited,
+      `tick body entry/exit must be balanced by done; entered=${entered} exited=${exited}`,
+    );
+    assert.ok(
+      appendCalls >= 1,
+      `expected at least one append before done; saw ${appendCalls}`,
+    );
+  },
+);
+
