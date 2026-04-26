@@ -216,7 +216,7 @@ function createOfficialPairedCoordinateDataset() {
               question: "Which item did the assistant acknowledge first?",
               choices: ["red pen", "blue mug", "black bag", "white lamp"],
               answer: "B",
-              target_step_id: [],
+              target_step_id: " ",
               target_step_coordinate: [0, 0, 1],
             },
             {
