@@ -565,6 +565,17 @@ export async function appendInteractionLog(
   if (typeof entry.summary !== "string") {
     throw new Error("interaction entry must have a string summary");
   }
+  // Codex P2 round 6: optional sessionId must still be a string when
+  // present, otherwise formatLogEntry → sanitizeLogField throws an
+  // opaque TypeError after directory setup. Validate at the API
+  // boundary so the error is clear and fires before any I/O.
+  if (
+    entry.sessionId !== undefined &&
+    entry.sessionId !== null &&
+    typeof entry.sessionId !== "string"
+  ) {
+    throw new Error("interaction entry sessionId must be a string when provided");
+  }
   await assertPeersRootNotSymlink(memoryDir);
   const dir = peerDir(memoryDir, peerId);
   await fs.mkdir(dir, { recursive: true });
@@ -732,6 +743,51 @@ export async function writePeerProfile(
   assertValidPeerId(profile.peerId);
   if (typeof profile.updatedAt !== "string" || profile.updatedAt === "") {
     throw new Error("profile.updatedAt must be a non-empty ISO-8601 string");
+  }
+  // Codex P2 round 6: validate the nested payload shape on write so
+  // round-trip semantics are preserved. Without this, untyped JS
+  // callers can persist non-string field values or malformed
+  // provenance entries — readPeerProfile silently scrubs them on
+  // the way back, so data is lost without an error. Fail fast at
+  // the boundary instead.
+  if (typeof profile.fields !== "object" || profile.fields === null || Array.isArray(profile.fields)) {
+    throw new Error("profile.fields must be a plain object");
+  }
+  for (const [key, value] of Object.entries(profile.fields)) {
+    if (typeof value !== "string") {
+      throw new Error(`profile.fields["${key}"] must be a string`);
+    }
+  }
+  if (
+    typeof profile.provenance !== "object" ||
+    profile.provenance === null ||
+    Array.isArray(profile.provenance)
+  ) {
+    throw new Error("profile.provenance must be a plain object");
+  }
+  for (const [key, list] of Object.entries(profile.provenance)) {
+    if (!Array.isArray(list)) {
+      throw new Error(`profile.provenance["${key}"] must be an array`);
+    }
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i] as unknown;
+      if (typeof item !== "object" || item === null || Array.isArray(item)) {
+        throw new Error(`profile.provenance["${key}"][${i}] must be an object`);
+      }
+      const r = item as Record<string, unknown>;
+      if (typeof r.observedAt !== "string" || r.observedAt === "") {
+        throw new Error(`profile.provenance["${key}"][${i}].observedAt must be a non-empty string`);
+      }
+      if (typeof r.signal !== "string" || r.signal === "") {
+        throw new Error(`profile.provenance["${key}"][${i}].signal must be a non-empty string`);
+      }
+      if (r.sourceSessionId !== undefined && typeof r.sourceSessionId !== "string") {
+        throw new Error(`profile.provenance["${key}"][${i}].sourceSessionId must be a string when provided`);
+      }
+      if (r.note !== undefined && typeof r.note !== "string") {
+        throw new Error(`profile.provenance["${key}"][${i}].note must be a string when provided`);
+      }
+    }
   }
   await assertPeersRootNotSymlink(memoryDir);
   const dir = peerDir(memoryDir, profile.peerId);
