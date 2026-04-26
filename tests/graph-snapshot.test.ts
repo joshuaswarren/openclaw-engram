@@ -713,3 +713,174 @@ test("MCP graph_snapshot rejects non-numeric limit at the boundary", async () =>
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Path-traversal tests for EngramAccessService.graphSnapshot loader (#734)
+//
+// `GraphEdge.from` / `to` are JSONL-parsed strings.  A malformed edge with
+// an absolute path or a `..` traversal must NOT cause `loadNode` to read a
+// memory file from outside the resolved namespace root, otherwise file
+// metadata can leak across tenants in multi-principal deployments.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { EngramAccessService } from "../src/access-service.js";
+
+function buildSnapshotService(memoryDir: string): {
+  service: EngramAccessService;
+  readsByPath: string[];
+} {
+  const readsByPath: string[] = [];
+  const config = {
+    memoryDir,
+    namespacesEnabled: false,
+    defaultNamespace: "global",
+    sharedNamespace: "shared",
+    entityGraphEnabled: true,
+    timeGraphEnabled: true,
+    causalGraphEnabled: true,
+    recallCrossNamespaceBudgetEnabled: false,
+    recallCrossNamespaceBudgetWindowMs: 60_000,
+    recallCrossNamespaceBudgetSoftLimit: 10,
+    recallCrossNamespaceBudgetHardLimit: 30,
+    recallAuditAnomalyDetectionEnabled: false,
+    recallAuditAnomalyWindowMs: 60_000,
+    recallAuditAnomalyRepeatQueryLimit: 100,
+    recallAuditAnomalyNamespaceWalkLimit: 100,
+    recallAuditAnomalyHighCardinalityLimit: 100,
+    recallAuditAnomalyRapidFireLimit: 100,
+  };
+  const orchestrator = {
+    config,
+    // The path-traversal guard must run BEFORE this storage method is
+    // invoked.  Tests capture every path that reaches the storage layer so
+    // we can assert that bogus endpoints never trigger I/O.
+    getStorage: async () => ({
+      dir: memoryDir,
+      readMemoryByPath: async (filePath: string) => {
+        readsByPath.push(filePath);
+        return {
+          path: filePath,
+          content: "",
+          frontmatter: {
+            id: path.basename(filePath, path.extname(filePath)),
+            category: "fact",
+            created: "2026-01-01T00:00:00Z",
+            updated: "2026-01-01T00:00:00Z",
+          },
+        };
+      },
+    }),
+  };
+  return {
+    service: new EngramAccessService(orchestrator as never),
+    readsByPath,
+  };
+}
+
+test(
+  "graphSnapshot rejects absolute edge endpoints before reading memory metadata",
+  async () => {
+    const dir = await makeFixtureDir();
+    try {
+      // Without the guard, `path.resolve(root, absolutePath)` returns the
+      // absolute path verbatim, so a malformed edge could leak metadata
+      // from any readable file (e.g. `/etc/passwd`).
+      await appendEdge(dir, {
+        from: "/etc/passwd",
+        to: "facts/2026-04-20/alpha.md",
+        type: "entity",
+        weight: 1.0,
+        label: "exploit",
+        ts: "2026-04-20T12:00:00.000Z",
+      });
+      const { service, readsByPath } = buildSnapshotService(dir);
+      const snapshot = await service.graphSnapshot({});
+      assert.ok(
+        readsByPath.every((p) => !p.includes("/etc/passwd")),
+        `expected no read of /etc/passwd, saw ${readsByPath.join(",")}`,
+      );
+      const passwdNode = snapshot.nodes.find((n) => n.id === "/etc/passwd");
+      // The node may still appear in the index (the edge survives and bumps
+      // both endpoints) but its metadata must fall through to the
+      // unknown-category fallback rather than expose anything from the
+      // out-of-namespace file.
+      if (passwdNode) {
+        assert.equal(passwdNode.kind, "unknown");
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "graphSnapshot rejects ../ traversing edge endpoints before reading metadata",
+  async () => {
+    const dir = await makeFixtureDir();
+    try {
+      await appendEdge(dir, {
+        from: "../../etc/passwd",
+        to: "facts/2026-04-20/alpha.md",
+        type: "entity",
+        weight: 1.0,
+        label: "traversal",
+        ts: "2026-04-20T12:00:00.000Z",
+      });
+      const { service, readsByPath } = buildSnapshotService(dir);
+      const snapshot = await service.graphSnapshot({});
+      assert.ok(
+        readsByPath.every((p) => !p.includes("etc/passwd")),
+        `expected no read of etc/passwd, saw ${readsByPath.join(",")}`,
+      );
+      const escapeNode = snapshot.nodes.find((n) => n.id === "../../etc/passwd");
+      if (escapeNode) {
+        assert.equal(escapeNode.kind, "unknown");
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "graphSnapshot loads metadata for valid relative subdir paths",
+  async () => {
+    const dir = await makeFixtureDir();
+    try {
+      await appendEdge(dir, {
+        from: "facts/2026-04-20/alpha.md",
+        to: "facts/2026-04-20/beta.md",
+        type: "entity",
+        weight: 1.0,
+        label: "valid",
+        ts: "2026-04-20T12:00:00.000Z",
+      });
+      const { service, readsByPath } = buildSnapshotService(dir);
+      const snapshot = await service.graphSnapshot({});
+      assert.equal(snapshot.edges.length, 1);
+      // Both endpoints must have hit the loader (storage reads).
+      assert.ok(
+        readsByPath.some((p) => p.endsWith(path.join("facts", "2026-04-20", "alpha.md"))),
+        `expected alpha.md read, saw ${readsByPath.join(",")}`,
+      );
+      assert.ok(
+        readsByPath.some((p) => p.endsWith(path.join("facts", "2026-04-20", "beta.md"))),
+        `expected beta.md read, saw ${readsByPath.join(",")}`,
+      );
+      // Resolved reads must remain inside the namespace root.
+      for (const p of readsByPath) {
+        assert.ok(
+          p.startsWith(dir + path.sep) || p === dir,
+          `read path ${p} escaped namespace root ${dir}`,
+        );
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+// Suppress unused-import warning for `mkdir` / `writeFile` (kept for future
+// fixture extensions that exercise the orchestrator-backed loader).
+void mkdir;
+void writeFile;
+
