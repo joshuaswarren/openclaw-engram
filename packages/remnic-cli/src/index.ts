@@ -7465,15 +7465,11 @@ Options:
           break;
         }
 
-        // Positional: first non-flag arg is the source archive.
-        const positionals = capsuleArgs.filter((a) => !a.startsWith("--"));
-        const sourceArchive = positionals[0];
-        if (!sourceArchive) {
-          console.error("ERROR: capsule fork requires a source archive path.");
-          console.error("Usage: remnic capsule fork <source-archive> --target <root> --fork-id <id>");
-          process.exit(1);
-        }
-
+        // Resolve flags first so we can identify their value tokens and
+        // exclude them from positionals (Codex P2 #751: a naïve
+        // `filter((a) => !a.startsWith("--"))` would still keep `--target`'s
+        // VALUE in the positional list, so an omitted `<source-archive>`
+        // would silently grab the target dir instead of erroring out).
         const targetRoot = resolveRequiredValueFlag(capsuleArgs, "--target");
         const forkId = resolveRequiredValueFlag(capsuleArgs, "--fork-id");
 
@@ -7483,6 +7479,33 @@ Options:
         }
         if (!forkId) {
           console.error("ERROR: capsule fork requires --fork-id <id>");
+          process.exit(1);
+        }
+
+        // Positional: walk argv skipping value-taking flag pairs. The first
+        // remaining non-flag token is the source archive. Each known
+        // value-taking flag (`--target`, `--fork-id`) consumes the next
+        // token. Unknown flags are skipped as bare flags (no value
+        // consumption) — defensive against future flag additions.
+        const VALUE_TAKING_FLAGS = new Set(["--target", "--fork-id"]);
+        const positionals: string[] = [];
+        for (let i = 0; i < capsuleArgs.length; i++) {
+          const tok = capsuleArgs[i];
+          if (tok.startsWith("--")) {
+            // `--flag=value` shape carries its value inline; otherwise the
+            // next arg is the value (and must be skipped).
+            if (!tok.includes("=") && VALUE_TAKING_FLAGS.has(tok)) {
+              i += 1; // skip the value token
+            }
+            continue;
+          }
+          positionals.push(tok);
+        }
+
+        const sourceArchive = positionals[0];
+        if (!sourceArchive) {
+          console.error("ERROR: capsule fork requires a source archive path.");
+          console.error("Usage: remnic capsule fork <source-archive> --target <root> --fork-id <id>");
           process.exit(1);
         }
 

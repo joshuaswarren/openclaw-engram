@@ -194,12 +194,42 @@ export async function forkCapsule(opts: ForkCapsuleOptions): Promise<ForkCapsule
  * was created before PR 4/6). Never throws for a missing file — callers
  * that need to distinguish "not a fork" from "corrupt breadcrumb" should
  * handle the JSON parse error themselves.
+ *
+ * `forkId` is validated against {@link CAPSULE_ID_PATTERN} before being
+ * joined into the breadcrumb path so a malicious value like
+ * `../../../../tmp` cannot escape the `forks/` namespace and resolve to
+ * unrelated files outside the configured memory root (Codex P2 #751).
+ * Invalid ids return `null` (same shape as "no breadcrumb"); callers that
+ * need to distinguish "invalid id" from "absent breadcrumb" should validate
+ * upstream.
  */
 export async function readForkLineage(
   targetRoot: string,
   forkId: string,
 ): Promise<ForkLineage | null> {
-  const lineagePath = path.join(path.resolve(targetRoot), "forks", forkId, "lineage.json");
+  // Reject any forkId that does not satisfy the capsule-id pattern. We use
+  // the same constraints as `forkCapsule` so a path traversal payload like
+  // `../../etc` is rejected before any filesystem access. Returning null
+  // (rather than throwing) keeps the contract symmetric with the
+  // "breadcrumb not present" case for the common get-or-default usage.
+  if (
+    typeof forkId !== "string" ||
+    forkId.length === 0 ||
+    forkId.length > 64 ||
+    !CAPSULE_ID_PATTERN.test(forkId)
+  ) {
+    return null;
+  }
+  const rootAbs = path.resolve(targetRoot);
+  const lineagePath = path.join(rootAbs, "forks", forkId, "lineage.json");
+  // Defensive containment check: even though CAPSULE_ID_PATTERN forbids `/`
+  // and `..`, an attacker who somehow bypasses the regex would still be
+  // caught here. `path.relative` returns a `..`-prefixed string when the
+  // target escapes the root.
+  const rel = path.relative(rootAbs, lineagePath);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    return null;
+  }
   const raw = await readFile(lineagePath, "utf-8").catch(() => null);
   if (raw === null) return null;
   try {

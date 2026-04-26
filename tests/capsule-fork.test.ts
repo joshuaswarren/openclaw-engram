@@ -312,3 +312,44 @@ test("exportCapsule: parent field survives JSON round-trip", async () => {
   assert.equal(manifest.capsule.parent.forkRoot, "forks/upstream-cap");
   assert.equal(manifest.capsule.parentCapsule, "upstream-cap");
 });
+
+// ---------------------------------------------------------------------------
+// Test 7: readForkLineage rejects path-traversal forkId payloads
+// ---------------------------------------------------------------------------
+//
+// Codex P2 #751: a malicious value like `../../../../tmp` would resolve
+// outside the configured memory root via path.join. readForkLineage must
+// validate forkId with the same constraints as forkCapsule and return null
+// for any value that does not satisfy CAPSULE_ID_PATTERN.
+
+test("readForkLineage: rejects path-traversal forkId values", async () => {
+  const dir = await makeEmptyDir();
+
+  const maliciousIds = [
+    "../../../../tmp",
+    "../escape",
+    "/abs/path",
+    "with/slash",
+    "with\\backslash",
+    "..",
+    ".",
+    "",
+    " ",
+    "a/b/c",
+  ];
+
+  for (const id of maliciousIds) {
+    const result = await readForkLineage(dir, id);
+    assert.equal(result, null, `readForkLineage must return null for "${id}"`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 8: readForkLineage rejects oversized forkId values
+// ---------------------------------------------------------------------------
+
+test("readForkLineage: rejects forkId values longer than 64 chars", async () => {
+  const dir = await makeEmptyDir();
+  const result = await readForkLineage(dir, "a".repeat(65));
+  assert.equal(result, null);
+});
