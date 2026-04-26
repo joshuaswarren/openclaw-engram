@@ -427,20 +427,43 @@ function removeFirstChoiceAnswerText(
   choiceText: string,
   choiceAnswer: string,
 ): string {
-  const trimmedChoiceAnswer = choiceAnswer.trim();
-  if (trimmedChoiceAnswer.length === 0) {
+  const choiceTextTokens = choiceMatchTokenSpans(choiceText);
+  const choiceAnswerTokens = choiceMatchTokenSpans(choiceAnswer);
+  if (
+    choiceTextTokens.length === 0
+    || choiceAnswerTokens.length === 0
+    || choiceAnswerTokens.length > choiceTextTokens.length
+  ) {
     return choiceText;
   }
-  const matchIndex = choiceText
-    .toLowerCase()
-    .indexOf(trimmedChoiceAnswer.toLowerCase());
-  if (matchIndex === -1) {
-    return choiceText;
+
+  for (let index = 0; index <= choiceTextTokens.length - choiceAnswerTokens.length; index += 1) {
+    const matches = choiceAnswerTokens.every(
+      (token, offset) => choiceTextTokens[index + offset]!.token === token.token,
+    );
+    if (!matches) {
+      continue;
+    }
+
+    const start = choiceTextTokens[index]!.start;
+    const end = choiceTextTokens[index + choiceAnswerTokens.length - 1]!.end;
+    return [
+      choiceText.slice(0, start),
+      choiceText.slice(end),
+    ].join(" ");
   }
-  return [
-    choiceText.slice(0, matchIndex),
-    choiceText.slice(matchIndex + trimmedChoiceAnswer.length),
-  ].join(" ");
+
+  return choiceText;
+}
+
+function choiceMatchTokenSpans(
+  value: string,
+): Array<{ token: string; start: number; end: number }> {
+  return [...value.matchAll(/\w+/g)].map((match) => ({
+    token: match[0].toLowerCase(),
+    start: match.index ?? 0,
+    end: (match.index ?? 0) + match[0].length,
+  }));
 }
 
 function containsNormalizedPhrase(haystack: string, needle: string): boolean {
