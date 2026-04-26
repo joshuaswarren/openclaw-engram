@@ -359,7 +359,7 @@ export interface RunConnectorPollOnceArgs {
 export async function runConnectorPollOnce(
   args: RunConnectorPollOnceArgs,
 ): Promise<ConnectorRunResult> {
-  const { priorState, syncFn, ingestFn, writeCursorFn } = args;
+  const { connectorId, priorState, syncFn, ingestFn, writeCursorFn } = args;
   let runResult: ConnectorRunResult;
   try {
     const syncResult = await syncFn(priorState?.cursor ?? null);
@@ -379,12 +379,28 @@ export async function runConnectorPollOnce(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     runResult = { docsImported: 0, error: msg };
-    await writeCursorFn({
-      cursor: priorState?.cursor ?? null,
-      lastSyncStatus: "error",
-      lastSyncError: msg,
-      totalDocsImported: priorState?.totalDocsImported ?? 0,
-    });
+    // Guard the state write so a cursor-persistence failure (e.g. disk full,
+    // read-only memoryDir) does NOT mask the original sync/ingest error that
+    // is already captured in `runResult`.  Log the secondary failure for
+    // operator visibility but re-surface the primary error to the caller
+    // (CLAUDE.md gotcha #13 — wrap external service calls; Codex P2 thread
+    // PRRT_kwDORJXyws59sk8K, Cursor thread PRRT_kwDORJXyws59slAG).
+    try {
+      await writeCursorFn({
+        cursor: priorState?.cursor ?? null,
+        lastSyncStatus: "error",
+        lastSyncError: msg,
+        totalDocsImported: priorState?.totalDocsImported ?? 0,
+      });
+    } catch (writeErr) {
+      const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+      // Intentionally not re-throwing: the original ingest error is the
+      // actionable failure for the operator.  The state-write failure is
+      // secondary and should not replace it in the rendered output.
+      console.error(
+        `[remnic] connectors/${connectorId}: failed to persist error state (${writeMsg}); original error: ${msg}`,
+      );
+    }
   }
   return runResult;
 }

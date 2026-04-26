@@ -4747,7 +4747,69 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             }
 
             // Route to the matching built-in connector.
+            //
+            // Shared ingestFn and writeCursorFn are identical for every
+            // built-in connector; only the syncFn (connector-specific factory
+            // + config validator) differs.  Extract both as local closures so
+            // adding a new connector is a one-liner (Cursor thread
+            // PRRT_kwDORJXyws59slAJ — DRY the per-connector scaffolding).
             const cfg = orchestrator.config.connectors;
+
+            const { readConnectorState, writeConnectorState } = await import(
+              "./connectors/live/state-store.js"
+            );
+
+            /**
+             * Shared ingest callback: each fetched document is ingested as an
+             * assistant-role bulk-import turn so the extraction pipeline can
+             * distil it into memories.  The title (when present) is prepended
+             * as a Markdown heading to give the extractor extra context.
+             */
+            const sharedIngestFn = async (docs: import("./connectors/live/index.js").ConnectorDocument[]) => {
+              const fetchedAt = new Date().toISOString();
+              const turns = docs.map((doc) => ({
+                role: "assistant" as const,
+                content: doc.title
+                  ? `# ${doc.title}\n\n${doc.content}`
+                  : doc.content,
+                timestamp: fetchedAt,
+              }));
+              await orchestrator.ingestBulkImportBatch(turns);
+            };
+
+            /**
+             * Shared state-persistence callback: writes the connector's cursor
+             * and sync metadata to `<memoryDir>/state/connectors/<id>.json`.
+             * Used on both the success path (advancing cursor) and the error
+             * path (retaining prior cursor).
+             */
+            const makeWriteCursorFn =
+              (connectorName: string) =>
+              async ({
+                cursor,
+                lastSyncStatus,
+                lastSyncError,
+                totalDocsImported,
+              }: {
+                cursor: import("./connectors/live/index.js").ConnectorCursor | null;
+                lastSyncStatus: import("./connectors/live/index.js").ConnectorSyncStatus;
+                lastSyncError?: string;
+                totalDocsImported: number;
+              }) => {
+                await writeConnectorState(
+                  orchestrator.config.memoryDir,
+                  connectorName,
+                  {
+                    id: connectorName,
+                    cursor,
+                    lastSyncAt: new Date().toISOString(),
+                    lastSyncStatus,
+                    ...(lastSyncError !== undefined ? { lastSyncError } : {}),
+                    totalDocsImported,
+                  },
+                );
+              };
+
             let runResult: ConnectorRunResult;
             if (name === GOOGLE_DRIVE_CONNECTOR_ID) {
               if (!cfg.googleDrive.enabled) {
@@ -4768,9 +4830,6 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                 return;
               }
               const connector = createGoogleDriveConnector();
-              const { readConnectorState, writeConnectorState } = await import(
-                "./connectors/live/state-store.js"
-              );
               const state = await readConnectorState(
                 orchestrator.config.memoryDir,
                 name,
@@ -4790,31 +4849,8 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                     // runtime. Double-cast via unknown to satisfy the interface.
                     config: validatedCfg as unknown as Record<string, unknown>,
                   }),
-                ingestFn: async (docs) => {
-                  // Each ConnectorDocument is ingested as an assistant-role
-                  // bulk-import turn so the extraction pipeline can distill it
-                  // into memories.  The title (when present) is prepended as a
-                  // Markdown heading so the extractor can use it as context.
-                  const fetchedAt = new Date().toISOString();
-                  const turns = docs.map((doc) => ({
-                    role: "assistant" as const,
-                    content: doc.title
-                      ? `# ${doc.title}\n\n${doc.content}`
-                      : doc.content,
-                    timestamp: fetchedAt,
-                  }));
-                  await orchestrator.ingestBulkImportBatch(turns);
-                },
-                writeCursorFn: async ({ cursor, lastSyncStatus, lastSyncError, totalDocsImported }) => {
-                  await writeConnectorState(orchestrator.config.memoryDir, name, {
-                    id: name,
-                    cursor,
-                    lastSyncAt: new Date().toISOString(),
-                    lastSyncStatus,
-                    ...(lastSyncError !== undefined ? { lastSyncError } : {}),
-                    totalDocsImported,
-                  });
-                },
+                ingestFn: sharedIngestFn,
+                writeCursorFn: makeWriteCursorFn(name),
               });
             } else if (name === NOTION_CONNECTOR_ID) {
               if (!cfg.notion.enabled) {
@@ -4835,9 +4871,6 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                 return;
               }
               const connector = createNotionConnector();
-              const { readConnectorState, writeConnectorState } = await import(
-                "./connectors/live/state-store.js"
-              );
               const state = await readConnectorState(
                 orchestrator.config.memoryDir,
                 name,
@@ -4856,27 +4889,8 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                     // Double-cast via unknown to satisfy the interface boundary.
                     config: validatedCfg as unknown as Record<string, unknown>,
                   }),
-                ingestFn: async (docs) => {
-                  const fetchedAt = new Date().toISOString();
-                  const turns = docs.map((doc) => ({
-                    role: "assistant" as const,
-                    content: doc.title
-                      ? `# ${doc.title}\n\n${doc.content}`
-                      : doc.content,
-                    timestamp: fetchedAt,
-                  }));
-                  await orchestrator.ingestBulkImportBatch(turns);
-                },
-                writeCursorFn: async ({ cursor, lastSyncStatus, lastSyncError, totalDocsImported }) => {
-                  await writeConnectorState(orchestrator.config.memoryDir, name, {
-                    id: name,
-                    cursor,
-                    lastSyncAt: new Date().toISOString(),
-                    lastSyncStatus,
-                    ...(lastSyncError !== undefined ? { lastSyncError } : {}),
-                    totalDocsImported,
-                  });
-                },
+                ingestFn: sharedIngestFn,
+                writeCursorFn: makeWriteCursorFn(name),
               });
             } else {
               process.stderr.write(

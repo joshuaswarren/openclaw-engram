@@ -182,6 +182,59 @@ test("renderConnectorsList text: disabled connector shows disabled state", () =>
   assert.ok(out.includes("disabled"));
 });
 
+test("renderConnectorsList text: disabled connector does NOT produce 'disabled, disabled' (statusLabel regression)", () => {
+  // Before the fix, statusLabel() returned "disabled" for enabled=false
+  // connectors, producing "state: disabled, disabled" — the enabled/disabled
+  // badge was already rendered by enabledStr, so the status label would
+  // duplicate it.  Now statusLabel only maps sync statuses.
+  const rows: ConnectorRow[] = [
+    makeRow({ enabled: false, state: makeState({ lastSyncStatus: "never" }) }),
+  ];
+  const out = renderConnectorsList(rows, "text");
+  // Must NOT contain the redundant double-label.
+  assert.ok(
+    !out.includes("disabled, disabled"),
+    `output must not contain 'disabled, disabled': ${out}`,
+  );
+  // The state line should read "disabled, never synced".
+  assert.ok(
+    out.includes("disabled, never synced"),
+    `expected 'disabled, never synced' in output: ${out}`,
+  );
+});
+
+test("renderConnectorsList text: disabled connector with prior error shows real sync status", () => {
+  // Disabled connectors that previously errored should show their real last
+  // sync status (error), not just "disabled" in the status column.
+  const rows: ConnectorRow[] = [
+    makeRow({
+      enabled: false,
+      state: makeState({ lastSyncStatus: "error", lastSyncError: "auth_failed" }),
+    }),
+  ];
+  const out = renderConnectorsList(rows, "text");
+  assert.ok(out.includes("disabled"));
+  assert.ok(out.includes("error"), `expected 'error' in output: ${out}`);
+  assert.ok(!out.includes("disabled, disabled"), "must not duplicate disabled label");
+});
+
+test("renderConnectorsList markdown: disabled connector does not duplicate 'disabled' in Status column", () => {
+  // In markdown, the Enabled column shows "no" for disabled connectors, so
+  // the Status column must show the real sync status, not "disabled".
+  const rows: ConnectorRow[] = [
+    makeRow({ enabled: false, state: makeState({ lastSyncStatus: "never" }) }),
+  ];
+  const out = renderConnectorsList(rows, "markdown");
+  // Enabled column shows "no".
+  assert.ok(out.includes("no"));
+  // Status column must not say "disabled" (that would duplicate the Enabled col).
+  // It should say "never synced".
+  assert.ok(
+    out.includes("never synced"),
+    `expected 'never synced' status in markdown: ${out}`,
+  );
+});
+
 test("renderConnectorsList text: error state shows last_error", () => {
   const rows: ConnectorRow[] = [
     makeRow({

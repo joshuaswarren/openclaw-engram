@@ -330,3 +330,76 @@ test("runConnectorPollOnce: null priorState — ingestFn throws — null cursor 
   );
   assert.equal(args.writtenStates[0].totalDocsImported, 0);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P2 regression: writeCursorFn throws on error path — must not mask ingest err
+// (Codex thread PRRT_kwDORJXyws59sk8K, Cursor thread PRRT_kwDORJXyws59slAG)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("runConnectorPollOnce: writeCursorFn throws on error path — original ingest error is returned", async () => {
+  // When ingestFn throws (primary failure) AND writeCursorFn also throws
+  // (secondary failure, e.g. disk full trying to persist error state), the
+  // caller must see the ORIGINAL ingest error — not the cursor-write error.
+  // The state-write failure is logged but must not replace the primary error.
+  const args = makeArgs({
+    ingestFn: async () => {
+      throw new Error("original_ingest_error");
+    },
+    writeCursorFn: async () => {
+      throw new Error("cursor_write_failed");
+    },
+  });
+
+  const result = await runConnectorPollOnce(args);
+
+  assert.equal(result.docsImported, 0);
+  assert.ok(
+    result.error?.includes("original_ingest_error"),
+    `expected original_ingest_error in result.error, got: ${result.error}`,
+  );
+  assert.ok(
+    !result.error?.includes("cursor_write_failed"),
+    "cursor_write_failed must NOT replace the primary ingest error in result.error",
+  );
+});
+
+test("runConnectorPollOnce: writeCursorFn throws on error path — promise still resolves (no unhandled rejection)", async () => {
+  // Even if both ingestFn and writeCursorFn throw, runConnectorPollOnce must
+  // resolve (not reject) so cli.ts can render the error to the operator.
+  const args = makeArgs({
+    syncFn: async () => {
+      throw new Error("sync_failed");
+    },
+    writeCursorFn: async () => {
+      throw new Error("state_write_failed");
+    },
+  });
+
+  // Must not throw/reject — should resolve with the original sync error.
+  const result = await runConnectorPollOnce(args);
+
+  assert.equal(result.docsImported, 0);
+  assert.ok(result.error?.includes("sync_failed"));
+});
+
+test("runConnectorPollOnce: writeCursorFn throws on success path — error is captured in result", async () => {
+  // On the SUCCESS path, if writeCursorFn throws after docs are already
+  // ingested, the outer try-catch captures it.  The result carries the
+  // cursor-write error so the operator sees the failure via the rendered
+  // output rather than an unhandled rejection.  docs were ingested so
+  // docsImported reflects 0 (the error path resets it), but the error message
+  // surfaces the cursor-write failure so operators can diagnose it.
+  const args = makeArgs({
+    writeCursorFn: async () => {
+      throw new Error("success_cursor_write_failed");
+    },
+  });
+
+  const result = await runConnectorPollOnce(args);
+
+  assert.equal(result.docsImported, 0, "error path sets docsImported to 0");
+  assert.ok(
+    result.error?.includes("success_cursor_write_failed"),
+    `expected cursor-write error in result: ${result.error}`,
+  );
+});
