@@ -4079,6 +4079,268 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log("OK");
         });
 
+      // ── Capsule merge / list / inspect (issue #676 PR 6/6) ──────────────
+      // Augments the export + import subcommands above with three-way merge,
+      // directory listing, and manifest inspection surfaces. Option parsing
+      // and rendering live in `capsule-cli.ts` for unit-testability.
+
+      capsuleCmd
+        .command("merge")
+        .description(
+          "Three-way merge of a capsule archive into the memory directory. " +
+            "New files are always written; conflicts are resolved by --conflict-mode.",
+        )
+        .argument("<archive>", "Path to a .capsule.json.gz archive")
+        .option(
+          "--conflict-mode <mode>",
+          "Conflict mode: skip-conflicts (default) | prefer-source | prefer-local",
+        )
+        .action(async (...args: unknown[]) => {
+          const archiveArg = args[0];
+          const opts = (args[1] ?? {}) as Record<string, unknown>;
+          const {
+            parseCapsuleMergeOptions,
+          } = await import("./capsule-cli.js");
+          const parsed = parseCapsuleMergeOptions(archiveArg, opts);
+
+          const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+
+          const { mergeCapsule } = await import("./transfer/capsule-merge.js");
+          const result = await mergeCapsule({
+            sourceArchive: parsed.archive,
+            targetRoot: memoryDir,
+            conflictMode: parsed.conflictMode,
+          });
+
+          const mergedCount = result.merged.length;
+          const skippedCount = result.skipped.length;
+          const conflictCount = result.conflicts.length;
+          console.log(
+            `Capsule merged: ${result.manifest.capsule.id}\n` +
+              `  conflict-mode: ${parsed.conflictMode}\n` +
+              `  merged:        ${mergedCount}\n` +
+              `  conflicts:     ${conflictCount}\n` +
+              `  skipped:       ${skippedCount}`,
+          );
+        });
+
+      capsuleCmd
+        .command("list")
+        .description(
+          "List all capsule archives in the capsule store directory " +
+            "(<memoryDir>/.capsules by default). Reads the sidecar manifest.json for metadata.",
+        )
+        .option(
+          "--dir <path>",
+          "Override the capsule store directory to list",
+        )
+        .option(
+          "--format <fmt>",
+          "Output format: text (default) | markdown | json",
+        )
+        .action(async (...args: unknown[]) => {
+          const opts = (args[0] ?? {}) as Record<string, unknown>;
+          const {
+            parseCapsuleListOptions,
+            renderCapsuleList,
+            defaultCapsulesDir,
+          } = await import("./capsule-cli.js");
+          type CapsuleListEntry = import("./capsule-cli.js").CapsuleListEntry;
+
+          const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const defaultDir = defaultCapsulesDir(memoryDir);
+          const parsed = parseCapsuleListOptions(opts, defaultDir);
+
+          // Scan the capsule store directory for *.capsule.json.gz archives.
+          const { readdir, readFile, stat } = await import("node:fs/promises");
+          let dirEntries: string[];
+          try {
+            dirEntries = await readdir(parsed.capsulesDir);
+          } catch {
+            // Directory does not exist yet — empty list is valid.
+            dirEntries = [];
+          }
+
+          const archives = dirEntries
+            .filter((e) => e.endsWith(".capsule.json.gz"))
+            .sort();
+
+          const entries: CapsuleListEntry[] = [];
+          for (const archiveName of archives) {
+            const archivePath = path.join(parsed.capsulesDir, archiveName);
+            // Capsule id is the filename stem before ".capsule.json.gz".
+            const id = archiveName.replace(/\.capsule\.json\.gz$/, "");
+            const manifestName = `${id}.manifest.json`;
+            const manifestPath = path.join(parsed.capsulesDir, manifestName);
+
+            let createdAt: string | null = null;
+            let pluginVersion: string | null = null;
+            let fileCount: number | null = null;
+            let description: string | null = null;
+            let hasManifest = false;
+
+            try {
+              await stat(manifestPath);
+              hasManifest = true;
+            } catch {
+              // sidecar missing — leave metadata as null.
+            }
+
+            if (hasManifest) {
+              try {
+                const raw = await readFile(manifestPath, "utf-8");
+                const sidecar = JSON.parse(raw) as Record<string, unknown>;
+                createdAt =
+                  typeof sidecar.createdAt === "string" ? sidecar.createdAt : null;
+                pluginVersion =
+                  typeof sidecar.pluginVersion === "string"
+                    ? sidecar.pluginVersion
+                    : null;
+                fileCount =
+                  Array.isArray(sidecar.files) ? (sidecar.files as unknown[]).length : null;
+                const capsule = sidecar.capsule as Record<string, unknown> | undefined;
+                if (capsule && typeof capsule.description === "string") {
+                  description = capsule.description;
+                }
+              } catch {
+                // malformed sidecar — leave metadata as null.
+              }
+            }
+
+            entries.push({
+              id,
+              archivePath,
+              manifestPath: hasManifest ? manifestPath : null,
+              createdAt,
+              pluginVersion,
+              fileCount,
+              description,
+            });
+          }
+
+          console.log(renderCapsuleList(entries, parsed.format));
+        });
+
+      capsuleCmd
+        .command("inspect")
+        .description(
+          "Show capsule archive manifest without unpacking. " +
+            "Reads the sidecar .manifest.json when present; otherwise decompresses the archive.",
+        )
+        .argument("<archive>", "Path to a .capsule.json.gz archive (or its id in the capsule store)")
+        .option(
+          "--format <fmt>",
+          "Output format: text (default) | markdown | json",
+        )
+        .action(async (...args: unknown[]) => {
+          const archiveArg = args[0];
+          const opts = (args[1] ?? {}) as Record<string, unknown>;
+          const {
+            parseCapsuleInspectOptions,
+            renderCapsuleInspect,
+            defaultCapsulesDir,
+          } = await import("./capsule-cli.js");
+          type CapsuleInspectData = import("./capsule-cli.js").CapsuleInspectData;
+
+          const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const capsulesDir = defaultCapsulesDir(memoryDir);
+          const parsed = parseCapsuleInspectOptions(archiveArg, opts);
+
+          // Resolve archive path: if the argument does not look like a file
+          // path, treat it as a capsule id and look it up in the store.
+          const { stat } = await import("node:fs/promises");
+          let archivePath = expandTildePath(parsed.archive);
+          const looksLikePath =
+            archivePath.startsWith("/") ||
+            archivePath.startsWith("./") ||
+            archivePath.startsWith("../") ||
+            archivePath.includes(path.sep);
+
+          if (!looksLikePath) {
+            // Treat as a capsule id — find it in the capsules dir.
+            const byId = path.join(capsulesDir, `${archivePath}.capsule.json.gz`);
+            const st = await stat(byId).catch(() => null);
+            if (st && st.isFile()) {
+              archivePath = byId;
+            }
+          }
+
+          // Prefer sidecar manifest for cheap inspection.
+          const sidecarPath = archivePath.replace(/\.capsule\.json\.gz$/, ".manifest.json");
+          let sidecar: Record<string, unknown> | null = null;
+          try {
+            const { readFile } = await import("node:fs/promises");
+            const raw = await readFile(sidecarPath, "utf-8");
+            sidecar = JSON.parse(raw) as Record<string, unknown>;
+          } catch {
+            // No sidecar — fall back to decompressing the archive.
+          }
+
+          let manifest: Record<string, unknown>;
+          if (sidecar !== null) {
+            manifest = sidecar;
+          } else {
+            const { readFile } = await import("node:fs/promises");
+            const { gunzipSync } = await import("node:zlib");
+            const { parseExportBundle } = await import("./transfer/types.js");
+            const buf = await readFile(archivePath);
+            const json = gunzipSync(buf).toString("utf-8");
+            const parsed2 = parseExportBundle(JSON.parse(json));
+            if (parsed2.capsuleVersion !== 2) {
+              process.stderr.write(
+                `capsule inspect: only V2 capsule archives are supported\n`,
+              );
+              process.exitCode = 1;
+              return;
+            }
+            manifest = (parsed2.bundle as { manifest: Record<string, unknown> }).manifest;
+          }
+
+          const capsule = (manifest.capsule ?? {}) as Record<string, unknown>;
+          const files = Array.isArray(manifest.files) ? manifest.files : [];
+          const TOP_N = 20;
+          const topFiles = (files as Array<{ path: string }>)
+            .slice(0, TOP_N)
+            .map((f) => f.path ?? "");
+
+          const retrievalPolicy = (capsule.retrievalPolicy ?? {}) as Record<string, unknown>;
+          const includes = (capsule.includes ?? {}) as Record<string, unknown>;
+
+          const data: CapsuleInspectData = {
+            capsuleId: typeof capsule.id === "string" ? capsule.id : "(unknown)",
+            version: typeof capsule.version === "string" ? capsule.version : "—",
+            schemaVersion:
+              typeof capsule.schemaVersion === "string" ? capsule.schemaVersion : "—",
+            createdAt:
+              typeof manifest.createdAt === "string" ? manifest.createdAt : null,
+            pluginVersion:
+              typeof manifest.pluginVersion === "string" ? manifest.pluginVersion : null,
+            fileCount: files.length,
+            includesTranscripts: manifest.includesTranscripts === true,
+            description:
+              typeof capsule.description === "string" ? capsule.description : "",
+            parentCapsule:
+              typeof capsule.parentCapsule === "string" ? capsule.parentCapsule : null,
+            retrievalPolicy: {
+              tierWeights:
+                retrievalPolicy.tierWeights != null &&
+                typeof retrievalPolicy.tierWeights === "object"
+                  ? (retrievalPolicy.tierWeights as Record<string, number>)
+                  : {},
+              directAnswerEnabled: retrievalPolicy.directAnswerEnabled === true,
+            },
+            includes: {
+              taxonomy: includes.taxonomy === true,
+              identityAnchors: includes.identityAnchors === true,
+              peerProfiles: includes.peerProfiles === true,
+              procedural: includes.procedural === true,
+            },
+            topFiles,
+          };
+
+          console.log(renderCapsuleInspect(data, parsed.format));
+        });
+
       cmd
         .command("compat")
         .description("Run local compatibility diagnostics for Engram plugin wiring")
