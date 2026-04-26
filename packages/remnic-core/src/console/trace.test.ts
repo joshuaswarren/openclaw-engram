@@ -11,6 +11,9 @@ import {
   parseSnapshotLine,
   computeReplayDelay,
   parseSpeedFlag,
+  sleepAbortable,
+  isAbortError,
+  flushWithTimeout,
 } from "./trace.js";
 import { stripAnsi } from "./tui.js";
 import type { ConsoleStateSnapshot } from "./state.js";
@@ -465,6 +468,191 @@ test("replayTrace restores cursor + closes stream when aborted (Codex P2 #732)",
     assert.ok(
       raw.includes("\x1b[?25h"),
       "expected show-cursor escape from finally block after abort",
+    );
+  });
+});
+
+test("sleepAbortable resolves on timer expiry without a signal", async () => {
+  const start = Date.now();
+  await sleepAbortable(20);
+  const elapsed = Date.now() - start;
+  assert.ok(
+    elapsed >= 15,
+    `expected timer to elapse (~20ms), got ${elapsed}ms`,
+  );
+});
+
+test("sleepAbortable rejects with AbortError when signal aborts mid-sleep", async () => {
+  const ac = new AbortController();
+  setTimeout(() => ac.abort(), 25);
+  const start = Date.now();
+  let caught: unknown = null;
+  try {
+    await sleepAbortable(10_000, ac.signal);
+    assert.fail("sleepAbortable must reject when signal aborts");
+  } catch (err) {
+    caught = err;
+  }
+  const elapsed = Date.now() - start;
+  assert.ok(
+    isAbortError(caught),
+    `expected AbortError, got ${caught instanceof Error ? caught.name : String(caught)}`,
+  );
+  assert.ok(
+    elapsed < 500,
+    `expected immediate rejection on abort, took ${elapsed}ms`,
+  );
+});
+
+test("sleepAbortable rejects immediately when signal already aborted", async () => {
+  const ac = new AbortController();
+  ac.abort();
+  let caught: unknown = null;
+  try {
+    await sleepAbortable(1000, ac.signal);
+    assert.fail("sleepAbortable must reject when signal pre-aborted");
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(isAbortError(caught), "expected AbortError on pre-aborted signal");
+});
+
+test("isAbortError distinguishes AbortError from other errors", () => {
+  assert.equal(isAbortError(new Error("regular")), false);
+  assert.equal(isAbortError("string"), false);
+  assert.equal(isAbortError(null), false);
+  assert.equal(isAbortError(undefined), false);
+  const plain = new Error("aborted");
+  plain.name = "AbortError";
+  assert.equal(isAbortError(plain), true);
+  if (typeof DOMException !== "undefined") {
+    assert.equal(
+      isAbortError(new DOMException("aborted", "AbortError")),
+      true,
+    );
+  }
+});
+
+test("replayTrace surfaces non-abort sleep rejections (regression)", async () => {
+  // Codex P2 (PR #732 follow-up): the replay loop now wraps `sleep()`
+  // in a try/catch to handle AbortError. That catch must NOT swallow
+  // genuine bugs — non-abort errors must propagate so they surface
+  // instead of silently exiting the loop.
+  await withTempDir(async (dir) => {
+    const tracePath = path.join(dir, "trace.jsonl");
+    const recorder = await openTraceRecorder(tracePath);
+    await recorder.append(
+      makeSnapshot({ capturedAt: "2026-04-26T00:00:00.000Z" }),
+    );
+    await recorder.append(
+      makeSnapshot({ capturedAt: "2026-04-26T00:00:05.000Z" }),
+    );
+    await recorder.close();
+
+    const stream = new CaptureStream();
+    let threw: unknown = null;
+    try {
+      await replayTrace(tracePath, {
+        output: stream,
+        manageCursor: false,
+        sleep: async () => {
+          throw new Error("boom: not an abort");
+        },
+      });
+    } catch (err) {
+      threw = err;
+    }
+    assert.ok(
+      threw instanceof Error && /boom/.test(threw.message),
+      `expected non-abort error to propagate, got ${String(threw)}`,
+    );
+  });
+});
+
+test("flushWithTimeout returns flushed=true when flush completes in time (Codex P1 #732)", async () => {
+  // Codex P1 follow-up: the CLI shutdown path uses `flushWithTimeout`
+  // to bound `recorder.close()` against a 2s deadline. When the
+  // flush finishes promptly, the helper must report `flushed: true`
+  // and `timedOut: false`.
+  let flushed = false;
+  const result = await flushWithTimeout(async () => {
+    await new Promise((r) => setTimeout(r, 10));
+    flushed = true;
+  }, 1000);
+  assert.equal(flushed, true);
+  assert.equal(result.flushed, true);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.error, null);
+});
+
+test("flushWithTimeout returns timedOut=true when flush stalls past deadline (Codex P1 #732)", async () => {
+  // Codex P1 follow-up: when the underlying write chain wedges (slow
+  // disk / stuck network FS), the helper must return
+  // `timedOut: true` so the CLI can log a warning and proceed with
+  // shutdown rather than hanging on Ctrl-C.
+  const start = Date.now();
+  const result = await flushWithTimeout(
+    () => new Promise<void>(() => undefined), // never resolves
+    50,
+  );
+  const elapsed = Date.now() - start;
+  assert.equal(result.timedOut, true);
+  assert.equal(result.flushed, false);
+  assert.ok(
+    elapsed >= 40 && elapsed < 500,
+    `expected ~50ms wall time, took ${elapsed}ms`,
+  );
+});
+
+test("flushWithTimeout captures errors from flush without throwing (Codex P1 #732)", async () => {
+  // Codex P1 follow-up: a flush that rejects must not propagate the
+  // error — shutdown ordering must stay deterministic. The error is
+  // reported in `result.error`.
+  const boom = new Error("disk full");
+  const result = await flushWithTimeout(async () => {
+    throw boom;
+  }, 1000);
+  assert.equal(result.flushed, true);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.error, boom);
+});
+
+test("replayTrace exits cleanly when sleep override rejects with AbortError", async () => {
+  // Custom `sleep` implementations that reject with AbortError must
+  // also be treated as a clean early exit (mirrors the contract of
+  // the default `sleepAbortable` sleeper).
+  await withTempDir(async (dir) => {
+    const tracePath = path.join(dir, "trace.jsonl");
+    const recorder = await openTraceRecorder(tracePath);
+    for (let i = 0; i < 5; i++) {
+      await recorder.append(
+        makeSnapshot({
+          capturedAt: `2026-04-26T00:00:${String(i).padStart(2, "0")}.000Z`,
+        }),
+      );
+    }
+    await recorder.close();
+
+    const stream = new CaptureStream();
+    const ac = new AbortController();
+    let calls = 0;
+    const result = await replayTrace(tracePath, {
+      output: stream,
+      manageCursor: false,
+      signal: ac.signal,
+      sleep: async () => {
+        calls += 1;
+        if (calls >= 1) {
+          ac.abort();
+          const err = new Error("aborted");
+          err.name = "AbortError";
+          throw err;
+        }
+      },
+    });
+    assert.ok(
+      result.framesRendered < 5,
+      `expected early exit, rendered ${result.framesRendered}`,
     );
   });
 });

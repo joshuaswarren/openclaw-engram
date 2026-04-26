@@ -229,13 +229,14 @@ export async function replayTrace(
 ): Promise<ReplayTraceResult> {
   const output: Writable = options.output ?? process.stdout;
   const speed = normalizeSpeed(options.speed);
-  // Codex P2: when the caller did not override `sleep`, bind the
-  // abort signal into the default sleeper so a SIGINT mid-wait
-  // resolves the timer immediately instead of leaving Ctrl-C
-  // unresponsive for up to MAX_REPLAY_DELAY_MS (60s). Custom sleep
-  // implementations are responsible for their own abort wiring.
+  // Codex P2 (PR #732 follow-up): the default sleeper now uses
+  // `sleepAbortable` which REJECTS with `AbortError` on signal abort
+  // (rather than resolving silently). The replay loop catches the
+  // AbortError and exits cleanly. Custom `sleep` implementations are
+  // responsible for their own abort wiring; if they reject with an
+  // AbortError-shaped error the loop will treat it as a clean exit.
   const sleep =
-    options.sleep ?? ((ms: number) => defaultSleep(ms, options.signal));
+    options.sleep ?? ((ms: number) => sleepAbortable(ms, options.signal));
   const manageCursor = options.manageCursor ?? true;
   const nowFn =
     options.now ??
@@ -279,7 +280,18 @@ export async function replayTrace(
         waitMs = computeReplayDelay(DEFAULT_REPLAY_DELAY_MS, speed);
       }
       if (waitMs > 0) {
-        await sleep(waitMs);
+        try {
+          await sleep(waitMs);
+        } catch (err) {
+          // Codex P2 (PR #732 follow-up): `sleepAbortable` rejects
+          // with AbortError when SIGINT fires mid-sleep. Treat any
+          // AbortError-shaped rejection as a clean early exit so
+          // Ctrl-C does not have to wait for the current `setTimeout`
+          // to elapse. Re-throw any other error so genuine bugs
+          // surface.
+          if (isAbortError(err) || options.signal?.aborted) break;
+          throw err;
+        }
         if (options.signal?.aborted) break;
       }
 
@@ -387,18 +399,27 @@ function normalizeSpeed(speed: number | undefined): number {
 }
 
 /**
- * Default sleep used by `replayTrace` between frames. Honors an
- * optional `AbortSignal` so SIGINT can interrupt long inter-frame
- * waits (the captured-time delta is clamped at 60s, but even a few
- * seconds of `setTimeout` would otherwise leave Ctrl-C unresponsive).
- * Resolves on either timer expiry OR signal abort. The replay loop
- * checks `signal.aborted` immediately after `await sleep(...)`, so a
- * signal-driven early resolve still triggers a clean exit.
+ * Abortable sleep used by `replayTrace` between frames.
+ *
+ * Codex P2 (PR #732): unlike a plain `setTimeout` wrapper, this
+ * variant REJECTS with `AbortError` when `signal` fires (or is
+ * already aborted on entry). That gives callers a way to
+ * *distinguish* timer-expiry from signal-driven early exit, instead
+ * of silently resolving on both. The replay loop catches the
+ * `AbortError` and exits cleanly so Ctrl-C does not have to wait for
+ * the current inter-frame `setTimeout` (capped at 60s) to elapse.
+ *
+ * Resolves only on timer expiry. Rejects with `AbortError` (DOMException-
+ * shaped: `name === "AbortError"`) on abort. Exported so callers in
+ * tests and adjacent modules can reuse the same primitive.
  */
-function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
+export function sleepAbortable(
+  ms: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      resolve();
+      reject(makeAbortError());
       return;
     }
     const timer = setTimeout(() => {
@@ -409,11 +430,92 @@ function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
     if (signal) {
       onAbort = () => {
         clearTimeout(timer);
-        resolve();
+        reject(makeAbortError());
       };
       signal.addEventListener("abort", onAbort, { once: true });
     }
   });
+}
+
+/**
+ * Construct an `AbortError`-shaped error. Prefers the standard
+ * `DOMException("...", "AbortError")` when available (Node 18+);
+ * falls back to a plain Error with `name = "AbortError"` for
+ * environments without `DOMException`.
+ */
+function makeAbortError(): Error {
+  if (typeof DOMException !== "undefined") {
+    return new DOMException("aborted", "AbortError");
+  }
+  const err = new Error("aborted");
+  err.name = "AbortError";
+  return err;
+}
+
+/**
+ * Detect an AbortError-shaped rejection. Matches both
+ * `DOMException("...", "AbortError")` and plain `Error` with
+ * `name === "AbortError"`. Exported for tests.
+ */
+export function isAbortError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "name" in err &&
+    (err as { name?: unknown }).name === "AbortError"
+  );
+}
+
+export interface FlushWithTimeoutResult {
+  /** True if the flush completed before the deadline. */
+  flushed: boolean;
+  /** True if the deadline won. */
+  timedOut: boolean;
+  /** Error from the flush, if any. */
+  error: unknown;
+}
+
+/**
+ * Bound a recorder flush against a wall-clock deadline (Codex P1, PR
+ * #732 follow-up).
+ *
+ * The CLI shutdown path awaits `recorder.close()`. On a wedged
+ * network-backed filesystem that drain can block indefinitely. This
+ * helper races the drain against `timeoutMs` and returns a structured
+ * result so the caller can decide whether to log a warning, retry, or
+ * proceed silently. Returning a structured result (rather than
+ * throwing) keeps shutdown ordering deterministic — the caller must
+ * always reach the next teardown step.
+ *
+ * Errors raised by the flush are captured in `result.error` rather
+ * than re-thrown.
+ */
+export async function flushWithTimeout(
+  flush: () => Promise<void>,
+  timeoutMs: number,
+): Promise<FlushWithTimeoutResult> {
+  const TIMEOUT_SENTINEL = Symbol("flush-timeout");
+  let error: unknown = null;
+  const flushPromise = flush().then(
+    () => undefined,
+    (err) => {
+      error = err;
+      // Resolve so the race winner is "flush" — the caller inspects
+      // `result.error` to decide what to do.
+      return undefined;
+    },
+  );
+  const timeoutPromise = new Promise<symbol>((resolve) => {
+    setTimeout(() => resolve(TIMEOUT_SENTINEL), timeoutMs);
+  });
+  const winner = await Promise.race<symbol | void>([
+    flushPromise,
+    timeoutPromise,
+  ]);
+  if (winner === TIMEOUT_SENTINEL) {
+    return { flushed: false, timedOut: true, error: null };
+  }
+  return { flushed: true, timedOut: false, error };
 }
 
 function safeWrite(output: Writable, chunk: string): void {
