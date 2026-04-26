@@ -2017,6 +2017,30 @@
           }
         }
       },
+      "patternReinforcementEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Run the pattern-reinforcement maintenance job (issue #687 PR 2/4): cluster duplicate non-procedural memories by normalized content, promote the most-recent member to canonical, and supersede the older duplicates. Off by default until bench validation lands."
+      },
+      "patternReinforcementCadenceMs": {
+        "type": "integer",
+        "minimum": 0,
+        "default": 604800000,
+        "description": "Minimum interval (ms) between pattern-reinforcement runs. Default 7 days. Set to 0 to disable cadence gating (manual / test invocation)."
+      },
+      "patternReinforcementMinCount": {
+        "type": "integer",
+        "minimum": 2,
+        "maximum": 1000,
+        "default": 3,
+        "description": "Minimum cluster size before pattern reinforcement promotes a canonical and supersedes duplicates. Default 3."
+      },
+      "patternReinforcementCategories": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["preference", "fact", "decision"],
+        "description": "Memory categories the pattern-reinforcement job considers. Skips procedural memories so it stays disjoint from procedural mining. Default: preference, fact, decision."
+      },
       "temporalSupersessionEnabled": {
         "type": "boolean",
         "default": true,
