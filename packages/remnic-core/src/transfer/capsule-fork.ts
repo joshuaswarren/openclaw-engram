@@ -123,7 +123,7 @@ export async function forkCapsule(opts: ForkCapsuleOptions): Promise<ForkCapsule
   // logic (Cursor medium #751 round 2: the fork's doc comment claims it
   // "mirrors importCapsule's root validation"; now it literally does).
   const rootAbs = path.resolve(opts.targetRoot);
-  await assertIsDirectoryNotSymlink(rootAbs, "forkCapsule");
+  await assertIsDirectoryNotSymlink(rootAbs, "forkCapsule", "targetRoot");
 
   // --- 3. Reject duplicate forkId ---
   // Treat ANY existing filesystem entry at `forks/<forkId>` as occupied:

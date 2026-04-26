@@ -97,6 +97,8 @@ export interface RecallXrayScoreDecomposition {
   importance?: number;
   mmrPenalty?: number;
   tierPrior?: number;
+  /** Additive boost from `reinforcement_count` frontmatter (issue #687 PR 3/4). */
+  reinforcementBoost?: number;
   final: number;
 }
 
@@ -481,6 +483,10 @@ function cloneScoreDecomposition(
   if (mmrPenalty !== undefined) out.mmrPenalty = mmrPenalty;
   const tierPrior = finiteNumber(value.tierPrior);
   if (tierPrior !== undefined) out.tierPrior = tierPrior;
+  const reinforcementBoost = finiteNumber(value.reinforcementBoost);
+  if (reinforcementBoost !== undefined && reinforcementBoost > 0) {
+    out.reinforcementBoost = reinforcementBoost;
+  }
   return out;
 }
 

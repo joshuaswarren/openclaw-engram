@@ -7,13 +7,20 @@ import {
   type VersioningConfig,
   type VersioningLogger,
 } from "../page-versioning.js";
-import { fromPosixRelPath, sha256String } from "./fs-utils.js";
+import {
+  assertIsDirectoryNotSymlink,
+  assertRealpathInsideRoot,
+  fromPosixRelPath,
+  isPathInsideRoot,
+  sha256String,
+} from "./fs-utils.js";
 import {
   parseExportBundle,
   type CapsuleBlock,
   type ExportManifestV2,
   type ExportMemoryRecordV1,
 } from "./types.js";
+import { isEncryptedCapsuleFile, decryptCapsuleFileInMemory } from "./capsule-crypto.js";
 
 /**
  * Conflict-resolution mode for {@link importCapsule}. Inverse of the
@@ -67,6 +74,16 @@ export interface ImportCapsuleOptions {
   versioning?: VersioningConfig;
   log?: VersioningLogger;
   now?: number;
+  /**
+   * Memory directory whose secure-store keyring is used when the archive is
+   * encrypted. Required when `archivePath` ends with `.enc` or when the file
+   * starts with the REMNIC-ENC magic header. If `memoryDir` is omitted and the
+   * archive turns out to be encrypted, `importCapsule` throws a clear error
+   * rather than silently failing.
+   *
+   * When provided and the archive is NOT encrypted, the value is ignored.
+   */
+  memoryDir?: string;
 }
 
 export interface ImportCapsuleSkippedRecord {
@@ -131,7 +148,7 @@ export async function importCapsule(
 ): Promise<ImportCapsuleResult> {
   const archiveAbs = path.resolve(opts.archivePath);
   const rootAbs = path.resolve(opts.root);
-  await assertIsDirectory(rootAbs);
+  await assertIsDirectoryNotSymlink(rootAbs, "importCapsule", "root");
 
   const mode: ImportCapsuleMode = opts.mode ?? "skip";
   // Reject unknown mode values up-front (rule 51). TypeScript callers get a
@@ -143,7 +160,24 @@ export async function importCapsule(
     );
   }
 
-  const raw = await readFile(archiveAbs);
+  // Auto-detect encrypted archives. If the file ends with `.enc` or starts
+  // with the REMNIC-ENC magic header, decrypt it first before gunzip+parse.
+  // Rule 48: default is "not encrypted"; we only attempt decryption when the
+  // header is definitively present, never on ambiguous content.
+  const encrypted = await isEncryptedCapsuleFile(archiveAbs);
+  let raw: Buffer;
+  if (encrypted) {
+    if (!opts.memoryDir) {
+      throw new Error(
+        `importCapsule: archive is encrypted but 'memoryDir' was not provided. ` +
+          `Pass the memory directory so the secure-store key can be retrieved, ` +
+          `or run \`remnic secure-store unlock\` before importing.`,
+      );
+    }
+    raw = await decryptCapsuleFileInMemory(archiveAbs, opts.memoryDir);
+  } else {
+    raw = await readFile(archiveAbs);
+  }
   const json = gunzipSync(raw).toString("utf-8");
   let parsedJson: unknown;
   try {
@@ -200,7 +234,7 @@ export async function importCapsule(
   // inside-root checks are symlink-aware: a record path like `facts/a.md`
   // cannot write outside the intended sandbox via a symlinked subdirectory
   // (Codex P1 feedback).  If realpath fails (root does not exist) the earlier
-  // assertIsDirectory call already threw, so this should always succeed.
+  // assertIsDirectoryNotSymlink call already threw, so this should always succeed.
   const rootReal = await realpath(rootAbs).catch(() => rootAbs);
 
   // Tracks normalized, case-folded target paths seen so far in phase 1.  Maps
@@ -286,7 +320,7 @@ export async function importCapsule(
     // anywhere in the path components. If any resolved prefix escapes rootReal,
     // the import is rejected before any write. This applies to ALL modes,
     // including fork mode whose rebase prefix may itself traverse a symlink.
-    await assertRealpathInsideRoot(rootReal, targetAbs, rec.path);
+    await assertRealpathInsideRoot(rootReal, targetAbs, rec.path, "importCapsule");
 
     // Target-file symlink check (Codex P1 #741 round 4, line 260).
     // `assertRealpathInsideRoot` resolves the nearest existing *ancestor* to
@@ -429,95 +463,9 @@ function computeTargetPath(
   return sourcePosix;
 }
 
-/**
- * Return true when {@link absPath} is the same as {@link rootReal} or a
- * descendant.
- *
- * {@link rootReal} should be the value returned by `realpath(rootAbs)` so
- * that symlinked subdirectories are detected: a record path like `facts/a.md`
- * computes an `absPath` under the un-resolved `rootAbs`, but the final write
- * follows any symlink. We compare against the resolved root to catch the case
- * where `rootAbs/facts/` is a symlink pointing outside the sandbox (Codex P1).
- *
- * For the `..`-traversal case (hand-edited archives): the `path.relative`
- * lexical check is sufficient because `absPath` is constructed by joining
- * `rootAbs` with a posix-relative path, so no resolved path needed there.
- */
-function isPathInsideRoot(rootReal: string, absPath: string): boolean {
-  const rel = path.relative(rootReal, absPath);
-  if (rel === "") return true;
-  if (rel === "..") return false;
-  if (rel.startsWith(`..${path.sep}`)) return false;
-  if (path.isAbsolute(rel)) return false;
-  return true;
-}
-
-async function assertIsDirectory(absPath: string): Promise<void> {
-  // Mirror gotcha #24: existsSync returns true for files. The import root
-  // MUST be a directory.
-  const st = await stat(absPath).catch(() => null);
-  if (!st || !st.isDirectory()) {
-    throw new Error(
-      `importCapsule: 'root' must be an existing directory: ${absPath}`,
-    );
-  }
-  // Codex P1 #741 round 5: reject a root that is itself a symlink.
-  // `stat` follows symlinks so the isDirectory() check above passes even when
-  // `absPath` is a symlink → /etc or another sensitive directory.  We use
-  // `lstat` to inspect the path itself without following the link.  If it is a
-  // symlink we reject up-front rather than silently writing to the resolved
-  // target (which could be a sensitive location supplied by an attacker).
-  const lst = await lstat(absPath).catch(() => null);
-  if (lst && lst.isSymbolicLink()) {
-    throw new Error(
-      `importCapsule: 'root' must not be a symlink — resolve it to its real path first: ${absPath}`,
-    );
-  }
-}
-
 async function fileExistsAt(absPath: string): Promise<boolean> {
   const st = await stat(absPath).catch(() => null);
   return st !== null && st.isFile();
-}
-
-/**
- * Walk upward from {@link targetAbs} to find the nearest existing ancestor,
- * resolve it via `fs.realpath` (which follows symlinks), then re-append the
- * remaining suffix and verify the result is inside {@link rootReal}.
- *
- * This catches the case where an existing subdirectory at any point in the
- * path is a symlink that points outside the intended import root. Because the
- * file does not exist yet we cannot realpath it directly; we resolve the
- * deepest existing prefix and re-apply the non-existent suffix.
- *
- * Callers must ensure {@link rootReal} was already resolved via `realpath`.
- */
-async function assertRealpathInsideRoot(
-  rootReal: string,
-  targetAbs: string,
-  sourcePath: string,
-): Promise<void> {
-  // Walk from targetAbs toward root until we find a path component that exists.
-  let existing = targetAbs;
-  const suffix: string[] = [];
-  while (existing !== path.dirname(existing)) {
-    const st = await lstat(existing).catch(() => null);
-    if (st !== null) break;
-    suffix.unshift(path.basename(existing));
-    existing = path.dirname(existing);
-  }
-
-  // Resolve the existing prefix via realpath to follow any symlinks.
-  const existingReal = await realpath(existing).catch(() => existing);
-
-  // Re-apply the non-existent suffix to get the real final path.
-  const targetReal = suffix.length > 0 ? path.join(existingReal, ...suffix) : existingReal;
-
-  if (!isPathInsideRoot(rootReal, targetReal)) {
-    throw new Error(
-      `importCapsule: record path escapes target root via symlink: ${sourcePath}`,
-    );
-  }
 }
 
 // ---------------------------------------------------------------------------

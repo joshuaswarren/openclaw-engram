@@ -390,6 +390,9 @@ function renderScoreDecomposition(result: RecallXrayResult): string {
   if (s.tierPrior !== undefined) {
     parts.push(`tier_prior=${formatScore(s.tierPrior)}`);
   }
+  if (s.reinforcementBoost !== undefined && s.reinforcementBoost > 0) {
+    parts.push(`reinforcement_boost=${formatScore(s.reinforcementBoost)}`);
+  }
   return parts.join(" ");
 }
 

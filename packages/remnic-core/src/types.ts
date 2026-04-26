@@ -862,6 +862,12 @@ export interface PluginConfig {
    * the procedural mining pipeline.
    */
   patternReinforcementCategories: string[];
+  /** issue #687 PR 3/4: opt-in recall score boost for reinforced memories. Default false. */
+  reinforcementRecallBoostEnabled: boolean;
+  /** Score bonus per unit of reinforcement_count. Range [0, 1]. Default 0.05. */
+  reinforcementRecallBoostWeight: number;
+  /** Maximum additive reinforcement boost per result. Range [0, 1]. Default 0.3. */
+  reinforcementRecallBoostMax: number;
   /**
    * Async peer profile reasoner — issue #679 PR 2/5.
    *
@@ -888,6 +894,20 @@ export interface PluginConfig {
    * apply across all peers in a single run. Default 8.
    */
   peerProfileReasonerMaxFieldsPerRun: number;
+  /**
+   * When true, inject the active peer's profile fields into the recall
+   * context as a "## Peer Profile" section. Default false (opt-in,
+   * Gotcha #30/#48 — least-privileged default). Requires the session's
+   * peer ID to be registered via `setPeerIdForSession` before recall.
+   */
+  peerProfileRecallEnabled: boolean;
+  /**
+   * Maximum number of peer profile fields to inject per recall. Only
+   * the most-recently-updated N fields are included to keep the context
+   * budget predictable. Default 5. Setting to 0 disables field
+   * injection even when `peerProfileRecallEnabled` is true.
+   */
+  peerProfileRecallMaxFields: number;
   // Creation-memory foundation
   creationMemoryEnabled: boolean;
   memoryUtilityLearningEnabled: boolean;
@@ -2326,6 +2346,8 @@ export interface QmdSearchExplain {
   rrf?: number;
   rerankScore?: number;
   blendedScore?: number;
+  /** Additive boost applied from `reinforcement_count` frontmatter (issue #687 PR 3/4). */
+  reinforcementBoost?: number;
 }
 
 export interface MetaState {

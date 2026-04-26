@@ -2176,6 +2176,25 @@
         "default": ["preference", "fact", "decision"],
         "description": "Memory categories the pattern-reinforcement job considers. Skips procedural memories so it stays disjoint from procedural mining. Default: preference, fact, decision."
       },
+      "reinforcementRecallBoostEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, memories with reinforcement_count frontmatter receive an additive recall score boost (issue #687 PR 3/4). Default: false (opt-in)."
+      },
+      "reinforcementRecallBoostWeight": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.05,
+        "description": "Score bonus per unit of reinforcement_count (weight * count, capped at max). Range [0, 1]. Default: 0.05."
+      },
+      "reinforcementRecallBoostMax": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.3,
+        "description": "Maximum additive reinforcement boost per result. Range [0, 1]. Default: 0.3."
+      },
       "temporalSupersessionEnabled": {
         "type": "boolean",
         "default": true,
@@ -3095,6 +3114,17 @@
         "default": 8,
         "minimum": 0,
         "description": "Hard cap on the total number of profile fields the reasoner will apply across all peers in a single run. Set to 0 to disable applying any fields."
+      },
+      "peerProfileRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, inject the active peer's profile fields into the recall context as a '## Peer Profile' section (issue #679 PR 3/5). Requires the session's peer ID to be registered before recall. Default off (opt-in)."
+      },
+      "peerProfileRecallMaxFields": {
+        "type": "number",
+        "default": 5,
+        "minimum": 0,
+        "description": "Maximum number of peer profile fields to inject per recall call. Only the most-recently-updated N fields are included. Set to 0 to disable field injection even when peerProfileRecallEnabled is true."
       },
       "creationMemoryEnabled": {
         "type": "boolean",
@@ -4927,6 +4957,16 @@
       "label": "Peer Profile Reasoner Max Fields Per Run",
       "advanced": true,
       "help": "Hard cap on the total number of profile fields the reasoner will apply across all peers in a single run. Set to 0 to disable applying any fields."
+    },
+    "peerProfileRecallEnabled": {
+      "label": "Peer Profile Recall Injection",
+      "advanced": true,
+      "help": "When enabled, injects the active peer's profile fields into recall context as a '## Peer Profile' section. Requires the session peer ID to be registered. Default off."
+    },
+    "peerProfileRecallMaxFields": {
+      "label": "Peer Profile Recall Max Fields",
+      "advanced": true,
+      "help": "Maximum number of peer profile fields to inject per recall. Only the most-recently-updated N fields are included. Set to 0 to disable injection."
     },
     "creationMemoryEnabled": {
       "label": "Creation Memory",
