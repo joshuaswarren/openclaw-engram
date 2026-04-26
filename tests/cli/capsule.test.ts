@@ -579,3 +579,114 @@ test("renderCapsuleInspect json shows null createdAt when missing", () => {
   const parsed = JSON.parse(renderCapsuleInspect(data, "json"));
   assert.equal(parsed.createdAt, null);
 });
+
+// ---------------------------------------------------------------------------
+// Suite 15 — encrypted capsule list / inspect path derivation (#755 P1 fixes)
+// ---------------------------------------------------------------------------
+
+/**
+ * Simulate the ID-extraction logic used in cli.ts capsule list for both
+ * plain and encrypted archive filenames.
+ *
+ * This is a pure-string test (no fs) covering the two-step replace
+ * introduced by the P1 fix so regressions are caught without spinning up a
+ * real filesystem.
+ */
+function extractCapsuleId(filename: string): string {
+  return filename
+    .replace(/\.capsule\.json\.gz\.enc$/, "")
+    .replace(/\.capsule\.json\.gz$/, "");
+}
+
+test("capsule list id extraction: plain archive strips .capsule.json.gz", () => {
+  assert.equal(extractCapsuleId("my-capsule.capsule.json.gz"), "my-capsule");
+});
+
+test("capsule list id extraction: encrypted archive strips .capsule.json.gz.enc", () => {
+  assert.equal(extractCapsuleId("my-capsule.capsule.json.gz.enc"), "my-capsule");
+});
+
+test("capsule list id extraction: .enc suffix is not left behind for encrypted archives", () => {
+  const id = extractCapsuleId("workload-2026.capsule.json.gz.enc");
+  assert.ok(!id.endsWith(".enc"), `id should not end with .enc, got: ${id}`);
+  assert.equal(id, "workload-2026");
+});
+
+test("capsule list id extraction: does not corrupt plain archive id that contains 'enc' elsewhere", () => {
+  // 'enclave' in the name must not be stripped by the .enc rule.
+  assert.equal(
+    extractCapsuleId("enclave-memories.capsule.json.gz"),
+    "enclave-memories",
+  );
+});
+
+/**
+ * Simulate the sidecar path derivation logic used in cli.ts capsule inspect.
+ * The fix: strip .enc first, then replace .capsule.json.gz with .manifest.json.
+ */
+function deriveSidecarPath(archivePath: string): string {
+  return archivePath
+    .replace(/\.enc$/, "")
+    .replace(/\.capsule\.json\.gz$/, ".manifest.json");
+}
+
+test("capsule inspect sidecar path: plain archive derives correct manifest path", () => {
+  assert.equal(
+    deriveSidecarPath("/caps/my-capsule.capsule.json.gz"),
+    "/caps/my-capsule.manifest.json",
+  );
+});
+
+test("capsule inspect sidecar path: encrypted archive derives correct manifest path", () => {
+  assert.equal(
+    deriveSidecarPath("/caps/my-capsule.capsule.json.gz.enc"),
+    "/caps/my-capsule.manifest.json",
+  );
+});
+
+test("capsule inspect sidecar path: encrypted archive does not leave .tar.gz in derived path (regression guard)", () => {
+  // Prior bug: .replace(/\.capsule\.json\.gz$/, ...) on a .enc path would not
+  // match, leaving the path unchanged and thus pointing at the archive itself
+  // instead of the sidecar.
+  const sidecar = deriveSidecarPath("/caps/snapshot.capsule.json.gz.enc");
+  assert.ok(
+    sidecar.endsWith(".manifest.json"),
+    `sidecar path should end with .manifest.json; got: ${sidecar}`,
+  );
+  assert.ok(
+    !sidecar.endsWith(".gz.enc"),
+    `sidecar path must not retain .gz.enc suffix; got: ${sidecar}`,
+  );
+  assert.ok(
+    !sidecar.endsWith(".gz"),
+    `sidecar path must not retain .gz suffix; got: ${sidecar}`,
+  );
+});
+
+test("renderCapsuleList text includes encrypted capsule entry", () => {
+  // Simulate an entry that came from a .capsule.json.gz.enc file — the id
+  // should already be stripped by the time renderCapsuleList is called.
+  const entries: CapsuleListEntry[] = [
+    makeCapsuleListEntry({
+      id: "encrypted-capsule",
+      archivePath: "/caps/encrypted-capsule.capsule.json.gz.enc",
+    }),
+  ];
+  const output = renderCapsuleList(entries, "text");
+  assert.ok(output.includes("encrypted-capsule"), "should list encrypted capsule by id");
+  assert.ok(!output.includes(".enc"), "archive extension should not appear in text output");
+});
+
+test("renderCapsuleList json includes encrypted and plain capsules together", () => {
+  const entries: CapsuleListEntry[] = [
+    makeCapsuleListEntry({ id: "plain-cap", archivePath: "/caps/plain-cap.capsule.json.gz" }),
+    makeCapsuleListEntry({
+      id: "enc-cap",
+      archivePath: "/caps/enc-cap.capsule.json.gz.enc",
+    }),
+  ];
+  const parsed = JSON.parse(renderCapsuleList(entries, "json"));
+  assert.equal(parsed.capsules.length, 2);
+  assert.equal(parsed.capsules[0].id, "plain-cap");
+  assert.equal(parsed.capsules[1].id, "enc-cap");
+});

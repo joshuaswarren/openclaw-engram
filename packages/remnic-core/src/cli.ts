@@ -4162,14 +4162,20 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           }
 
           const archives = dirEntries
-            .filter((e) => e.endsWith(".capsule.json.gz"))
+            .filter(
+              (e) =>
+                e.endsWith(".capsule.json.gz") ||
+                e.endsWith(".capsule.json.gz.enc"),
+            )
             .sort();
 
           const entries: CapsuleListEntry[] = [];
           for (const archiveName of archives) {
             const archivePath = path.join(parsed.capsulesDir, archiveName);
-            // Capsule id is the filename stem before ".capsule.json.gz".
-            const id = archiveName.replace(/\.capsule\.json\.gz$/, "");
+            // Capsule id is the filename stem before ".capsule.json.gz[.enc]".
+            const id = archiveName
+              .replace(/\.capsule\.json\.gz\.enc$/, "")
+              .replace(/\.capsule\.json\.gz$/, "");
             const manifestName = `${id}.manifest.json`;
             const manifestPath = path.join(parsed.capsulesDir, manifestName);
 
@@ -4258,27 +4264,48 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
 
           if (!looksLikePath) {
             // Treat as a capsule id — find it in the capsules dir.
+            // Try plain archive first, then encrypted variant.
             const byId = path.join(capsulesDir, `${archivePath}.capsule.json.gz`);
+            const byIdEnc = path.join(capsulesDir, `${archivePath}.capsule.json.gz.enc`);
             const st = await stat(byId).catch(() => null);
             if (st && st.isFile()) {
               archivePath = byId;
+            } else {
+              const stEnc = await stat(byIdEnc).catch(() => null);
+              if (stEnc && stEnc.isFile()) {
+                archivePath = byIdEnc;
+              }
             }
           }
 
+          const isEncrypted = archivePath.endsWith(".capsule.json.gz.enc");
+
+          // Derive sidecar path: strip ".enc" suffix first (if present), then
+          // replace ".capsule.json.gz" with ".manifest.json".
+          const sidecarPath = archivePath
+            .replace(/\.enc$/, "")
+            .replace(/\.capsule\.json\.gz$/, ".manifest.json");
+
           // Prefer sidecar manifest for cheap inspection.
-          const sidecarPath = archivePath.replace(/\.capsule\.json\.gz$/, ".manifest.json");
           let sidecar: Record<string, unknown> | null = null;
           try {
             const { readFile } = await import("node:fs/promises");
             const raw = await readFile(sidecarPath, "utf-8");
             sidecar = JSON.parse(raw) as Record<string, unknown>;
           } catch {
-            // No sidecar — fall back to decompressing the archive.
+            // No sidecar — fall back to decompressing the archive (plain only).
           }
 
           let manifest: Record<string, unknown>;
           if (sidecar !== null) {
             manifest = sidecar;
+          } else if (isEncrypted) {
+            process.stderr.write(
+              `capsule inspect: encrypted archive has no sidecar manifest. ` +
+                `Decrypt the archive first or supply the sidecar .manifest.json.\n`,
+            );
+            process.exitCode = 1;
+            return;
           } else {
             const { readFile } = await import("node:fs/promises");
             const { gunzipSync } = await import("node:zlib");
