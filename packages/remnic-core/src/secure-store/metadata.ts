@@ -341,8 +341,13 @@ export function validateMetadata(meta: SecureStoreMetadata): void {
     if (!Number.isInteger(p) || p < 1) {
       throw new Error("metadata.kdf.params.p must be a positive integer");
     }
-    if (!Number.isInteger(keyLength) || keyLength < 16) {
-      throw new Error("metadata.kdf.params.keyLength must be ≥ 16");
+    // Codex P2: cipher.ts hard-requires a 32-byte AES-256 key
+    // (`assertAesKey`). Accepting `keyLength: 16` here would parse
+    // and validate cleanly but later fail at encrypt/decrypt time
+    // — a latent runtime break. Reject anything other than 32 at
+    // load time so the metadata file is the authoritative gate.
+    if (!Number.isInteger(keyLength) || keyLength !== 32) {
+      throw new Error("metadata.kdf.params.keyLength must be 32 (AES-256 requires a 32-byte key)");
     }
     if (!Number.isInteger(maxmem) || maxmem < 1024) {
       throw new Error("metadata.kdf.params.maxmem must be a positive integer");
@@ -358,8 +363,13 @@ export function validateMetadata(meta: SecureStoreMetadata): void {
     if (!Number.isInteger(parallelism) || parallelism < 1) {
       throw new Error("metadata.kdf.params.parallelism must be a positive integer");
     }
-    if (!Number.isInteger(keyLength) || keyLength < 16) {
-      throw new Error("metadata.kdf.params.keyLength must be ≥ 16");
+    // Codex P2: cipher.ts hard-requires a 32-byte AES-256 key
+    // (`assertAesKey`). Accepting `keyLength: 16` here would parse
+    // and validate cleanly but later fail at encrypt/decrypt time
+    // — a latent runtime break. Reject anything other than 32 at
+    // load time so the metadata file is the authoritative gate.
+    if (!Number.isInteger(keyLength) || keyLength !== 32) {
+      throw new Error("metadata.kdf.params.keyLength must be 32 (AES-256 requires a 32-byte key)");
     }
   }
 }

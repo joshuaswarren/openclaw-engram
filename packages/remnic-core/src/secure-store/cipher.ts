@@ -144,9 +144,18 @@ export function seal(
   const cipher = createCipheriv("aes-256-gcm", Buffer.from(key), Buffer.from(iv), {
     authTagLength: AUTH_TAG_LENGTH,
   });
-  if (options.aad) {
-    cipher.setAAD(Buffer.from(options.aad));
-  }
+  // Codex P1: bind the envelope header (version + salt) into AAD so
+  // flipping the salt or version on a sealed envelope triggers an
+  // auth failure on open. Without this, callers using a metadata-
+  // derived store key would still decrypt successfully even after
+  // the per-blob salt was tampered with — silently desynchronizing
+  // per-blob salt from metadata/recovery logic. Caller-supplied AAD
+  // is appended after the header so existing AAD usage stays intact.
+  const headerAad = buildHeaderAad(salt);
+  const finalAad = options.aad
+    ? Buffer.concat([headerAad, Buffer.from(options.aad)])
+    : headerAad;
+  cipher.setAAD(finalAad);
   const ciphertext = Buffer.concat([cipher.update(Buffer.from(plaintext)), cipher.final()]);
   const authTag = cipher.getAuthTag();
   if (authTag.length !== AUTH_TAG_LENGTH) {
@@ -229,11 +238,28 @@ export function open(
     authTagLength: AUTH_TAG_LENGTH,
   });
   decipher.setAuthTag(parsed.authTag);
-  if (options.aad) {
-    decipher.setAAD(Buffer.from(options.aad));
-  }
+  // Codex P1: header (version + salt) is bound at seal time.
+  // Reconstruct it identically so a tampered salt fails auth.
+  const headerAad = buildHeaderAad(parsed.salt);
+  const finalAad = options.aad
+    ? Buffer.concat([headerAad, Buffer.from(options.aad)])
+    : headerAad;
+  decipher.setAAD(finalAad);
   // `final()` throws if the auth tag doesn't validate.
   return Buffer.concat([decipher.update(parsed.ciphertext), decipher.final()]);
+}
+
+/**
+ * Build the canonical header AAD: a single byte version followed by
+ * the per-blob salt. Binds the immutable envelope header into AES-GCM
+ * authentication so tampering with either value triggers auth failure
+ * on open (codex P1 on PR #718).
+ */
+function buildHeaderAad(salt: Uint8Array): Buffer {
+  const out = Buffer.alloc(1 + ENVELOPE_SALT_LENGTH);
+  out.writeUInt8(ENVELOPE_VERSION, 0);
+  Buffer.from(salt).copy(out, 1);
+  return out;
 }
 
 /**

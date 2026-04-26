@@ -499,3 +499,26 @@ test("end-to-end: build metadata → derive key → seal → open round-trip", (
   const opened = open(key, sealed);
   assert.equal(opened.toString("utf8"), "end-to-end");
 });
+
+test("tampered envelope salt fails decryption (codex P1 — header AAD)", () => {
+  const salt = generateSalt();
+  const key = deriveKeyScrypt("passphrase", salt, FAST_SCRYPT);
+  const envelope = Buffer.from(seal(key, salt, Buffer.from("secret")));
+  // Salt sits at envelope bytes [1, 17). Flipping a byte there must
+  // trigger auth failure now that the header is bound into AAD.
+  envelope[5] = envelope[5] ^ 0xff;
+  assert.throws(() => open(key, envelope), /auth|tag|decrypt|unable/i);
+});
+
+test("metadata rejects keyLength != 32 (codex P2 — match cipher AES-256)", () => {
+  const meta = buildMetadata({
+    algorithm: "scrypt",
+    salt: generateSalt(),
+    createdAt: "2026-04-25T00:00:00.000Z",
+  }) as { kdf: { params: { keyLength: number } } };
+  meta.kdf.params.keyLength = 16;
+  assert.throws(
+    () => validateMetadata(meta as unknown as Parameters<typeof validateMetadata>[0]),
+    /keyLength must be 32/,
+  );
+});
