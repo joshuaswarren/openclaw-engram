@@ -38,6 +38,7 @@
 - [Temporal Recall](temporal-recall.md) — `valid_at` / `invalid_at` fact lifecycle and `as_of` recall filter (issue #680)
 - [Tags](tags.md) — Free-form tag filter on recall and propose; tags vs taxonomy (issue #689)
 - [Live Connectors](live-connectors.md) — Continuous-sync framework for external sources (issue #683)
+- [Operator Console](console.md) — Live engine introspection: `remnic console` TUI, `--record-trace`, `--trace` replay (issue #688)
 - [Context Retention](context-retention.md) — Transcript indexing, hourly summaries
 - [Namespaces](namespaces.md) — Multi-agent memory isolation (v3.0)
 - [Shared Context](shared-context.md) — Cross-agent shared intelligence (v4.0)

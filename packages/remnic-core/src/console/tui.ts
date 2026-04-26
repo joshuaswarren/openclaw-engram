@@ -57,13 +57,48 @@ export interface RunConsoleTuiOptions {
    * the returned promise. Defaults to true. Tests typically pass false.
    */
   installSigintHandler?: boolean;
+  /**
+   * Optional trace recorder. When provided, every successfully
+   * gathered snapshot is appended to the recorder for later replay
+   * via `replayTrace`. Failed appends are surfaced through the
+   * recorder's `getLastError()` and never crash the loop (issue
+   * #688 PR 3/3).
+   */
+  traceRecorder?: {
+    append: (snapshot: ConsoleStateSnapshot) => Promise<void>;
+  };
 }
 
 export interface RunConsoleTuiHandle {
-  /** Stop the refresh loop, restore the cursor, and resolve `done`. */
+  /**
+   * Stop the refresh loop and restore the cursor. Returns immediately;
+   * callers should `await handle.done` to wait for any in-flight tick
+   * (and its trace append) to finish. Codex P2 (#732 round 4): without
+   * the in-flight await on the `done` path, a Ctrl-C that fires while
+   * a tick is past its `stopped` check could still call
+   * `traceRecorder.append` AFTER the CLI begins closing the recorder.
+   */
   stop: () => void;
-  /** Resolves once `stop()` has been invoked and cleanup ran. */
+  /**
+   * Resolves once `stop()` has been invoked, the interval is cleared,
+   * AND any in-flight tick (including its fire-and-forget trace
+   * append) has resolved. Callers that close a trace recorder after
+   * the TUI exits MUST await this promise before initiating close,
+   * otherwise the close path can race a still-running `append` call
+   * and surface phantom "post-close" appends to the recorder. Codex
+   * P2 (#732 round 4).
+   */
   done: Promise<void>;
+  /**
+   * Number of trace frames that were dropped due to backpressure (i.e.
+   * the previous `traceRecorder.append()` had not yet resolved when
+   * the tick fired). Non-zero values indicate the trace recorder is
+   * falling behind — typically caused by a slow or network-backed
+   * filesystem. Codex P2 (PR #732 round 5): exposed so operators can
+   * detect recording lag via `--state-only` snapshots or future
+   * diagnostic surfaces.
+   */
+  getDroppedTraceFrames: () => number;
 }
 
 /**
@@ -86,6 +121,36 @@ export function runConsoleTui(
 
   let stopped = false;
   let inFlight = false;
+  // Codex P2 (PR #732 round 4): track the in-flight tick promise so
+  // `stop()` can await it before resolving `done`. Without this, a
+  // Ctrl-C that fires while a tick is past its `if (stopped) return`
+  // check can still execute `traceRecorder.append(snapshot)` AFTER
+  // `done` resolves and the CLI shutdown path begins closing the
+  // recorder. By awaiting the tick body, we ensure
+  // `recorder.append()` has at least been called (synchronously
+  // enqueueing the line onto the recorder's internal writeChain)
+  // before `done` resolves; the recorder's `close()` then drains
+  // that writeChain. Without the await, `close()` can begin draining
+  // while the tick is still about to call `append()`, producing a
+  // post-close append.
+  //
+  // We deliberately do NOT also await the resulting fire-and-forget
+  // trace promise. The append is fire-and-forget on purpose
+  // (backpressure: see comment further below); a wedged disk that
+  // stalls the append must not also stall shutdown. The recorder's
+  // own `close()` path (combined with `flushWithTimeout` in the CLI)
+  // is the right place to bound the disk-drain wait.
+  let inFlightTickPromise: Promise<void> | null = null;
+  // Codex P2 (PR #732): backpressure for trace recording. If the
+  // previous fire-and-forget `append()` has not resolved yet, we drop
+  // the current frame instead of enqueuing it onto the recorder's
+  // internal writeChain. Without this guard, a wedged filesystem
+  // would let memory grow unboundedly — every tick adds a JSON line
+  // to a serialized chain that never drains. Dropping is preferable
+  // to OOM; the operator can inspect `getLastError()` to learn that
+  // tracing fell behind.
+  let traceWritePending = false;
+  let traceFramesDropped = 0;
   let resolveDone!: () => void;
   const done = new Promise<void>((resolve) => {
     resolveDone = resolve;
@@ -125,6 +190,33 @@ export function runConsoleTui(
       }
       safeWrite(output, ANSI_CLEAR_HOME);
       safeWrite(output, frame);
+      // Codex P2: do NOT await trace writes inside the render tick.
+      // Awaiting holds `inFlight = true` for the duration of the disk
+      // write; on a slow / network-backed filesystem that stretches
+      // the visual refresh interval and skips ticks. Fire-and-forget
+      // preserves the paint cadence; errors are captured via
+      // `getLastError()`.
+      //
+      // Codex P2 (PR #732 follow-up): apply backpressure. If the
+      // previous append is still pending (writeChain not yet
+      // drained), drop this frame instead of queuing another line.
+      // Without this gate, a wedged FS lets the chain grow
+      // unboundedly — one JSON line per tick — until the process
+      // OOMs. Dropping is preferable; the operator can inspect
+      // `getLastError()` to see tracing fell behind.
+      if (snapshot && options.traceRecorder && !traceWritePending) {
+        traceWritePending = true;
+        void options.traceRecorder
+          .append(snapshot)
+          .catch(() => {
+            // already recorded in lastError; defense-in-depth.
+          })
+          .finally(() => {
+            traceWritePending = false;
+          });
+      } else if (snapshot && options.traceRecorder) {
+        traceFramesDropped += 1;
+      }
     } finally {
       inFlight = false;
     }
@@ -138,10 +230,22 @@ export function runConsoleTui(
   // ticks. Unref'ing it caused `remnic console` to render once and
   // exit immediately. Tests that don't want the process held open
   // can call `handle.stop()` directly when they're done.
-  void runTickSafely(tick);
-  const handle = setInterval(() => {
-    void runTickSafely(tick);
-  }, refreshIntervalMs);
+  // Codex P2 (PR #732 round 4): wrap each tick launch so we hold a
+  // reference to the in-flight tick promise. `stop()` awaits this
+  // promise before resolving `done`, ensuring no late
+  // `traceRecorder.append` call races the CLI shutdown path that
+  // closes the recorder once `done` resolves.
+  const launchTick = (): void => {
+    const p = runTickSafely(tick);
+    inFlightTickPromise = p;
+    void p.then(() => {
+      if (inFlightTickPromise === p) {
+        inFlightTickPromise = null;
+      }
+    });
+  };
+  launchTick();
+  const handle = setInterval(launchTick, refreshIntervalMs);
 
   const sigintHandler = () => {
     stop();
@@ -162,10 +266,39 @@ export function runConsoleTui(
       }
     }
     safeWrite(output, ANSI_SHOW_CURSOR);
-    resolveDone();
+    // Codex P2 (PR #732 round 4): wait for any in-flight tick before
+    // resolving `done`. Without this, a Ctrl-C that fires while a
+    // tick is past its `if (stopped) return` check can still execute
+    // `traceRecorder.append(snapshot)` AFTER `done` resolves and the
+    // CLI shutdown path begins closing the recorder, producing a
+    // phantom post-close append. By awaiting the tick body, we
+    // ensure `recorder.append()` has at least been *called*
+    // (synchronously enqueueing the line onto the recorder's
+    // writeChain) before `done` resolves; the recorder's `close()`
+    // then drains that writeChain.
+    //
+    // We do NOT also await the fire-and-forget trace append promise
+    // itself. A wedged disk that stalls the append must not also
+    // stall shutdown — the recorder's `close()` path (bounded by
+    // `flushWithTimeout` in the CLI) is the right place to bound
+    // the disk-drain wait.
+    void (async () => {
+      try {
+        const pendingTick = inFlightTickPromise;
+        if (pendingTick) {
+          await pendingTick;
+        }
+      } finally {
+        resolveDone();
+      }
+    })();
   };
 
-  return { stop, done };
+  return {
+    stop,
+    done,
+    getDroppedTraceFrames: () => traceFramesDropped,
+  };
 }
 
 interface RenderFrameInput {

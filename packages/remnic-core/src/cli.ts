@@ -7441,11 +7441,23 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
       cmd
         .command("console")
         .description(
-          "Operator console (issue #688). With no flags: launches the interactive TUI. With --state-only: prints a single JSON snapshot and exits.",
+          "Operator console (issue #688). With no flags: launches the interactive TUI. With --state-only: prints a single JSON snapshot. With --record-trace <path>: appends every snapshot to a JSONL file. With --trace <path>: replays a recorded trace at the original cadence (or --speed N).",
         )
         .option(
           "--state-only",
           "Print a single console-state snapshot as JSON and exit",
+        )
+        .option(
+          "--record-trace <path>",
+          "Append every snapshot to <path> as JSONL while the TUI runs",
+        )
+        .option(
+          "--trace <path>",
+          "Replay a recorded JSONL trace file frame-by-frame at the original cadence",
+        )
+        .option(
+          "--speed <multiplier>",
+          "Replay speed multiplier (default 1.0). 2.0 = twice as fast; 0.5 = half speed.",
         )
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
@@ -7455,9 +7467,107 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             console.log(JSON.stringify(snapshot, null, 2));
             return;
           }
+          // Replay mode: fully sandboxed, no orchestrator state read.
+          if (typeof options.trace === "string" && options.trace.length > 0) {
+            const { replayTrace, parseSpeedFlag } = await import(
+              "./console/trace.js"
+            );
+            const { expandTildePath } = await import("./utils/path.js");
+            const tracePath = expandTildePath(options.trace);
+            let speed: number;
+            try {
+              speed = parseSpeedFlag(options.speed);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              console.error(`remnic console: ${msg}`);
+              process.exitCode = 2;
+              return;
+            }
+            // Codex P2: mirror the live TUI's SIGINT handling so
+            // Ctrl-C aborts replay cleanly. Without this, Node's
+            // default SIGINT terminates the process before
+            // `replayTrace`'s `finally` block restores the cursor,
+            // leaving the terminal in a hidden-cursor state.
+            const replayAbort = new AbortController();
+            const replaySigintHandler = () => replayAbort.abort();
+            process.on("SIGINT", replaySigintHandler);
+            try {
+              await replayTrace(tracePath, {
+                speed,
+                signal: replayAbort.signal,
+              });
+            } finally {
+              try {
+                process.removeListener("SIGINT", replaySigintHandler);
+              } catch {
+                // ignore
+              }
+            }
+            return;
+          }
+          // Live TUI mode, optionally with trace recording.
           const { runConsoleTui } = await import("./console/tui.js");
-          const handle = runConsoleTui(orchestrator);
-          await handle.done;
+          let recorder:
+            | {
+                append: (snapshot: import("./console/state.js").ConsoleStateSnapshot) => Promise<void>;
+                close: (signal?: AbortSignal) => Promise<void>;
+              }
+            | null = null;
+          if (
+            typeof options.recordTrace === "string" &&
+            options.recordTrace.length > 0
+          ) {
+            const { openTraceRecorder } = await import("./console/trace.js");
+            const { expandTildePath } = await import("./utils/path.js");
+            recorder = await openTraceRecorder(
+              expandTildePath(options.recordTrace),
+            );
+          }
+          const handle = runConsoleTui(orchestrator, {
+            traceRecorder: recorder ?? undefined,
+          });
+          try {
+            await handle.done;
+          } finally {
+            if (recorder) {
+              // Codex P1 (PR #732 follow-up): `recorder.close()`
+              // drains the internal writeChain, which can block
+              // indefinitely on a wedged network-backed filesystem.
+              // Race the drain against a 2s deadline so Ctrl-C exits
+              // the CLI cleanly even when a write is stuck. If the
+              // timeout wins, log a warning so the operator knows
+              // some final frames may have been lost and shutdown
+              // proceeds. `flushWithTimeout` returns a structured
+              // result instead of throwing so shutdown ordering stays
+              // deterministic.
+              const CLOSE_TIMEOUT_MS = 2000;
+              const { flushWithTimeout } = await import("./console/trace.js");
+              const flushResult = await flushWithTimeout(
+                (signal) => recorder!.close(signal),
+                CLOSE_TIMEOUT_MS,
+              );
+              if (flushResult.timedOut) {
+                console.warn(
+                  `[remnic console] trace flush timed out after ${CLOSE_TIMEOUT_MS}ms; some final frames may be lost`,
+                );
+              }
+              // Codex P2 (PR #732 round 5): surface flush errors at
+              // warn level so operators learn about I/O failures instead
+              // of silently losing them. The error message is
+              // stringified (not spread with %o) to avoid accidentally
+              // logging object internals that might contain paths or
+              // other sensitive strings.
+              if (flushResult.error != null) {
+                const msg =
+                  flushResult.error instanceof Error
+                    ? flushResult.error.message
+                    : String(flushResult.error);
+                console.warn(
+                  `[remnic console] trace flush error: ${msg}`,
+                );
+              }
+            }
+          }
         });
     },
     { commands: ["engram"] },
