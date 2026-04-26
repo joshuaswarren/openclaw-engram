@@ -35,6 +35,8 @@ export {
   type ConnectorSyncStatus,
 } from "./state-store.js";
 
+export { isTransientHttpError } from "./transient-errors.js";
+
 export {
   GOOGLE_DRIVE_CONNECTOR_ID,
   GOOGLE_DRIVE_CURSOR_KIND,

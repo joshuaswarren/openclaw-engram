@@ -63,6 +63,7 @@ import type {
   SyncIncrementalArgs,
   SyncIncrementalResult,
 } from "./framework.js";
+import { isTransientHttpError } from "./transient-errors.js";
 
 /**
  * Stable connector id. Lives in the registry under this exact string.
@@ -590,101 +591,12 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
  * that would break the à-la-carte contract. Instead we read the
  * documented duck-typed shape: `{ code, status, response: { status }, name }`.
  *
- * Transient classes:
- *   - 429 (rate-limit / quota — retry after backoff)
- *   - 5xx (server error — Drive backend is sad, retry)
- *   - AbortError / aborted requests (caller cancelled or upstream timeout)
- *   - Network errors with no HTTP status (ECONNRESET, ETIMEDOUT, ENOTFOUND, EAI_AGAIN, etc.)
- *
- * Terminal classes (return false → skip-and-continue):
- *   - 404 (file gone)
- *   - 403 (permission-denied)
- *   - 400 (bad request — won't be fixed by retrying)
- *   - 410 (gone)
- *   - any other 4xx that isn't 429
+ * Delegates to the shared `isTransientHttpError` helper in
+ * `transient-errors.ts` (Thread 3 — Cursor PRRT_kwDORJXyws59sdH4). Drive
+ * attaches no connector-specific status property, so `statusProps` is empty.
  */
 export function isTransientDriveError(err: unknown): boolean {
-  if (err === null || typeof err !== "object") return false;
-  const e = err as {
-    name?: unknown;
-    code?: unknown;
-    status?: unknown;
-    response?: { status?: unknown } | null;
-    message?: unknown;
-  };
-
-  // AbortError surfaces from `googleapis` and from `fetch`-style aborts.
-  if (typeof e.name === "string" && e.name === "AbortError") return true;
-
-  // Resolve a numeric HTTP status from any of the documented locations.
-  // GaxiosError uses `response.status` and mirrors it on `code` (sometimes
-  // as a string, sometimes as a number). Newer versions also expose `status`.
-  const status = pickHttpStatus(e);
-  if (status !== undefined) {
-    if (status === 429) return true;
-    if (status >= 500 && status <= 599) return true;
-    // Any classified 4xx that isn't 429 is terminal.
-    return false;
-  }
-
-  // No HTTP status at all → likely a network-layer error. Treat as transient
-  // unless the code is a documented non-retryable Node syscall error. We
-  // explicitly enumerate the retryable codes rather than using a denylist
-  // so a typo elsewhere in the stack doesn't accidentally swallow data.
-  const codeStr = typeof e.code === "string" ? e.code : undefined;
-  if (codeStr !== undefined) {
-    const transientCodes = new Set([
-      "ECONNRESET",
-      "ECONNREFUSED",
-      "ECONNABORTED",
-      "ETIMEDOUT",
-      "ESOCKETTIMEDOUT",
-      "ENOTFOUND",
-      "EAI_AGAIN",
-      "EPIPE",
-      "EHOSTUNREACH",
-      "ENETUNREACH",
-      "ENETDOWN",
-      "ERR_NETWORK",
-      "ERR_NETWORK_CHANGED",
-    ]);
-    if (transientCodes.has(codeStr)) return true;
-    // Unknown string code with no HTTP status: be conservative and treat
-    // as terminal so we don't loop on a permanent error. If this proves
-    // wrong in practice we can flip the default.
-    return false;
-  }
-
-  // No status, no code — could be a plain `Error` from a fetch-layer
-  // network failure. Treat as transient (it's almost never a 4xx without
-  // any error metadata).
-  return true;
-}
-
-function pickHttpStatus(e: {
-  code?: unknown;
-  status?: unknown;
-  response?: { status?: unknown } | null;
-}): number | undefined {
-  // Prefer `response.status` (canonical GaxiosError shape).
-  const responseStatus = e.response?.status;
-  if (typeof responseStatus === "number" && Number.isFinite(responseStatus)) {
-    return responseStatus;
-  }
-  // Then top-level `status` (some HTTP client libs).
-  if (typeof e.status === "number" && Number.isFinite(e.status)) {
-    return e.status;
-  }
-  // Then `code` (older GaxiosError).
-  if (typeof e.code === "number" && Number.isFinite(e.code)) {
-    return e.code;
-  }
-  // Tolerate string-numeric codes ("429" / "503" — older googleapis).
-  if (typeof e.code === "string" && /^\d+$/.test(e.code)) {
-    const n = Number(e.code);
-    if (Number.isFinite(n) && n >= 100 && n <= 599) return n;
-  }
-  return undefined;
+  return isTransientHttpError(err);
 }
 
 /**

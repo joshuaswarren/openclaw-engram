@@ -71,6 +71,7 @@ import type {
   SyncIncrementalArgs,
   SyncIncrementalResult,
 } from "./framework.js";
+import { isTransientHttpError } from "./transient-errors.js";
 
 // ---------------------------------------------------------------------------
 // Public constants
@@ -292,98 +293,14 @@ function requireNonEmptyString(value: unknown, key: string): string {
  * advancing the cursor) or terminal (skip-and-continue for per-message
  * errors).
  *
- * Transient:
- *   - 429 (rate-limit — retry after backoff)
- *   - 5xx (Gmail backend error)
- *   - AbortError / network errors (ECONNRESET, ETIMEDOUT, …)
- *
- * Terminal (skip-and-continue):
- *   - 404 (message deleted or not accessible)
- *   - 403 (permission denied)
- *   - 400 (bad request — won't be fixed by retrying)
- *   - any other 4xx that isn't 429
- *
- * Mirrors Drive's `isTransientDriveError` pattern (CLAUDE.md architecture).
+ * Delegates to the shared `isTransientHttpError` helper in
+ * `transient-errors.ts` (Thread 3 — Cursor PRRT_kwDORJXyws59sdH4). The
+ * Gmail-specific `gmailStatus` property (attached by `gmailFetch`) is passed
+ * as an extra lookup key so the shared resolver finds it before the generic
+ * `status` field.
  */
 export function isTransientGmailError(err: unknown): boolean {
-  if (err === null || typeof err !== "object") return false;
-  const e = err as {
-    name?: unknown;
-    code?: unknown;
-    status?: unknown;
-    gmailStatus?: unknown;
-    response?: { status?: unknown } | null;
-    message?: unknown;
-  };
-
-  // AbortError
-  if (typeof e.name === "string" && e.name === "AbortError") return true;
-
-  // HTTP status attached by our own error-throwing code (see `gmailFetch`),
-  // or by fetch-layer libraries.
-  const status = pickHttpStatus(e);
-  if (status !== undefined) {
-    if (status === 429) return true;
-    if (status >= 500 && status <= 599) return true;
-    // Any classified 4xx that isn't 429 is terminal.
-    return false;
-  }
-
-  // Network-layer error codes.
-  const codeStr = typeof e.code === "string" ? e.code : undefined;
-  if (codeStr !== undefined) {
-    const transientCodes = new Set([
-      "ECONNRESET",
-      "ECONNREFUSED",
-      "ECONNABORTED",
-      "ETIMEDOUT",
-      "ESOCKETTIMEDOUT",
-      "ENOTFOUND",
-      "EAI_AGAIN",
-      "EPIPE",
-      "EHOSTUNREACH",
-      "ENETUNREACH",
-      "ENETDOWN",
-      "ERR_NETWORK",
-      "ERR_NETWORK_CHANGED",
-    ]);
-    if (transientCodes.has(codeStr)) return true;
-    return false;
-  }
-
-  // No status, no code — treat as transient (plain network failures).
-  return true;
-}
-
-function pickHttpStatus(e: {
-  code?: unknown;
-  status?: unknown;
-  gmailStatus?: unknown;
-  response?: { status?: unknown } | null;
-}): number | undefined {
-  // Our own `gmailStatus` property set in `gmailFetch`.
-  if (typeof e.gmailStatus === "number" && Number.isFinite(e.gmailStatus)) {
-    return e.gmailStatus;
-  }
-  // `response.status` (fetch-compatible error shapes).
-  const responseStatus = e.response?.status;
-  if (typeof responseStatus === "number" && Number.isFinite(responseStatus)) {
-    return responseStatus;
-  }
-  // Top-level `status`.
-  if (typeof e.status === "number" && Number.isFinite(e.status)) {
-    return e.status;
-  }
-  // Numeric `code`.
-  if (typeof e.code === "number" && Number.isFinite(e.code)) {
-    return e.code;
-  }
-  // String-numeric codes ("429" / "503").
-  if (typeof e.code === "string" && /^\d+$/.test(e.code)) {
-    const n = Number(e.code);
-    if (Number.isFinite(n) && n >= 100 && n <= 599) return n;
-  }
-  return undefined;
+  return isTransientHttpError(err, ["gmailStatus"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -437,6 +354,24 @@ interface GmailCursorPayload {
    * Cleared when the watermark advances into a new second.
    */
   seenIds: Record<string, string>;
+  /**
+   * Thread 2 fix (Codex P1 PRRT_kwDORJXyws59sctD): page-token resume.
+   *
+   * When the per-pass cap is hit mid-page and there are still more pages to
+   * consume in the current `after:` window, we persist the Gmail `pageToken`
+   * here. On the next poll we skip re-issuing the initial `after:` query and
+   * instead start directly from this token, avoiding livelock where the same
+   * first batch is processed forever with newest-first ordering.
+   *
+   * When the current `after:` window is fully drained (no more pages), this
+   * field is cleared (set to `undefined`) AND the watermark is advanced. The
+   * two actions happen atomically in the same cursor write.
+   *
+   * Old cursors lack this field; the parser treats absence as `undefined`
+   * (no resume token), which is equivalent to starting from the beginning of
+   * the `after:` window — correct for any cursor written before this fix.
+   */
+  pageToken?: string;
 }
 
 function makeCursor(payload: GmailCursorPayload): ConnectorCursor {
@@ -491,7 +426,11 @@ function parseCursorPayload(cursor: ConnectorCursor): GmailCursorPayload {
     seenIds = p.seenIds as Record<string, string>;
   }
 
-  return { watermarkMs, skippedIds, seenIds };
+  // pageToken: tolerate missing key (old cursors lack it; treated as no resume token).
+  const pageToken: string | undefined =
+    typeof p.pageToken === "string" && p.pageToken.length > 0 ? p.pageToken : undefined;
+
+  return { watermarkMs, skippedIds, seenIds, pageToken };
 }
 
 /**
@@ -848,10 +787,16 @@ async function incrementalSync(
     const ms = Number(cursorPayload.watermarkMs);
     if (Number.isFinite(ms) && ms > 0) {
       currentWatermarkMs = ms;
-      // Epoch-seconds for the Gmail `after:` query operator. Using floor (not
-      // ceil) ensures we do not skip messages in the same second as the
-      // watermark that were not yet seen; dedup is handled by `seenIds`.
-      afterEpochSec = Math.floor(ms / 1000);
+      // Thread 1 fix (Codex P1 PRRT_kwDORJXyws59sctC): use Math.ceil so the
+      // `after:` query is exclusive of the boundary second. Floor truncation
+      // caused messages whose `internalDate` falls in the same second as the
+      // watermark to be re-returned by Gmail on every subsequent poll.
+      // Math.ceil makes the query start from the NEXT second, so only genuinely
+      // new messages are returned. The `seenIds` map still guards against any
+      // same-second duplicates that Gmail returns (e.g. messages with
+      // internalDate exactly equal to watermarkMs after ceil rounds up to
+      // the same second boundary).
+      afterEpochSec = Math.ceil(ms / 1000);
     }
   }
 
@@ -875,19 +820,24 @@ async function incrementalSync(
   // messages. Initialized to the current watermark so it only ever advances.
   let highWaterMs = currentWatermarkMs;
 
-  let pageToken: string | undefined = undefined;
+  // Thread 2 fix (Codex P1 PRRT_kwDORJXyws59sctD): resume from a persisted
+  // page token if present. This prevents re-processing the first batch every
+  // pass when the cap is hit mid-page with newest-first ordering (livelock).
+  let pageToken: string | undefined = cursorPayload.pageToken;
 
   // Whether we exhausted the full message list without hitting the per-pass
   // cap. Mirrors Notion's `databaseFullyDrained` pattern (Codex P1 review):
   // only advance the watermark when we fully drained the list. If the cap was
-  // hit mid-pass, the next poll must re-query the same `after:` window to pick
-  // up the remaining messages — advancing the watermark would permanently skip
-  // them (especially with newest-first list ordering).
+  // hit mid-pass, the next poll must resume from the saved pageToken (see
+  // Thread 2 fix above) to pick up the remaining messages without re-doing
+  // the first batch.
   let listFullyDrained = false;
   let capHit = false;
+  // Track the page token at the point the cap is hit so we can persist it.
+  let capHitPageToken: string | undefined = undefined;
 
   // Page through messages.list until exhausted, aborted, or per-pass cap hit.
-  outer: while (true) {
+  while (true) {
     throwIfAborted(signal);
 
     // Build the list URL.
@@ -905,6 +855,9 @@ async function incrementalSync(
     };
 
     const messages = listPage.messages ?? [];
+
+    // Whether the per-pass cap was hit while iterating this page's messages.
+    let capHitMidPage = false;
 
     for (const ref of messages) {
       throwIfAborted(signal);
@@ -925,10 +878,11 @@ async function incrementalSync(
       }
 
       if (totalConsumed >= MAX_MESSAGES_PER_PASS) {
-        // Hit the per-pass cap mid-page. Do NOT advance the watermark — the
-        // remaining messages in this window must be retried on the next poll.
-        capHit = true;
-        break outer;
+        // Cap hit mid-page. Stop processing this page's remaining messages.
+        // We still need to read listPage.nextPageToken below (Thread 2) to
+        // know whether there are more pages to resume from.
+        capHitMidPage = true;
+        break;
       }
       totalConsumed++;
 
@@ -974,9 +928,26 @@ async function incrementalSync(
       }
     }
 
+    // Resolve the next-page token from this page's response.
+    const hasNextPage =
+      typeof listPage.nextPageToken === "string" && listPage.nextPageToken.length > 0;
+    const resolvedNextPageToken = hasNextPage ? listPage.nextPageToken : undefined;
+
+    if (capHitMidPage) {
+      // Thread 2 fix (Codex P1 PRRT_kwDORJXyws59sctD): cap was hit while
+      // iterating this page. Persist the next-page token (if any) so the next
+      // poll resumes from the following page rather than restarting at page 1.
+      // If there is no next page, `capHitPageToken` stays undefined and the
+      // next poll will restart from the beginning of the `after:` window —
+      // which is correct, since we've exhausted all pages in this window.
+      capHit = true;
+      capHitPageToken = resolvedNextPageToken;
+      break;
+    }
+
     // Continue to the next page if Gmail signals more results.
-    if (typeof listPage.nextPageToken === "string" && listPage.nextPageToken.length > 0) {
-      pageToken = listPage.nextPageToken;
+    if (resolvedNextPageToken !== undefined) {
+      pageToken = resolvedNextPageToken;
       continue;
     }
 
@@ -995,8 +966,12 @@ async function incrementalSync(
   // floor(currentWatermarkMs/1000)), clear seenIds — those sub-second entries
   // are no longer relevant since the new `after:` query will use a higher
   // epoch-second and won't return those old messages anymore.
+  //
+  // Thread 2: pageToken in the next cursor is set only when the cap was hit
+  // mid-page. It is cleared (not included) when the list is fully drained.
   let nextWatermarkMs: string;
   let nextSeenIds: Record<string, string>;
+  let nextPageToken: string | undefined;
 
   if (listFullyDrained && !capHit && highWaterMs > currentWatermarkMs) {
     nextWatermarkMs = String(highWaterMs);
@@ -1005,16 +980,27 @@ async function incrementalSync(
     const prevSec = Math.floor(currentWatermarkMs / 1000);
     const newSec = Math.floor(highWaterMs / 1000);
     nextSeenIds = newSec > prevSec ? {} : seenIds;
-  } else {
-    // Watermark unchanged — keep exact ms string and carry seenIds forward.
+    // Window fully drained — clear the page token.
+    nextPageToken = undefined;
+  } else if (capHit) {
+    // Cap hit mid-page: keep watermark and seenIds unchanged; persist the
+    // page token so the next poll resumes where we stopped (Thread 2).
     nextWatermarkMs = cursorPayload.watermarkMs;
     nextSeenIds = seenIds;
+    nextPageToken = capHitPageToken;
+  } else {
+    // Watermark unchanged (list drained but no new messages, or aborted) —
+    // keep exact ms string and carry seenIds forward; no page token.
+    nextWatermarkMs = cursorPayload.watermarkMs;
+    nextSeenIds = seenIds;
+    nextPageToken = undefined;
   }
 
   const nextCursor = makeCursor({
     watermarkMs: nextWatermarkMs,
     skippedIds,
     seenIds: nextSeenIds,
+    ...(nextPageToken !== undefined ? { pageToken: nextPageToken } : {}),
   });
 
   return {
