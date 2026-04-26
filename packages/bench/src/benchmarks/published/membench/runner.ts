@@ -20,11 +20,24 @@ import type {
 import {
   aggregateTaskScores,
   containsAnswer,
+  exactMatch,
   f1Score,
   llmJudgeScoreDetailed,
   timed,
 } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
+
+type MemBenchChoice = "A" | "B" | "C" | "D";
+
+interface MemBenchQuestionAnswer {
+  id?: string;
+  question: string;
+  answer: string;
+  choices?: Record<MemBenchChoice, string>;
+  correctChoice?: MemBenchChoice;
+  questionTime?: string;
+  targetStepIds?: number[];
+}
 
 const DATASET_FILENAMES = [
   "membench.json",
@@ -86,31 +99,47 @@ export async function runMemBenchBenchmark(
       const { result: recalledText, durationMs } = await timed(async () =>
         options.system.recall(sessionId, testCase.question),
       );
+      const answerQuestion = buildQuestionPrompt(testCase);
       const answered = await answerBenchmarkQuestion({
-        question: testCase.question,
+        question: answerQuestion,
         recalledText,
         responder: options.system.responder,
       });
+      const predictedChoice = testCase.choices
+        ? extractChoice(answered.finalAnswer)
+        : undefined;
+      const actualAnswer = predictedChoice && testCase.choices
+        ? testCase.choices[predictedChoice]
+        : answered.finalAnswer;
       const judgeResult = await llmJudgeScoreDetailed(
         options.system.judge,
         testCase.question,
-        answered.finalAnswer,
+        actualAnswer,
         testCase.answer,
       );
 
       const scores: Record<string, number> = {
-        f1: f1Score(answered.finalAnswer, testCase.answer),
-        contains_answer: containsAnswer(answered.finalAnswer, testCase.answer),
+        f1: f1Score(actualAnswer, testCase.answer),
+        contains_answer: containsAnswer(actualAnswer, testCase.answer),
       };
+      if (testCase.correctChoice) {
+        scores.membench_accuracy = predictedChoice === testCase.correctChoice ? 1 : 0;
+      } else {
+        scores.membench_accuracy = exactMatch(actualAnswer, testCase.answer);
+      }
       if (judgeResult.score >= 0) {
         scores.llm_judge = judgeResult.score;
+      }
+      const recallScore = await scoreRecallAt10(options.system, sessionId, testCase);
+      if (recallScore !== undefined) {
+        scores.membench_recall_at_10 = recallScore;
       }
 
       tasks.push({
         taskId: testCase.id,
         question: testCase.question,
-        expected: testCase.answer,
-        actual: answered.finalAnswer,
+        expected: testCase.correctChoice ?? testCase.answer,
+        actual: predictedChoice ?? answered.finalAnswer,
         scores,
         latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
         tokens: {
@@ -124,6 +153,14 @@ export async function runMemBenchBenchmark(
           turnCount: testCase.turns.length,
           recalledLength: recalledText.length,
           answeredLength: answered.finalAnswer.length,
+          officialProtocol: testCase.choices ? "multiple_choice_accuracy" : "exact_answer_accuracy",
+          choices: testCase.choices,
+          correctChoice: testCase.correctChoice,
+          correctAnswer: testCase.answer,
+          predictedChoice,
+          predictedAnswer: actualAnswer,
+          questionTime: testCase.questionTime,
+          targetStepIds: testCase.targetStepIds,
           recalledText,
           answeredText: answered.finalAnswer,
           responderModel: answered.model,
@@ -183,7 +220,10 @@ export async function runMemBenchBenchmark(
     },
     results: {
       tasks,
-      aggregates: aggregateTaskScores(tasks.map((task) => task.scores)),
+      aggregates: {
+        ...aggregateTaskScores(tasks.map((task) => task.scores)),
+        ...aggregateMemBenchOfficialBreakdowns(tasks),
+      },
     },
     environment: {
       os: process.platform,
@@ -317,8 +357,12 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
     level,
     turns,
     question,
-    answer,
-  } = entry;
+      answer,
+      choices,
+      correctChoice,
+      questionTime,
+      targetStepIds,
+    } = entry;
 
   if (typeof id !== "string" || id.length === 0) {
     throw new Error(`MemBench case ${location} must include a non-empty id string.`);
@@ -352,6 +396,12 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
     throw new Error(`MemBench case ${location} must include a non-empty turns array.`);
   }
 
+  const parsedChoices = parseChoices(choices, location);
+  const parsedCorrectChoice = parseCorrectChoice(correctChoice, answer, parsedChoices, location);
+  const parsedAnswer = parsedChoices && parsedCorrectChoice
+    ? parsedChoices[parsedCorrectChoice]
+    : answer;
+
   return {
     id,
     memoryType,
@@ -359,7 +409,11 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
     level,
     turns: turns.map((turn, index) => parseTurn(turn, `${location}.turns[${index}]`)),
     question,
-    answer,
+    answer: parsedAnswer,
+    choices: parsedChoices,
+    correctChoice: parsedCorrectChoice,
+    questionTime: typeof questionTime === "string" ? questionTime : undefined,
+    targetStepIds: parseTargetStepIds(targetStepIds),
   };
 }
 
@@ -469,6 +523,10 @@ function normalizeFlatCase(
       turns: record.turns,
       question: record.question,
       answer: record.answer,
+      choices: record.choices,
+      correctChoice: record.correctChoice ?? record.correct_choice,
+      questionTime: record.questionTime ?? record.question_time ?? record.time,
+      targetStepIds: record.targetStepIds ?? record.target_step_ids ?? record.target_step_id,
     },
     location,
   );
@@ -479,8 +537,13 @@ function normalizeTrajectoryQaRecord(
   hints: MemBenchHints,
   location: string,
 ): MemBenchCase[] {
-  const trajectory = record.trajectory;
-  const qa = record.qa ?? record.qas ?? record.qa_pairs ?? record.question_answers;
+  const trajectory = record.trajectory ?? record.message_list ?? record.messages;
+  const rawQa = record.qa ?? record.QA ?? record.qas ?? record.qa_pairs ?? record.question_answers;
+  const qa = Array.isArray(rawQa)
+    ? rawQa
+    : isPlainObject(rawQa)
+      ? [rawQa]
+      : undefined;
 
   if (!Array.isArray(trajectory) || !Array.isArray(qa) || qa.length === 0) {
     return [];
@@ -506,6 +569,10 @@ function normalizeTrajectoryQaRecord(
         turns,
         question: pair.question,
         answer: pair.answer,
+        choices: pair.choices,
+        correctChoice: pair.correctChoice,
+        questionTime: pair.questionTime,
+        targetStepIds: pair.targetStepIds,
       },
       `${location}.qa[${index}]`,
     ),
@@ -526,6 +593,11 @@ function normalizeTrajectoryTurns(
 
   for (let index = 0; index < trajectory.length; index += 1) {
     const turn = trajectory[index];
+    if (typeof turn === "string" && turn.trim().length > 0) {
+      turns.push({ role: "user", content: turn });
+      continue;
+    }
+
     if (!isPlainObject(turn)) {
       return null;
     }
@@ -541,7 +613,20 @@ function normalizeTrajectoryTurns(
       ? turn.text
       : typeof turn.content === "string"
         ? turn.content
-        : undefined;
+        : typeof turn.message === "string"
+          ? turn.message
+          : undefined;
+    const userText = firstString(turn.user, turn.user_message);
+    const assistantText = firstString(turn.agent, turn.assistant, turn.assistant_message);
+    if (userText || assistantText) {
+      if (userText) {
+        turns.push({ role: "user", content: userText });
+      }
+      if (assistantText) {
+        turns.push({ role: "assistant", content: assistantText });
+      }
+      continue;
+    }
     if (!speaker || !text) {
       return null;
     }
@@ -570,8 +655,8 @@ function parseDirectMessageTurn(turn: Record<string, unknown>): Message | null {
 function normalizeQaPairs(
   qa: unknown[],
   location: string,
-): Array<{ id?: string; question: string; answer: string }> {
-  const pairs: Array<{ id?: string; question: string; answer: string }> = [];
+): MemBenchQuestionAnswer[] {
+  const pairs: MemBenchQuestionAnswer[] = [];
 
   for (let index = 0; index < qa.length; index += 1) {
     const item = qa[index];
@@ -580,13 +665,40 @@ function normalizeQaPairs(
     }
 
     const question = firstString(item.question, item.query, item.prompt);
-    const answer = firstString(item.answer, item.expected, item.gold, item.reference);
+    const choices = parseChoices(item.choices ?? item.options, `${location}[${index}].choices`);
+    const rawAnswer = firstString(
+      item.answer,
+      item.expected,
+      item.gold,
+      item.reference,
+      item.label,
+      item.correct_choice,
+    );
+    const correctChoice = parseCorrectChoice(
+      item.correctChoice ?? item.correct_choice,
+      rawAnswer,
+      choices,
+      `${location}[${index}]`,
+    );
+    const answer = choices && correctChoice
+      ? choices[correctChoice]
+      : rawAnswer;
     if (!question || !answer) {
       continue;
     }
 
     const id = firstString(item.id, item.qid, item.question_id);
-    pairs.push({ id: id ?? undefined, question, answer });
+    pairs.push({
+      id: id ?? undefined,
+      question,
+      answer,
+      choices: choices ?? undefined,
+      correctChoice: correctChoice ?? undefined,
+      questionTime: firstString(item.time, item.question_time, item.questionTime) ?? undefined,
+      targetStepIds: parseTargetStepIds(
+        item.target_step_id ?? item.target_step_ids ?? item.targetStepIds,
+      ),
+    });
   }
 
   return pairs;
@@ -707,6 +819,202 @@ function parseTurn(turn: unknown, location: string): Message {
   }
 
   return { role, content };
+}
+
+function buildQuestionPrompt(testCase: MemBenchCase): string {
+  if (!testCase.choices) {
+    return testCase.question;
+  }
+
+  const scenarioInstruction = testCase.scenario === "observation"
+    ? "Please answer the following question based on past memories of the user's messages."
+    : "Please answer the following question based on past memories of your conversation with the user.";
+  const timePrefix = testCase.questionTime
+    ? `(current time is ${testCase.questionTime}) `
+    : "";
+
+  return [
+    scenarioInstruction,
+    `Question: ${timePrefix}${testCase.question}`,
+    "Choices:",
+    `A. ${testCase.choices.A}`,
+    `B. ${testCase.choices.B}`,
+    `C. ${testCase.choices.C}`,
+    `D. ${testCase.choices.D}`,
+    "Please output the correct option for the question, only one corresponding letter, without any other messages.",
+    "Example: D",
+  ].join("\n");
+}
+
+function extractChoice(answer: string): MemBenchChoice | undefined {
+  const trimmed = answer.trim().toUpperCase();
+  if (/^[ABCD]$/.test(trimmed)) {
+    return trimmed as MemBenchChoice;
+  }
+
+  const jsonChoice = trimmed.match(/"CHOICE"\s*:\s*"([ABCD])"/);
+  if (jsonChoice?.[1]) {
+    return jsonChoice[1] as MemBenchChoice;
+  }
+
+  const firstOption = trimmed.match(/\b([ABCD])\b/);
+  return firstOption?.[1] as MemBenchChoice | undefined;
+}
+
+async function scoreRecallAt10(
+  system: ResolvedRunBenchmarkOptions["system"],
+  sessionId: string,
+  testCase: MemBenchCase,
+): Promise<number | undefined> {
+  if (!testCase.targetStepIds || testCase.targetStepIds.length === 0) {
+    return undefined;
+  }
+
+  try {
+    const results = await system.search(
+      testCase.questionTime
+        ? `${testCase.question} (${testCase.questionTime})`
+        : testCase.question,
+      10,
+      sessionId,
+    );
+    const relevant = new Set(testCase.targetStepIds);
+    return results.some((result) => relevant.has(result.turnIndex)) ? 1 : 0;
+  } catch {
+    return undefined;
+  }
+}
+
+function aggregateMemBenchOfficialBreakdowns(
+  tasks: TaskResult[],
+): ReturnType<typeof aggregateTaskScores> {
+  const metrics: Array<[string, (task: TaskResult) => boolean]> = [
+    ["membench_accuracy_factual_participant", (task) =>
+      task.details?.memoryType === "factual" && task.details?.scenario === "participant"],
+    ["membench_accuracy_factual_observation", (task) =>
+      task.details?.memoryType === "factual" && task.details?.scenario === "observation"],
+    ["membench_accuracy_reflective_participant", (task) =>
+      task.details?.memoryType === "reflective" && task.details?.scenario === "participant"],
+    ["membench_accuracy_reflective_observation", (task) =>
+      task.details?.memoryType === "reflective" && task.details?.scenario === "observation"],
+  ];
+  const breakdownScores = metrics
+    .map(([metricName, predicate]) =>
+      tasks
+        .filter(predicate)
+        .map((task) => ({ [metricName]: task.scores.membench_accuracy }))
+        .filter((score) => typeof Object.values(score)[0] === "number"),
+    )
+    .flat();
+
+  return aggregateTaskScores(breakdownScores);
+}
+
+function parseChoices(
+  choices: unknown,
+  location: string,
+): Record<MemBenchChoice, string> | undefined {
+  if (Array.isArray(choices)) {
+    const parsedArray = choices.map((choice) => firstString(choice));
+    if (parsedArray.length === 0) {
+      return undefined;
+    }
+    if (parsedArray.length !== 4 || parsedArray.some((choice) => !choice)) {
+      throw new Error(
+        `MemBench choices ${location} must include exactly four non-empty options when provided as an array.`,
+      );
+    }
+    return {
+      A: parsedArray[0]!,
+      B: parsedArray[1]!,
+      C: parsedArray[2]!,
+      D: parsedArray[3]!,
+    };
+  }
+
+  if (!isPlainObject(choices)) {
+    return undefined;
+  }
+
+  const parsed = {
+    A: firstString(choices.A, choices.a),
+    B: firstString(choices.B, choices.b),
+    C: firstString(choices.C, choices.c),
+    D: firstString(choices.D, choices.d),
+  };
+
+  if (!parsed.A && !parsed.B && !parsed.C && !parsed.D) {
+    return undefined;
+  }
+  if (!parsed.A || !parsed.B || !parsed.C || !parsed.D) {
+    throw new Error(
+      `MemBench choices ${location} must include non-empty A, B, C, and D options.`,
+    );
+  }
+
+  return parsed as Record<MemBenchChoice, string>;
+}
+
+function parseCorrectChoice(
+  directChoice: unknown,
+  answer: unknown,
+  choices: Record<MemBenchChoice, string> | undefined,
+  location: string,
+): MemBenchChoice | undefined {
+  const normalizedDirect = normalizeChoice(directChoice);
+  if (normalizedDirect) {
+    return normalizedDirect;
+  }
+
+  const normalizedAnswer = normalizeChoice(answer);
+  if (normalizedAnswer) {
+    return normalizedAnswer;
+  }
+
+  if (!choices) {
+    return undefined;
+  }
+
+  const answerText = firstString(answer);
+  if (!answerText) {
+    throw new Error(
+      `MemBench case ${location} includes choices but no answer or correct choice.`,
+    );
+  }
+
+  const matchingChoices = (Object.entries(choices) as Array<[MemBenchChoice, string]>)
+    .filter(([, value]) => normalizeComparable(value) === normalizeComparable(answerText))
+    .map(([choice]) => choice);
+  if (matchingChoices.length === 1) {
+    return matchingChoices[0];
+  }
+
+  throw new Error(
+    `MemBench case ${location} includes choices but answer does not identify exactly one option.`,
+  );
+}
+
+function normalizeChoice(value: unknown): MemBenchChoice | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toUpperCase();
+  return /^[ABCD]$/.test(normalized) ? normalized as MemBenchChoice : undefined;
+}
+
+function normalizeComparable(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function parseTargetStepIds(value: unknown): number[] | undefined {
+  const rawValues = Array.isArray(value) ? value : value === undefined ? [] : [value];
+  const parsed = rawValues
+    .map((item) => Array.isArray(item) ? item[0] : item)
+    .map((item) => typeof item === "number" && Number.isInteger(item) && item >= 0
+      ? item
+      : undefined)
+    .filter((item): item is number => item !== undefined);
+  return parsed.length > 0 ? parsed : undefined;
 }
 
 function normalizeLimit(limit: number | undefined): number | undefined {
