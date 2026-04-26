@@ -13,9 +13,10 @@
  * without pulling in the transfer pipeline.
  */
 
-import { lstat, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { importCapsule, type ImportCapsuleResult } from "./capsule-import.js";
+import { assertIsDirectoryNotSymlink } from "./fs-utils.js";
 import type { CapsuleParent, ExportManifestV2 } from "./types.js";
 import { CAPSULE_ID_PATTERN } from "./types.js";
 
@@ -117,8 +118,12 @@ export async function forkCapsule(opts: ForkCapsuleOptions): Promise<ForkCapsule
   validateForkId(opts.forkId);
 
   // --- 2. Validate targetRoot ---
+  // Use the shared assertIsDirectoryNotSymlink helper from fs-utils.ts so
+  // capsule-fork and capsule-import share the same symlink-safe validation
+  // logic (Cursor medium #751 round 2: the fork's doc comment claims it
+  // "mirrors importCapsule's root validation"; now it literally does).
   const rootAbs = path.resolve(opts.targetRoot);
-  await assertIsDirectory(rootAbs);
+  await assertIsDirectoryNotSymlink(rootAbs, "forkCapsule");
 
   // --- 3. Reject duplicate forkId ---
   // Treat ANY existing filesystem entry at `forks/<forkId>` as occupied:
@@ -290,13 +295,6 @@ function validateForkId(forkId: unknown): void {
     throw new Error(
       `forkCapsule: invalid forkId "${forkId}". Expected alphanumeric with single dashes (no leading/trailing dashes, no consecutive dashes).`,
     );
-  }
-}
-
-async function assertIsDirectory(absPath: string): Promise<void> {
-  const st = await stat(absPath).catch(() => null);
-  if (!st || !st.isDirectory()) {
-    throw new Error(`forkCapsule: 'targetRoot' must be an existing directory: ${absPath}`);
   }
 }
 

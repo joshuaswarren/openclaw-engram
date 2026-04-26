@@ -9,7 +9,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -417,4 +417,160 @@ test("parseCapsuleForkArgs: missing --fork-id returns error", () => {
   const result = parseCapsuleForkArgs(["archive.capsule.json.gz", "--target", "/tmp/root"]);
   assert.ok("error" in result);
   assert.ok(result.error.includes("--fork-id"), `expected --fork-id in error, got: ${result.error}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 14: forkCapsule rejects symlinked targetRoot (Cursor medium #751 round 3)
+// ---------------------------------------------------------------------------
+
+test("forkCapsule: rejects symlinked targetRoot before any write", async () => {
+  const realRoot = await makeEmptyDir();
+  const symlinkParent = await makeEmptyDir();
+  const symlinkPath = path.join(symlinkParent, "linked-root");
+  await symlink(realRoot, symlinkPath, "dir");
+
+  const files: FixtureFile[] = [
+    { rel: "facts/a.md", content: "---\nid: a\n---\nbody\n" },
+  ];
+  const { archivePath } = await exportFixture(files, "sym-root-test");
+
+  await assert.rejects(
+    () => forkCapsule({ sourceArchive: archivePath, targetRoot: symlinkPath, forkId: "sym-fork" }),
+    (err: Error) => {
+      // Shared helper in fs-utils.ts produces: "<caller>: path must not be a symlink — ..."
+      assert.ok(
+        err.message.includes("symlink") && err.message.includes("forkCapsule"),
+        `Expected symlink-rejection error from forkCapsule, got: ${err.message}`,
+      );
+      return true;
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Test 15: forkCapsule rejects forkId when a FILE (not just a dir) exists at the path
+// ---------------------------------------------------------------------------
+//
+// Codex P2 round 2: previously the duplicate check only treated a directory
+// at `forks/<forkId>` as occupied. A stray file there would slip past and
+// importCapsule would still write under forks/<sourceCapsule>/, then the
+// breadcrumb mkdir/writeFile would fail leaving a partial fork import.
+
+test("forkCapsule: rejects forkId when a regular file exists at forks/<forkId>", async () => {
+  const targetRoot = await makeEmptyDir();
+  // Plant a file (not a dir) at forks/file-fork
+  await mkdir(path.join(targetRoot, "forks"), { recursive: true });
+  await writeFile(path.join(targetRoot, "forks", "file-fork"), "not a dir", "utf-8");
+
+  const files: FixtureFile[] = [
+    { rel: "facts/a.md", content: "---\nid: a\n---\nbody\n" },
+  ];
+  const { archivePath } = await exportFixture(files, "file-collision");
+
+  await assert.rejects(
+    () => forkCapsule({ sourceArchive: archivePath, targetRoot, forkId: "file-fork" }),
+    (err: Error) => {
+      assert.ok(
+        err.message.includes("file-fork") && err.message.includes("already in use"),
+        `Expected "already in use" error, got: ${err.message}`,
+      );
+      return true;
+    },
+  );
+
+  // Verify NO partial state — no records under forks/file-collision/.
+  const allFiles = await listAll(targetRoot);
+  for (const f of allFiles) {
+    assert.ok(
+      !f.startsWith("forks/file-collision/"),
+      `forkCapsule must not have written under forks/file-collision/ — found: ${f}`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 16: readForkLineage rejects symlinked forks/<forkId>/ that escapes root
+// ---------------------------------------------------------------------------
+//
+// Cursor medium #751 round 2: lexical containment is insufficient — a symlink
+// at `forks/<forkId>` pointing outside the root could let readForkLineage
+// read `lineage.json` from anywhere. Verify the symlink-safe containment
+// check rejects this.
+
+test("readForkLineage: rejects symlinked fork dir that escapes targetRoot", async () => {
+  const targetRoot = await makeEmptyDir();
+  const escape = await makeEmptyDir();
+  // Plant a lineage.json in the escape dir (could be any sensitive content)
+  await writeFile(path.join(escape, "lineage.json"), JSON.stringify({
+    forkId: "escape", forkedAt: "2026-01-01T00:00:00Z",
+    parent: { capsuleId: "x", version: "0.0.0", forkRoot: "forks/x" },
+    importedRecords: 0, skippedRecords: 0,
+  }), "utf-8");
+
+  // Create forks/<forkId>/ as a symlink to the escape dir.
+  await mkdir(path.join(targetRoot, "forks"), { recursive: true });
+  await symlink(escape, path.join(targetRoot, "forks", "evil-fork"), "dir");
+
+  // The lineage helper must NOT follow the symlink and must return null.
+  const result = await readForkLineage(targetRoot, "evil-fork");
+  assert.equal(
+    result,
+    null,
+    "readForkLineage must reject symlinked fork dirs that escape targetRoot",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Test 17: buildCapsuleBlock syncs parentCapsule from parent.capsuleId
+// ---------------------------------------------------------------------------
+
+test("exportCapsule: parentCapsule is auto-derived from parent.capsuleId when only parent provided", async () => {
+  const sourceRoot = await makeMemoryDir([
+    { rel: "facts/a.md", content: "body\n" },
+  ]);
+  const result = await exportCapsule({
+    name: "auto-sync",
+    root: sourceRoot,
+    pluginVersion: "9.9.9",
+    now: Date.parse("2026-04-26T00:00:00.000Z"),
+    capsule: {
+      // ONLY parent — no parentCapsule. The legacy field MUST be derived.
+      parent: {
+        capsuleId: "upstream-id",
+        version: "1.0.0",
+        forkRoot: "forks/upstream-id",
+      },
+    },
+  });
+
+  assert.equal(
+    result.manifest.capsule.parentCapsule,
+    "upstream-id",
+    "parentCapsule should be auto-derived from parent.capsuleId",
+  );
+  assert.equal(result.manifest.capsule.parent?.capsuleId, "upstream-id");
+});
+
+test("exportCapsule: explicit parentCapsule override still wins over parent.capsuleId", async () => {
+  const sourceRoot = await makeMemoryDir([
+    { rel: "facts/a.md", content: "body\n" },
+  ]);
+  const result = await exportCapsule({
+    name: "explicit-override",
+    root: sourceRoot,
+    pluginVersion: "9.9.9",
+    now: Date.parse("2026-04-26T00:00:00.000Z"),
+    capsule: {
+      parent: {
+        capsuleId: "structured-id",
+        version: "1.0.0",
+        forkRoot: "forks/structured-id",
+      },
+      // Caller deliberately diverges from structured field for migration scenario.
+      parentCapsule: "legacy-id",
+    },
+  });
+
+  assert.equal(result.manifest.capsule.parentCapsule, "legacy-id");
+  assert.equal(result.manifest.capsule.parent?.capsuleId, "structured-id");
 });

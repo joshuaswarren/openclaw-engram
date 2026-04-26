@@ -455,12 +455,28 @@ function buildCapsuleBlock(
   name: string,
   override: Partial<Omit<CapsuleBlock, "id">> | undefined,
 ): CapsuleBlock {
+  // `parent` (structured, PR 4/6) and `parentCapsule` (legacy string) carry
+  // overlapping information. The schema documents the invariant: when
+  // `parent` is non-null, `parentCapsule` SHOULD equal `parent.capsuleId`.
+  // We derive the legacy field from the structured field whenever the
+  // caller supplies `parent` but omits `parentCapsule`, so a single-source
+  // override path produces a manifest that satisfies the documented
+  // invariant for legacy V2 readers (Cursor medium #751 round 3).
+  // An explicit `parentCapsule` override still wins — including an explicit
+  // `null` — so callers can intentionally diverge from the structured field
+  // for migration scenarios.
+  const parent = override?.parent ?? null;
+  const parentCapsule =
+    override && Object.prototype.hasOwnProperty.call(override, "parentCapsule")
+      ? (override.parentCapsule ?? null)
+      : (parent?.capsuleId ?? null);
+
   const merged: CapsuleBlock = {
     id: name,
     version: override?.version ?? "0.1.0",
     schemaVersion: override?.schemaVersion ?? "taxonomy-v1",
-    parentCapsule: override?.parentCapsule ?? null,
-    parent: override?.parent ?? null,
+    parentCapsule,
+    parent,
     description: override?.description ?? "",
     retrievalPolicy: override?.retrievalPolicy ?? {
       tierWeights: {},
