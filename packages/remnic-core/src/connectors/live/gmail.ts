@@ -704,10 +704,14 @@ export function createGmailConnector(
       // without importing anything. Mirrors Drive's getStartPageToken pattern.
       if (args.cursor === null) {
         const nowIso = new Date().toISOString();
-        return {
+        const bootstrapResult: GmailSyncResult = {
           newDocs: [],
           nextCursor: makeCursor({ watermarkIso: nowIso }),
-        } as GmailSyncResult & { skippedInaccessible: 0; skippedEmpty: 0; skippedTooLarge: 0 };
+          skippedInaccessible: 0,
+          skippedEmpty: 0,
+          skippedTooLarge: 0,
+        };
+        return bootstrapResult;
       }
 
       const cursorPayload = parseCursorPayload(args.cursor);
