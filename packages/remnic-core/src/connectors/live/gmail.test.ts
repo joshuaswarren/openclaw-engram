@@ -684,6 +684,42 @@ test("messages with empty body are skipped (skippedEmpty)", async () => {
   assert.equal(result.newDocs[0].source.externalId, "msg-good-3");
 });
 
+test("watermark advances past empty messages on full drain (immutable skip)", async () => {
+  // Gmail messages are immutable. An empty message must not stall the watermark
+  // forever — the Cursor Medium review fix records its internalDate and advances.
+  const emptyMsg: GmailMessage = {
+    id: "msg-empty-adv",
+    internalDate: T3, // highest internalDate in the batch
+    payload: { mimeType: "text/plain", body: { data: "" } },
+  };
+  const goodMsg = makeMessage("msg-good-adv", T2, "good content");
+
+  const fetchFn = makeFetch([
+    tokenHandler(),
+    // No nextPageToken — fully drained.
+    listHandler([makeMessageRef("msg-good-adv"), makeMessageRef("msg-empty-adv")]),
+    getHandler({ "msg-good-adv": goodMsg, "msg-empty-adv": emptyMsg }),
+  ]);
+  const connector = createGmailConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  const initialWatermark = new Date(Number(T1)).toISOString();
+  const cursor: ConnectorCursor = {
+    kind: GMAIL_CURSOR_KIND,
+    value: JSON.stringify({ watermarkIso: initialWatermark }),
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GmailSyncResult;
+
+  assert.equal(result.skippedEmpty, 1);
+  assert.equal(result.newDocs.length, 1);
+  // Watermark should advance to T3 (the empty message's internalDate) so the
+  // next poll does not re-fetch it.
+  const payload = JSON.parse(result.nextCursor.value) as { watermarkIso: string };
+  const watermarkMs = new Date(payload.watermarkIso).getTime();
+  assert.equal(watermarkMs, Number(T3), "watermark must advance past immutable empty message");
+});
+
 // ---------------------------------------------------------------------------
 // isTransientGmailError classification
 // ---------------------------------------------------------------------------

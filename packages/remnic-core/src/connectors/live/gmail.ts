@@ -754,11 +754,18 @@ async function incrementalSync(
   let skippedTooLarge = 0;
   let totalConsumed = 0;
 
-  // Convert ISO watermark to epoch-seconds for the Gmail `after:` operator.
+  // Convert ISO watermark to epoch-milliseconds (preserved in full) and to
+  // epoch-seconds for the Gmail `after:` operator. Cursor bug fix (Cursor
+  // Medium review): preserve the original millisecond precision in
+  // `currentWatermarkMs` so that `highWaterMs` is never initialized to a
+  // truncated value — a message between the truncated and original value would
+  // appear to advance the watermark backward.
   let afterEpochSec = 0;
+  let currentWatermarkMs = 0;
   if (cursorPayload.watermarkIso.length > 0) {
     const ms = new Date(cursorPayload.watermarkIso).getTime();
     if (Number.isFinite(ms) && ms > 0) {
+      currentWatermarkMs = ms;
       afterEpochSec = Math.floor(ms / 1000);
     }
   }
@@ -766,8 +773,11 @@ async function incrementalSync(
   // Build the Gmail search query: combine watermark filter with user query.
   const listQuery = buildListQuery(afterEpochSec, config.query);
 
-  // Track the highest internalDate seen across successfully processed messages.
-  let highWaterMs = afterEpochSec > 0 ? afterEpochSec * 1000 : 0;
+  // Track the highest internalDate seen (in ms) across all processed messages
+  // (including skipped-empty and skipped-too-large, which are immutable on
+  // Gmail and would otherwise stall the watermark forever — Cursor Medium
+  // review fix). Initialize from the original full-precision watermark.
+  let highWaterMs = currentWatermarkMs;
 
   let pageToken: string | undefined = undefined;
 
@@ -822,17 +832,24 @@ async function incrementalSync(
 
       if (doc === "inaccessible") {
         skippedInaccessible++;
-        // Terminal: don't re-fetch. Do NOT advance watermark based on this
-        // message since we don't know its internalDate.
-      } else if (doc === "empty") {
-        skippedEmpty++;
-      } else if (doc === "too-large") {
-        skippedTooLarge++;
+        // Terminal: don't re-fetch. We don't have the internalDate so we
+        // cannot advance the watermark based on this message.
+      } else if (doc !== null && typeof doc === "object" && "kind" in doc) {
+        // SkippedWithDate: empty or too-large. Gmail messages are immutable,
+        // so record the internalDate to advance the watermark past them and
+        // prevent re-fetching forever (Cursor Medium review fix).
+        if (doc.kind === "empty") skippedEmpty++;
+        else skippedTooLarge++;
+        const skippedMs = Number(doc.internalDate);
+        if (Number.isFinite(skippedMs) && skippedMs > highWaterMs) {
+          highWaterMs = skippedMs;
+        }
       } else if (doc !== null) {
-        newDocs.push(doc);
+        newDocs.push(doc as ConnectorDocument);
         // Track highest internalDate to advance watermark when fully drained.
-        if (doc.source.externalRevision) {
-          const msgMs = Number(doc.source.externalRevision);
+        const successDoc = doc as ConnectorDocument;
+        if (successDoc.source.externalRevision) {
+          const msgMs = Number(successDoc.source.externalRevision);
           if (Number.isFinite(msgMs) && msgMs > highWaterMs) {
             highWaterMs = msgMs;
           }
@@ -855,8 +872,10 @@ async function incrementalSync(
   // premature abort). If we stopped early, preserve the existing watermark so
   // the next poll re-queries the same `after:` window and processes the
   // remaining messages. This mirrors Notion's databaseFullyDrained contract.
+  // Compare against `currentWatermarkMs` (full-precision ms) not against the
+  // truncated `afterEpochSec * 1000` to avoid a backward regression.
   const nextWatermarkIso =
-    listFullyDrained && !capHit && highWaterMs > (afterEpochSec * 1000)
+    listFullyDrained && !capHit && highWaterMs > currentWatermarkMs
       ? new Date(highWaterMs).toISOString()
       : cursorPayload.watermarkIso;
 
@@ -891,6 +910,14 @@ function buildListQuery(afterEpochSec: number, userQuery: string): string {
 // Per-message document fetch
 // ---------------------------------------------------------------------------
 
+/**
+ * Tagged result for skipped messages that have an `internalDate` available.
+ * The caller uses the date to advance the watermark past immutable messages
+ * (empty or too-large) that would otherwise stall the watermark forever
+ * (Cursor Medium review: empty/too-large messages permanently stall watermark).
+ */
+type SkippedWithDate = { kind: "empty" | "too-large"; internalDate: string };
+
 async function fetchMessageDocument(
   fetchFn: GmailFetchFn,
   accessToken: string,
@@ -898,7 +925,7 @@ async function fetchMessageDocument(
   messageId: string,
   fetchedAt: string,
   signal: AbortSignal | undefined,
-): Promise<ConnectorDocument | "inaccessible" | "empty" | "too-large" | null> {
+): Promise<ConnectorDocument | SkippedWithDate | "inaccessible" | null> {
   throwIfAborted(signal);
 
   let message: GmailMessage;
@@ -915,14 +942,22 @@ async function fetchMessageDocument(
     return "inaccessible";
   }
 
+  const internalDate = message.internalDate ?? "";
+
   // Extract body text.
   const body = message.payload ? extractBodyFromPart(message.payload) : "";
 
-  if (typeof body !== "string" || body.trim().length === 0) return "empty";
-  if (body.length > MAX_TEXT_BYTES) return "too-large";
+  if (typeof body !== "string" || body.trim().length === 0) {
+    // Return the internalDate so the caller can advance the watermark past
+    // this immutable empty message (it will never have content).
+    return { kind: "empty", internalDate };
+  }
+  if (body.length > MAX_TEXT_BYTES) {
+    // Same for too-large: the message is immutable; record its date.
+    return { kind: "too-large", internalDate };
+  }
 
   const subject = extractSubject(message);
-  const internalDate = message.internalDate ?? "";
 
   return {
     id: messageId,
