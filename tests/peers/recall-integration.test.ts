@@ -246,19 +246,22 @@ function buildPeerProfileSection(
   const fieldsByRecency = allFields
     .map(([key, value]) => {
       const prov = profile.provenance[key];
-      let latestObservedAt = "1970-01-01T00:00:00.000Z";
+      // Use epoch ms (not string comparison) — matches Codex P2 fix in orchestrator.ts.
+      let latestMs = 0;
       if (Array.isArray(prov) && prov.length > 0) {
         for (const p of prov) {
-          if (typeof p.observedAt === "string" && p.observedAt > latestObservedAt) {
-            latestObservedAt = p.observedAt;
+          if (typeof p.observedAt === "string") {
+            const parsed = Date.parse(p.observedAt);
+            if (Number.isFinite(parsed) && parsed > latestMs) {
+              latestMs = parsed;
+            }
           }
         }
       }
-      return { key, value, latestObservedAt };
+      return { key, value, latestMs };
     })
     .sort((a, b) => {
-      if (b.latestObservedAt > a.latestObservedAt) return 1;
-      if (b.latestObservedAt < a.latestObservedAt) return -1;
+      if (b.latestMs !== a.latestMs) return b.latestMs - a.latestMs;
       return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
     });
 

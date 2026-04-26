@@ -1533,21 +1533,39 @@ export class Orchestrator {
    *
    * Connectors and the `before_agent_start` hook call this when the
    * session's counter-party is known. The ID is validated against
-   * `PEER_ID_PATTERN` before storing; invalid IDs are silently dropped
-   * so a misconfigured connector can't crash the recall path.
+   * `PEER_ID_PATTERN` before storing.
+   *
+   * Fail-closed (Codex P1 review): an invalid peerId clears any
+   * previously registered mapping for the session rather than silently
+   * keeping stale data. This prevents a malformed metadata update from
+   * mixing one peer's profile context into another session.
+   *
+   * Defensive init (Cursor review + rule 16): `Object.create(
+   * Orchestrator.prototype)` stubs in legacy tests skip class-field
+   * initializers, so `_peerIdBySession` may be undefined. Mirror the
+   * same guard used by `setCodingContextForSession`.
    */
   setPeerIdForSession(sessionKey: string, peerId: string | null): void {
     if (typeof sessionKey !== "string" || sessionKey.length === 0) return;
+    // Defensive init — mirrors setCodingContextForSession (rule 16).
+    if (!this._peerIdBySession) {
+      (this as unknown as { _peerIdBySession: Map<string, string> })._peerIdBySession = new Map();
+    }
     if (peerId === null) {
       this._peerIdBySession.delete(sessionKey);
       return;
     }
-    if (typeof peerId !== "string" || peerId.length === 0) return;
-    // Basic pattern guard — full validation lives in peers/storage.ts;
-    // we only need the PEER_ID_PATTERN import-free check here so the
-    // orchestrator doesn't take a peers/ dependency at class scope.
-    if (!/^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$/.test(peerId) || peerId.length > 64) {
-      log.warn(`setPeerIdForSession: ignoring invalid peerId "${peerId}" for session`);
+    // Basic pattern guard — full validation lives in peers/storage.ts.
+    // Invalid input is fail-closed: clear the existing mapping so stale
+    // peer context can't bleed in after a bad metadata update (Codex P1).
+    if (
+      typeof peerId !== "string" ||
+      peerId.length === 0 ||
+      peerId.length > 64 ||
+      !/^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$/.test(peerId)
+    ) {
+      log.warn(`setPeerIdForSession: invalid peerId — clearing session mapping`);
+      this._peerIdBySession.delete(sessionKey);
       return;
     }
     this._peerIdBySession.set(sessionKey, peerId);
@@ -6373,28 +6391,39 @@ export class Orchestrator {
         const allFields = Object.entries(peerProfile.fields);
         if (allFields.length === 0) return null;
         // Select the top-N most-recently-updated fields by consulting
-        // provenance. Fields without provenance get a synthetic epoch
-        // timestamp so they sort last (least recent).
+        // provenance. Fields without provenance get epoch-0 ms so they
+        // sort last (least recent).
+        // Codex P2: parse ISO-8601 to epoch ms rather than comparing
+        // strings. ISO-8601 strings with different timezone offsets
+        // (e.g. "2026-04-20T00:00:00+05:00" vs "2026-04-20T00:00:00Z")
+        // can order incorrectly under lexicographic comparison even
+        // though they may refer to different instants. `Date.parse`
+        // returns NaN on malformed input — we fall back to 0 (epoch)
+        // so invalid timestamps sort last rather than causing NaN
+        // comparison instability.
         const fieldsByRecency = allFields
           .map(([key, value]) => {
             const prov = peerProfile.provenance[key];
-            // Find the most recent observedAt across all provenance entries
-            // for this field. Fall back to epoch if none recorded.
-            let latestObservedAt = "1970-01-01T00:00:00.000Z";
+            // Find the most recent observedAt (epoch ms) across all
+            // provenance entries for this field. Fall back to 0 if none
+            // recorded or if all entries are malformed.
+            let latestMs = 0;
             if (Array.isArray(prov) && prov.length > 0) {
               for (const p of prov) {
-                if (typeof p.observedAt === "string" && p.observedAt > latestObservedAt) {
-                  latestObservedAt = p.observedAt;
+                if (typeof p.observedAt === "string") {
+                  const parsed = Date.parse(p.observedAt);
+                  if (Number.isFinite(parsed) && parsed > latestMs) {
+                    latestMs = parsed;
+                  }
                 }
               }
             }
-            return { key, value, latestObservedAt };
+            return { key, value, latestMs };
           })
           // Descending: most-recently-updated first (rule 19 — sort
           // comparators must return 0 for equal items so use secondary key).
           .sort((a, b) => {
-            if (b.latestObservedAt > a.latestObservedAt) return 1;
-            if (b.latestObservedAt < a.latestObservedAt) return -1;
+            if (b.latestMs !== a.latestMs) return b.latestMs - a.latestMs;
             return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
           });
         const capped = fieldsByRecency.slice(0, this.config.peerProfileRecallMaxFields);
