@@ -7322,18 +7322,124 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log(`  Cooled down: ${result.cooledDown}`);
         });
 
-      // ── Console subcommand (issue #688) ─────────────────────────────────
-      // PR 1/3 (#721) shipped the structured engine-state aggregator
-      // and the `--state-only` flag (one-shot JSON snapshot). PR 2/3
-      // wires the interactive TUI: invoking `remnic console` with no
-      // flags starts a clear+repaint refresh loop. Trace replay
-      // (`--trace <session-id>`) lands in PR 3/3 along with the HTTP
-      // `/console/state` endpoint and the MCP `engram.console_state`
-      // tool.
+      // ── Secure-store subcommand (issue #690 PR 2/4) ─────────────────────
+      // CLI for the at-rest encryption header + in-memory keyring. Pure
+      // primitives (KDF + cipher + metadata) shipped in PR 1/4. This PR
+      // wires the operator-facing init / unlock / lock / status flow.
+      // Storage integration (PR 3/4) and capsule export --encrypt (PR 4/4)
+      // build on the keyring registered here.
+      const secureStoreCmd = cmd
+        .command("secure-store")
+        .description(
+          "At-rest encryption keyring (issue #690). Manage the secure-store header and the in-memory master key used by the running daemon.",
+        );
+
+      secureStoreCmd
+        .command("init")
+        .description(
+          "Initialize a new secure-store header. Prompts for a passphrase, derives a master key via scrypt, and writes the verifier to <memoryDir>/.secure-store/header.json. Refuses to overwrite an existing header.",
+        )
+        .option("--note <text>", "Optional human-readable note recorded in metadata. Never include secrets.")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const {
+            runSecureStoreInit,
+            createPassphraseReader,
+            renderInitReport,
+          } = await import("./secure-store/index.js");
+          const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const initOpts: Parameters<typeof runSecureStoreInit>[0] = {
+            memoryDir,
+            readPassphrase: createPassphraseReader(),
+          };
+          if (typeof options.note === "string") initOpts.note = options.note;
+          const report = await runSecureStoreInit(initOpts);
+          if (options.json === true) {
+            console.log(JSON.stringify(report, null, 2));
+            return;
+          }
+          console.log(renderInitReport(report));
+        });
+
+      secureStoreCmd
+        .command("unlock")
+        .description(
+          "Unlock the secure-store. Prompts for the passphrase, validates it against the header verifier, and registers the master key in the daemon's in-memory keyring. The key is cleared on `lock`, daemon restart, or process exit.",
+        )
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const {
+            runSecureStoreUnlock,
+            createPassphraseReader,
+            renderUnlockReport,
+          } = await import("./secure-store/index.js");
+          const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const report = await runSecureStoreUnlock({
+            memoryDir,
+            readPassphrase: createPassphraseReader(),
+          });
+          if (options.json === true) {
+            console.log(JSON.stringify(report, null, 2));
+          } else {
+            console.log(renderUnlockReport(report));
+          }
+          if (!report.ok) {
+            process.exitCode = 1;
+          }
+        });
+
+      secureStoreCmd
+        .command("lock")
+        .description(
+          "Lock the secure-store. Clears the master key from the daemon's in-memory keyring. Idempotent — succeeds even if the store is already locked.",
+        )
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const { runSecureStoreLock, renderLockReport } = await import(
+            "./secure-store/index.js"
+          );
+          const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const report = runSecureStoreLock({ memoryDir });
+          if (options.json === true) {
+            console.log(JSON.stringify(report, null, 2));
+            return;
+          }
+          console.log(renderLockReport(report));
+        });
+
+      secureStoreCmd
+        .command("status")
+        .description(
+          "Report secure-store status: whether a header exists, whether the daemon currently holds the key, KDF parameters, and last-unlock timestamp.",
+        )
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const { runSecureStoreStatus, renderStatusReport } = await import(
+            "./secure-store/index.js"
+          );
+          const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const report = await runSecureStoreStatus({ memoryDir });
+          if (options.json === true) {
+            console.log(JSON.stringify(report, null, 2));
+            return;
+          }
+          console.log(renderStatusReport(report));
+        });
+
+      // ── Console subcommand (issue #688 PR 1/3) ──────────────────────────
+      // Structured engine-state aggregator. PR 1/3 ships only the
+      // `--state-only` flag which prints the snapshot as JSON. The
+      // interactive TUI (PR 2/3), HTTP `/console/state`, MCP
+      // `engram.console_state`, and trace replay (PR 3/3) land in
+      // follow-ups.
       cmd
         .command("console")
         .description(
-          "Operator console (issue #688). With no flags: launches the interactive TUI. With --state-only: prints a single JSON snapshot and exits.",
+          "Operator console (issue #688). PR 1/3 ships --state-only, which emits a structured engine-state snapshot as JSON. The interactive TUI lands in PR 2/3.",
         )
         .option(
           "--state-only",
@@ -7341,15 +7447,16 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         )
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
-          if (options.stateOnly === true) {
-            const { gatherConsoleState } = await import("./console/state.js");
-            const snapshot = await gatherConsoleState(orchestrator);
-            console.log(JSON.stringify(snapshot, null, 2));
+          if (options.stateOnly !== true) {
+            console.error(
+              "remnic console: interactive TUI not yet available (issue #688 PR 2/3). Pass --state-only to print a JSON snapshot.",
+            );
+            process.exitCode = 1;
             return;
           }
-          const { runConsoleTui } = await import("./console/tui.js");
-          const handle = runConsoleTui(orchestrator);
-          await handle.done;
+          const { gatherConsoleState } = await import("./console/state.js");
+          const snapshot = await gatherConsoleState(orchestrator);
+          console.log(JSON.stringify(snapshot, null, 2));
         });
     },
     { commands: ["engram"] },

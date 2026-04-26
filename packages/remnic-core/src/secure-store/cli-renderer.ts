@@ -1,0 +1,84 @@
+/**
+ * Console-text renderers for the `remnic secure-store {init,unlock,
+ * lock,status}` CLI surface (issue #690 PR 2/4).
+ *
+ * Pure: each `render*` function takes a typed report and returns a
+ * string. CLI handlers do the `console.log`. Tests assert on the
+ * returned text directly so behavior stays decoupled from stdout.
+ */
+
+import type {
+  SecureStoreInitReport,
+  SecureStoreLockReport,
+  SecureStoreStatusReport,
+  SecureStoreUnlockReport,
+} from "./cli-handlers.js";
+import type { SecureStoreHeader } from "./header.js";
+
+export function renderInitReport(report: SecureStoreInitReport): string {
+  const lines: string[] = [];
+  lines.push("=== Remnic secure-store initialized ===");
+  lines.push("");
+  lines.push(`header: ${report.headerPath}`);
+  lines.push(`createdAt: ${report.createdAt}`);
+  lines.push(...renderKdfLines(report.kdf));
+  lines.push("");
+  lines.push("Note: init does NOT auto-unlock the store. Run");
+  lines.push("  remnic engram secure-store unlock");
+  lines.push("to register the master key with the running daemon.");
+  return lines.join("\n");
+}
+
+export function renderUnlockReport(report: SecureStoreUnlockReport): string {
+  if (report.ok) {
+    return `OK — secure-store unlocked at ${report.unlockedAt} (algorithm=${report.algorithm}).`;
+  }
+  if (report.reason === "not-initialized") {
+    return "ERR — secure-store is not initialized. Run 'remnic engram secure-store init' first.";
+  }
+  return "ERR — wrong passphrase.";
+}
+
+export function renderLockReport(report: SecureStoreLockReport): string {
+  if (report.cleared) {
+    return "OK — secure-store key cleared from in-memory keyring.";
+  }
+  return "OK — secure-store was already locked (no in-memory key to clear).";
+}
+
+export function renderStatusReport(report: SecureStoreStatusReport): string {
+  const lines: string[] = [];
+  lines.push("=== Remnic secure-store status ===");
+  lines.push("");
+  lines.push(`header: ${report.headerPath}`);
+  lines.push(`initialized: ${report.initialized ? "yes" : "no"}`);
+  if (!report.initialized) {
+    lines.push("");
+    lines.push("Run 'remnic engram secure-store init' to initialize a new store.");
+    return lines.join("\n");
+  }
+  lines.push(`createdAt: ${report.createdAt ?? "n/a"}`);
+  lines.push(`locked: ${report.locked ? "yes" : "no"}`);
+  if (!report.locked) {
+    lines.push(`lastUnlockAt: ${report.unlockedAt ?? "n/a"}`);
+  }
+  if (report.kdf) {
+    lines.push(...renderKdfLines(report.kdf));
+  }
+  return lines.join("\n");
+}
+
+function renderKdfLines(kdf: SecureStoreHeader["metadata"]["kdf"]): string[] {
+  const lines: string[] = [];
+  lines.push(`kdf.algorithm: ${kdf.algorithm}`);
+  if (kdf.algorithm === "scrypt") {
+    const { N, r, p, keyLength, maxmem } = kdf.params;
+    lines.push(`kdf.params: N=${N} r=${r} p=${p} keyLength=${keyLength} maxmem=${maxmem}`);
+  } else {
+    const { memoryKiB, iterations, parallelism, keyLength } = kdf.params;
+    lines.push(
+      `kdf.params: memoryKiB=${memoryKiB} iterations=${iterations} parallelism=${parallelism} keyLength=${keyLength}`,
+    );
+  }
+  return lines;
+}
