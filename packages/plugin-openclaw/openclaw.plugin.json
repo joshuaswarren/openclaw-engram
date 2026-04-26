@@ -856,6 +856,16 @@
         "default": "",
         "description": "Base path for the filesystem storage backend."
       },
+      "secureStoreEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable transparent at-rest encryption for memory files. When true, all memory file reads/writes are transparently encrypted with the master key when the secure-store is unlocked. Default false."
+      },
+      "secureStoreEncryptOnWrite": {
+        "type": "boolean",
+        "default": true,
+        "description": "When secureStoreEnabled is true and the store is unlocked, encrypt every new write. Set to false to migrate gradually without encrypting new writes. Default true."
+      },
       "codexCompat": {
         "type": "object",
         "additionalProperties": false,
