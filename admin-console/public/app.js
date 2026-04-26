@@ -650,7 +650,8 @@ async function seedTrustZoneDemo(dryRun) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Memory Graph — force-directed Verlet simulation (issue #691 PR 3/5)
-// No external dependencies.  ~150 lines.
+// Semantic search highlight + drill-through (issue #691 PR 4/5)
+// No external dependencies.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Stable colour palette keyed by category string. */
@@ -670,6 +671,50 @@ const GRAPH_EDGE_COLORS = { entity: "#0f6b63", time: "#c9a227", causal: "#8b3a22
 /** Per-session category → colour mapping, built lazily. */
 const graphCategoryColors = new Map();
 let graphCategoryColorIndex = 0;
+
+// ─── Highlight state (issue #691 PR 4/5) ────────────────────────────────────
+
+/** Set of node IDs currently highlighted by a search. Empty = no active search. */
+let graphHighlightIds = new Set();
+
+/**
+ * Pulse animation state.
+ * `graphPulsePhase` advances each frame; nodes use it to vary their ring size.
+ */
+let graphPulsePhase = 0;
+
+/**
+ * Pure function — given a snapshot and a recall result list, return a Set of
+ * node IDs whose identity matches one of the recalled memory IDs.
+ *
+ * Matching rules (applied in order, first match wins):
+ *   1. Exact `node.id === result.id`
+ *   2. `node.id` ends with `result.id` (relative path suffix)
+ *   3. `result.id` ends with `node.id` (inverse suffix)
+ *
+ * @param {Array<{id: string}>} nodes  - nodes from the snapshot
+ * @param {Array<{id: string}>} results - recall result objects; each must have an `id` field
+ * @returns {Set<string>}
+ */
+function resolveHighlights(nodes, results) {
+  const matched = new Set();
+  if (!Array.isArray(nodes) || !Array.isArray(results) || results.length === 0) {
+    return matched;
+  }
+  for (const node of nodes) {
+    const nid = node.id;
+    if (!nid) continue;
+    for (const result of results) {
+      const rid = result.id;
+      if (!rid) continue;
+      if (nid === rid || nid.endsWith(rid) || rid.endsWith(nid)) {
+        matched.add(nid);
+        break;
+      }
+    }
+  }
+  return matched;
+}
 
 function graphColorForCategory(cat) {
   if (!cat || cat === "unknown") return GRAPH_UNKNOWN_COLOR;
@@ -848,14 +893,35 @@ function drawGraph() {
   }
 
   // Draw nodes.
+  const hasHighlights = graphHighlightIds.size > 0;
+  graphPulsePhase = (graphPulsePhase + 0.06) % (2 * Math.PI);
+  const pulseExtra = Math.sin(graphPulsePhase) * 3.5;
+
   for (const n of graphData.nodes) {
     const r = nodeRadius(n.score);
+    const isHighlighted = hasHighlights && graphHighlightIds.has(n.id);
+    const isDimmed = hasHighlights && !isHighlighted;
+
+    // Draw highlight ring + pulse halo before the node fill.
+    if (isHighlighted) {
+      const haloR = r + 5 + Math.max(0, pulseExtra);
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, haloR, 0, 2 * Math.PI);
+      ctx.strokeStyle = "#f5c842";
+      ctx.globalAlpha = 0.55 + Math.sin(graphPulsePhase) * 0.2;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
     ctx.beginPath();
     ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
     ctx.fillStyle = graphColorForCategory(n.kind);
+    ctx.globalAlpha = isDimmed ? 0.22 : 1;
     ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.6)";
-    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = isHighlighted ? "#f5c842" : "rgba(255,255,255,0.6)";
+    ctx.lineWidth = isHighlighted ? 2.5 : 1.5;
     ctx.stroke();
   }
 
@@ -932,16 +998,34 @@ function attachGraphInteractions(canvas) {
   if (graphInteractionsAttached) return;
   graphInteractionsAttached = true;
 
-  // Pan.
+  // Pan + click-to-drill-through.
   let dragging = false;
   let dragStart = { x: 0, y: 0 };
   let viewStart = { tx: 0, ty: 0 };
+  /** Track whether the mousedown moved before mouseup (drag vs click). */
+  let didDrag = false;
 
   canvas.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     dragging = true;
+    didDrag = false;
     dragStart = { x: e.clientX, y: e.clientY };
     viewStart = { tx: graphView.tx, ty: graphView.ty };
+  });
+
+  canvas.addEventListener("mouseup", (e) => {
+    if (e.button !== 0) { dragging = false; return; }
+    // If the cursor didn't move more than 4px it's a click, not a drag.
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    if (!didDrag) {
+      const node = hitTestNode(cx, cy);
+      if (node) {
+        void openGraphNodePanel(node);
+      }
+    }
+    dragging = false;
   });
 
   canvas.addEventListener("mousemove", (e) => {
@@ -950,8 +1034,11 @@ function attachGraphInteractions(canvas) {
     const cy = e.clientY - rect.top;
 
     if (dragging) {
-      graphView.tx = viewStart.tx + (e.clientX - dragStart.x);
-      graphView.ty = viewStart.ty + (e.clientY - dragStart.y);
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) didDrag = true;
+      graphView.tx = viewStart.tx + dx;
+      graphView.ty = viewStart.ty + dy;
       drawGraph();
       hideGraphTooltip();
       return;
@@ -978,8 +1065,7 @@ function attachGraphInteractions(canvas) {
     hideGraphTooltip();
   });
 
-  canvas.addEventListener("mouseup", () => { dragging = false; });
-  canvas.addEventListener("mouseleave", () => { dragging = false; hideGraphTooltip(); });
+  canvas.addEventListener("mouseleave", () => { dragging = false; didDrag = false; hideGraphTooltip(); });
 
   // Zoom via scroll wheel.
   canvas.addEventListener("wheel", (e) => {
@@ -1067,9 +1153,11 @@ async function loadMemoryGraph() {
     return;
   }
 
-  // Reset colours on each fresh fetch so legend is consistent.
+  // Reset colours and highlights on each fresh fetch so legend is consistent.
   graphCategoryColors.clear();
   graphCategoryColorIndex = 0;
+  graphHighlightIds = new Set();
+  closeGraphNodePanel();
 
   // Pre-warm category colours in node order.
   for (const n of nodes) graphColorForCategory(n.kind);
@@ -1101,6 +1189,152 @@ async function loadMemoryGraph() {
     `Loaded ${nodes.length} nodes, ${edges.length} edges. Generated ${snapshot.generatedAt}.`,
     "ok",
   );
+}
+
+// ─── Graph search + drill-through (issue #691 PR 4/5) ───────────────────────
+
+/**
+ * Run a recall search against the existing recall endpoint and highlight the
+ * matching nodes in the graph.  Uses `POST /engram/v1/recall` — the same
+ * endpoint as the Recall Debugger — with a fixed `sessionKey` so it does not
+ * pollute the user's recall state.
+ */
+async function runGraphSearch() {
+  const query = $("graphSearchQuery")?.value?.trim() || "";
+  if (!query) return;
+  if (!graphData) {
+    setStatus("graphStatus", "Load the graph first before searching.", "error");
+    return;
+  }
+  setStatus("graphStatus", `Searching for "${query}"…`);
+  try {
+    const recall = await fetchJson("/engram/v1/recall", {
+      method: "POST",
+      body: JSON.stringify({ query, sessionKey: "admin-console-graph-search" }),
+    });
+    // Normalise: recall response may have results in different shapes.
+    // `recall.memories`, `recall.results`, or fall back to empty.
+    const rawResults =
+      Array.isArray(recall.memories) ? recall.memories :
+      Array.isArray(recall.results)  ? recall.results  :
+      [];
+    graphHighlightIds = resolveHighlights(graphData.nodes, rawResults);
+    drawGraph();
+    const count = graphHighlightIds.size;
+    setStatus(
+      "graphStatus",
+      count > 0
+        ? `Highlighted ${count} node${count === 1 ? "" : "s"} matching "${query}".`
+        : `No graph nodes matched "${query}".`,
+      count > 0 ? "ok" : "default",
+    );
+  } catch (err) {
+    setStatus("graphStatus", err.message || String(err), "error");
+  }
+}
+
+/** Clear the current highlight selection and redraw. */
+function clearGraphSearch() {
+  graphHighlightIds = new Set();
+  const input = $("graphSearchQuery");
+  if (input) input.value = "";
+  if (graphData) drawGraph();
+  closeGraphNodePanel();
+  setStatus("graphStatus", "Search cleared.", "default");
+}
+
+/** Close the node detail panel. */
+function closeGraphNodePanel() {
+  const panel = $("graphNodePanel");
+  if (panel) panel.classList.remove("visible");
+}
+
+/**
+ * Fetch `GET /engram/v1/memories/:id` and render the result into the
+ * node detail side panel.  Builds a frontmatter table, renders raw content,
+ * and lists related edges from the in-memory snapshot.
+ *
+ * @param {object} node - graph node object (has `.id`, `.kind`, `.score`, etc.)
+ */
+async function openGraphNodePanel(node) {
+  const panel = $("graphNodePanel");
+  if (!panel) return;
+
+  // Show panel immediately with loading state.
+  panel.classList.add("visible");
+  const title = $("graphNodePanelTitle");
+  const status = $("graphNodePanelStatus");
+  const frontmatterEl = $("graphNodeFrontmatter");
+  const contentEl = $("graphNodeContent");
+  const edgesEl = $("graphNodeEdges");
+
+  if (title) title.textContent = node.id;
+  if (status) { status.textContent = `Loading ${node.id}…`; status.className = "status"; }
+  if (frontmatterEl) frontmatterEl.innerHTML = "<em>Loading…</em>";
+  if (contentEl) contentEl.textContent = "Loading…";
+  if (edgesEl) edgesEl.innerHTML = "<strong>Loading edges…</strong>";
+
+  try {
+    const response = await fetchJson(`/engram/v1/memories/${encodeURIComponent(node.id)}`);
+    const mem = response.memory || {};
+
+    // Build frontmatter table from top-level scalar fields.
+    if (frontmatterEl) {
+      const table = document.createElement("table");
+      const FRONTMATTER_KEYS = [
+        "id", "category", "status", "importance", "entityRef",
+        "created", "updated", "path",
+      ];
+      FRONTMATTER_KEYS.forEach((key) => {
+        const val = mem[key];
+        if (val == null) return;
+        const tr = document.createElement("tr");
+        const tdKey = document.createElement("td");
+        tdKey.textContent = key;
+        const tdVal = document.createElement("td");
+        tdVal.textContent = String(val);
+        tr.appendChild(tdKey);
+        tr.appendChild(tdVal);
+        table.appendChild(tr);
+      });
+      clearChildren(frontmatterEl);
+      frontmatterEl.appendChild(table);
+    }
+
+    // Render content — raw text.
+    if (contentEl) {
+      contentEl.textContent = typeof mem.content === "string"
+        ? mem.content
+        : JSON.stringify(mem, null, 2);
+    }
+
+    // Render related edges from the snapshot already in memory.
+    if (edgesEl && graphData) {
+      const related = graphData.edges.filter(
+        (e) => e._srcNode?.id === node.id || e._tgtNode?.id === node.id,
+      );
+      clearChildren(edgesEl);
+      if (related.length === 0) {
+        edgesEl.textContent = "No edges in current snapshot.";
+      } else {
+        const ul = document.createElement("ul");
+        related.forEach((e) => {
+          const li = document.createElement("li");
+          const isSource = e._srcNode?.id === node.id;
+          const peerId = isSource ? e._tgtNode?.id : e._srcNode?.id;
+          const direction = isSource ? "→" : "←";
+          li.innerHTML = `<strong>${direction} ${e.kind}</strong> ${peerId || "?"} (confidence ${e.confidence?.toFixed(2) ?? "?"})`;
+          ul.appendChild(li);
+        });
+        edgesEl.appendChild(ul);
+      }
+    }
+
+    if (status) { status.textContent = `Loaded ${node.id}.`; status.className = "status ok"; }
+  } catch (err) {
+    if (status) { status.textContent = err.message || String(err); status.className = "status error"; }
+    if (contentEl) contentEl.textContent = "Failed to load memory content.";
+  }
 }
 
 async function connectAndBootstrap() {
@@ -1188,6 +1422,11 @@ function bootstrap() {
   $("copyMemoryPathButton")?.addEventListener("click", copyMemoryPath);
   $("refreshGraphButton")?.addEventListener("click", () => void loadMemoryGraph());
   $("resetGraphViewButton")?.addEventListener("click", resetGraphView);
+  $("graphSearchButton")?.addEventListener("click", () => void runGraphSearch());
+  $("graphClearSearchButton")?.addEventListener("click", clearGraphSearch);
+  $("graphSearchQuery")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") void runGraphSearch();
+  });
 
   if (remembered) {
     void connectAndBootstrap();

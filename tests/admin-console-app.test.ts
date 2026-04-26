@@ -113,6 +113,10 @@ async function loadAdminConsoleContext(pageSizeValue: string, extraElements: Rec
     drawGraph: vm.runInContext("drawGraph", context) as () => void,
     graphData: vm.runInContext("graphData", context),
     graphView: vm.runInContext("graphView", context) as { tx: number; ty: number; scale: number },
+    resolveHighlights: vm.runInContext("resolveHighlights", context) as (
+      nodes: Array<{ id: string }>,
+      results: Array<{ id: string }>,
+    ) => Set<string>,
   };
 }
 
@@ -241,4 +245,87 @@ test("graph pane HTML elements are present in index.html", async () => {
   assert.ok(html.includes('id="resetGraphViewButton"'), "resetGraphViewButton missing");
   assert.ok(html.includes('id="graphLimit"'), "graphLimit select missing");
   assert.ok(html.includes('id="graphFocusNodeId"'), "graphFocusNodeId input missing");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Semantic-search highlight + drill-through — issue #691 PR 4/5
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("graph search highlight HTML elements are present in index.html", async () => {
+  const htmlPath = path.resolve("admin-console/public/index.html");
+  const html = await readFile(htmlPath, "utf8");
+
+  assert.ok(html.includes('id="graphSearchQuery"'), "graphSearchQuery input missing");
+  assert.ok(html.includes('id="graphSearchButton"'), "graphSearchButton missing");
+  assert.ok(html.includes('id="graphClearSearchButton"'), "graphClearSearchButton missing");
+  assert.ok(html.includes('id="graphNodePanel"'), "graphNodePanel missing");
+  assert.ok(html.includes('id="graphNodeFrontmatter"'), "graphNodeFrontmatter missing");
+  assert.ok(html.includes('id="graphNodeContent"'), "graphNodeContent missing");
+  assert.ok(html.includes('id="graphNodeEdges"'), "graphNodeEdges missing");
+});
+
+test("resolveHighlights returns empty set when results array is empty", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  const nodes = [{ id: "facts/foo.md" }, { id: "facts/bar.md" }];
+  const result = resolveHighlights(nodes, []);
+  assert.equal(result.size, 0);
+});
+
+test("resolveHighlights matches on exact node id", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  const nodes = [
+    { id: "facts/foo.md" },
+    { id: "facts/bar.md" },
+    { id: "decisions/baz.md" },
+  ];
+  const results = [{ id: "facts/foo.md" }, { id: "decisions/baz.md" }];
+  const matched = resolveHighlights(nodes, results);
+  assert.equal(matched.size, 2);
+  assert.ok(matched.has("facts/foo.md"));
+  assert.ok(matched.has("decisions/baz.md"));
+  assert.ok(!matched.has("facts/bar.md"));
+});
+
+test("resolveHighlights matches when result id is a suffix of node id", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  // Node has a full path; recall result may return only the relative part.
+  const nodes = [{ id: "/Users/me/.remnic/facts/foo.md" }];
+  const results = [{ id: "facts/foo.md" }];
+  const matched = resolveHighlights(nodes, results);
+  assert.equal(matched.size, 1);
+  assert.ok(matched.has("/Users/me/.remnic/facts/foo.md"));
+});
+
+test("resolveHighlights matches when node id is a suffix of result id", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  // Inverse case: node uses short path, result has full absolute path.
+  const nodes = [{ id: "facts/foo.md" }];
+  const results = [{ id: "/Users/me/.remnic/facts/foo.md" }];
+  const matched = resolveHighlights(nodes, results);
+  assert.equal(matched.size, 1);
+  assert.ok(matched.has("facts/foo.md"));
+});
+
+test("resolveHighlights does not match unrelated ids", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  const nodes = [{ id: "facts/alpha.md" }, { id: "facts/beta.md" }];
+  const results = [{ id: "decisions/gamma.md" }];
+  const matched = resolveHighlights(nodes, results);
+  assert.equal(matched.size, 0);
+});
+
+test("resolveHighlights handles nodes with missing ids gracefully", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  // Some nodes may have empty or missing ids.
+  const nodes = [{ id: "" }, { id: "facts/foo.md" }] as Array<{ id: string }>;
+  const results = [{ id: "facts/foo.md" }];
+  const matched = resolveHighlights(nodes, results);
+  assert.equal(matched.size, 1);
+  assert.ok(matched.has("facts/foo.md"));
+});
+
+test("resolveHighlights returns empty set when nodes array is empty", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  const matched = resolveHighlights([], [{ id: "facts/foo.md" }]);
+  assert.equal(matched.size, 0);
 });

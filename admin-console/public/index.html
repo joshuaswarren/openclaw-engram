@@ -286,6 +286,104 @@
         border-radius: 50%;
         flex-shrink: 0;
       }
+      /* ── Graph search highlight + drill-through (issue #691 PR 4/5) ── */
+      .graph-search-bar {
+        display: flex;
+        gap: 10px;
+        align-items: flex-end;
+        margin-top: 12px;
+        flex-wrap: wrap;
+      }
+      .graph-search-bar label {
+        flex: 1 1 220px;
+      }
+      .graph-node-panel {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.82);
+        padding: 16px;
+        margin-top: 12px;
+        display: none;
+      }
+      .graph-node-panel.visible {
+        display: block;
+      }
+      .graph-node-panel h3 {
+        margin: 0 0 8px;
+        font-size: 0.9rem;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .graph-node-panel-body {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 1fr 1fr;
+      }
+      .graph-node-frontmatter {
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #fffdf9;
+        padding: 10px;
+        font-size: 0.82rem;
+        overflow: auto;
+        max-height: 260px;
+      }
+      .graph-node-frontmatter table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      .graph-node-frontmatter td {
+        padding: 3px 6px;
+        vertical-align: top;
+      }
+      .graph-node-frontmatter td:first-child {
+        color: var(--muted);
+        white-space: nowrap;
+        font-weight: 600;
+        padding-right: 10px;
+      }
+      .graph-node-content {
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #fffdf9;
+        padding: 10px;
+        font-size: 0.82rem;
+        line-height: 1.55;
+        overflow: auto;
+        max-height: 260px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .graph-node-edges {
+        grid-column: 1 / -1;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #fffdf9;
+        padding: 10px;
+        font-size: 0.82rem;
+        overflow: auto;
+        max-height: 160px;
+      }
+      .graph-node-edges ul {
+        margin: 0;
+        padding-left: 18px;
+      }
+      .graph-node-edges li {
+        margin-bottom: 3px;
+        color: var(--muted);
+      }
+      .graph-node-edges li strong {
+        color: var(--ink);
+      }
+      @media (max-width: 768px) {
+        .graph-node-panel-body {
+          grid-template-columns: 1fr;
+        }
+        .graph-node-edges {
+          grid-column: 1;
+        }
+      }
       @media (max-width: 1080px) {
         .grid,
         .subgrid,
@@ -534,12 +632,33 @@
           <button id="refreshGraphButton">Refresh</button>
           <button class="secondary" id="resetGraphViewButton">Reset View</button>
         </div>
+        <div class="graph-search-bar">
+          <label style="flex: 1;">
+            Search Nodes
+            <input id="graphSearchQuery" type="text" placeholder="Semantic search — highlights matching nodes" />
+          </label>
+          <button id="graphSearchButton">Search</button>
+          <button class="secondary" id="graphClearSearchButton">Clear</button>
+        </div>
         <div class="status" id="graphStatus">Graph will load after connect.</div>
         <div class="graph-wrap">
           <canvas id="graphCanvas"></canvas>
           <div id="graphTooltip"></div>
         </div>
         <div class="graph-legend" id="graphLegend"></div>
+        <div class="graph-node-panel" id="graphNodePanel">
+          <h3 id="graphNodePanelTitle">Node Detail</h3>
+          <div class="status" id="graphNodePanelStatus"></div>
+          <div class="graph-node-panel-body">
+            <div class="graph-node-frontmatter" id="graphNodeFrontmatter">
+              <em>No node selected.</em>
+            </div>
+            <div class="graph-node-content" id="graphNodeContent">No node selected.</div>
+            <div class="graph-node-edges" id="graphNodeEdges">
+              <strong>Related edges will appear here.</strong>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section class="card" style="margin-top: 16px;">
