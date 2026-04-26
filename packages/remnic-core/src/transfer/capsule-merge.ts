@@ -6,7 +6,13 @@ import {
   type VersioningConfig,
   type VersioningLogger,
 } from "../page-versioning.js";
-import { fromPosixRelPath, sha256String } from "./fs-utils.js";
+import {
+  assertIsDirectoryNotSymlink,
+  assertRealpathInsideRoot,
+  fromPosixRelPath,
+  isPathInsideRoot,
+  sha256String,
+} from "./fs-utils.js";
 import {
   parseExportBundle,
   type CapsuleBlock,
@@ -64,9 +70,6 @@ export type MergeCapsuleConflictMode =
  * overwrites proceed without snapshotting (not recommended for production).
  *
  * `log` — optional logger forwarded to {@link createVersion}.
- *
- * `now` — optional clock override (ms epoch) used in tests to produce
- * deterministic version timestamps.
  */
 export interface MergeCapsuleOptions {
   sourceArchive: string;
@@ -74,7 +77,6 @@ export interface MergeCapsuleOptions {
   conflictMode?: MergeCapsuleConflictMode;
   versioning?: VersioningConfig;
   log?: VersioningLogger;
-  now?: number;
 }
 
 export interface MergeCapsuleWrittenRecord {
@@ -156,7 +158,7 @@ export async function mergeCapsule(
   const archiveAbs = path.resolve(opts.sourceArchive);
   const rootAbs = path.resolve(opts.targetRoot);
 
-  await assertIsDirectory(rootAbs);
+  await assertIsDirectoryNotSymlink(rootAbs, "mergeCapsule", "targetRoot");
 
   const conflictMode: MergeCapsuleConflictMode =
     opts.conflictMode ?? "skip-conflicts";
@@ -238,6 +240,19 @@ export async function mergeCapsule(
 
   const rootReal = await realpath(rootAbs).catch(() => rootAbs);
 
+  // Tracks normalized, case-folded target paths seen so far in phase 1.  Maps
+  // targetAbs.toLowerCase() → first source path so the collision error can name
+  // both offending entries.  Two manifest entries whose computed target paths
+  // normalise to the same absolute path (e.g. `subdir/file.md` and
+  // `subdir/./file.md`, or differing case on case-insensitive filesystems such
+  // as macOS and Windows) would both refer to the same inode.  In
+  // `skip-conflicts`/`prefer-local` modes one entry would be misclassified as a
+  // local conflict against the OTHER entry's just-written content; in
+  // `prefer-source` the second entry would silently overwrite the first.  We
+  // reject the import up-front before any write (Codex P2 thread on PR #748,
+  // mirroring `capsule-import.ts`).
+  const seenTargetPaths = new Map<string, string>();
+
   for (const rec of bundle.records) {
     // Checksum validation.
     const entry = manifestIndex.get(rec.path);
@@ -281,8 +296,8 @@ export async function mergeCapsule(
       );
     }
 
-    // Symlink-aware containment check (mirrors capsule-import.ts).
-    await assertRealpathInsideRoot(rootReal, targetAbs, rec.path);
+    // Symlink-aware containment check (shared helper from fs-utils).
+    await assertRealpathInsideRoot(rootReal, targetAbs, rec.path, "mergeCapsule");
 
     // Target-file symlink guard: if the target already exists as a symlink,
     // reject — writes through symlinks can redirect to unexpected locations.
@@ -292,6 +307,29 @@ export async function mergeCapsule(
         `mergeCapsule: record target is a symlink and cannot be written to safely: ${rec.path}`,
       );
     }
+
+    // Duplicate normalized target path detection (Codex P2 #748, mirrors
+    // capsule-import.ts).  `path.join` already normalises `.` segments
+    // (e.g. `subdir/./file.md` → `subdir/file.md`).  On case-insensitive
+    // filesystems (macOS default, Windows), two paths that differ only in case
+    // would resolve to the same inode.  We fold the dedup key to lowercase so
+    // that `subdir/File.md` and `subdir/file.md` are detected as duplicates
+    // before any write occurs.  This is intentionally unconditional: the cost
+    // of an extra `.toLowerCase()` on case-sensitive filesystems is negligible,
+    // and a defensive lowercase is far simpler than probing filesystem
+    // case-sensitivity at runtime.  Without this guard, prefer-source mode
+    // would silently overwrite one entry with the other, and skip-conflicts /
+    // prefer-local would misclassify the second entry as a local conflict
+    // against the first entry's freshly written content.
+    const dedupKey = targetAbs.toLowerCase();
+    const firstSourcePath = seenTargetPaths.get(dedupKey);
+    if (firstSourcePath !== undefined) {
+      throw new Error(
+        `mergeCapsule: manifest contains two entries that resolve to the same target path: ` +
+          `"${firstSourcePath}" and "${rec.path}" both map to "${rec.path}"`,
+      );
+    }
+    seenTargetPaths.set(dedupKey, rec.path);
   }
 
   // Detect manifest-only entries (missing record). Treat as corruption.
@@ -382,57 +420,8 @@ export async function mergeCapsule(
 }
 
 // ---------------------------------------------------------------------------
-// Private helpers (mirrors capsule-import.ts)
+// Private helpers
 // ---------------------------------------------------------------------------
-
-function isPathInsideRoot(rootReal: string, absPath: string): boolean {
-  const rel = path.relative(rootReal, absPath);
-  if (rel === "") return true;
-  if (rel === "..") return false;
-  if (rel.startsWith(`..${path.sep}`)) return false;
-  if (path.isAbsolute(rel)) return false;
-  return true;
-}
-
-async function assertIsDirectory(absPath: string): Promise<void> {
-  // Gotcha #24: existsSync returns true for files; use stat().isDirectory().
-  const st = await stat(absPath).catch(() => null);
-  if (!st || !st.isDirectory()) {
-    throw new Error(
-      `mergeCapsule: 'targetRoot' must be an existing directory: ${absPath}`,
-    );
-  }
-  // Reject symlinked roots (mirrors capsule-import.ts gotcha P1 round 5).
-  const lst = await lstat(absPath).catch(() => null);
-  if (lst && lst.isSymbolicLink()) {
-    throw new Error(
-      `mergeCapsule: 'targetRoot' must not be a symlink — resolve it to its real path first: ${absPath}`,
-    );
-  }
-}
-
-async function assertRealpathInsideRoot(
-  rootReal: string,
-  targetAbs: string,
-  sourcePath: string,
-): Promise<void> {
-  let existing = targetAbs;
-  const suffix: string[] = [];
-  while (existing !== path.dirname(existing)) {
-    const st = await lstat(existing).catch(() => null);
-    if (st !== null) break;
-    suffix.unshift(path.basename(existing));
-    existing = path.dirname(existing);
-  }
-  const existingReal = await realpath(existing).catch(() => existing);
-  const targetReal =
-    suffix.length > 0 ? path.join(existingReal, ...suffix) : existingReal;
-  if (!isPathInsideRoot(rootReal, targetReal)) {
-    throw new Error(
-      `mergeCapsule: record path escapes target root via symlink: ${sourcePath}`,
-    );
-  }
-}
 
 async function readLocalFile(absPath: string): Promise<string | null> {
   const st = await stat(absPath).catch(() => null);

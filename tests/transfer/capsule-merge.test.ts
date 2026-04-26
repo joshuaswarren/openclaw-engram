@@ -607,7 +607,135 @@ test("symlinked targetRoot is rejected", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 14. conflicts.archiveSha256 and localSha256 are accurate
+// 14. Normalized-path collisions are rejected before any write
+// (Codex P2 thread on PR #748 — mirrors capsule-import.ts hardening.)
+// ---------------------------------------------------------------------------
+
+test("manifest with two entries that normalize to the same target path is rejected before any write", async () => {
+  // `subdir/file.md` and `subdir/./file.md` both resolve to <root>/subdir/file.md
+  // after path.join normalisation. Without the dedup guard:
+  //   - skip-conflicts/prefer-local would misclassify the second entry as a
+  //     local conflict against the first entry's freshly written content;
+  //   - prefer-source would silently overwrite the first with the second.
+  // Reject in phase 1 before any write.
+  const content1 = "first entry\n";
+  const content2 = "second entry\n";
+
+  const bundle = {
+    manifest: {
+      format: "openclaw-engram-export" as const,
+      schemaVersion: 2 as const,
+      createdAt: "2026-04-26T00:00:00.000Z",
+      pluginVersion: "9.9.9",
+      includesTranscripts: false,
+      files: [
+        {
+          path: "subdir/file.md",
+          sha256: sha256hex(content1),
+          bytes: Buffer.byteLength(content1, "utf-8"),
+        },
+        {
+          path: "subdir/./file.md",
+          sha256: sha256hex(content2),
+          bytes: Buffer.byteLength(content2, "utf-8"),
+        },
+      ],
+      capsule: {
+        id: "dup-norm-cap",
+        version: "1.0.0",
+        schemaVersion: "taxonomy-v1",
+        parentCapsule: null,
+        description: "",
+        retrievalPolicy: { tierWeights: {}, directAnswerEnabled: false },
+        includes: {
+          taxonomy: false,
+          identityAnchors: false,
+          peerProfiles: false,
+          procedural: false,
+        },
+      },
+    },
+    records: [
+      { path: "subdir/file.md", content: content1 },
+      { path: "subdir/./file.md", content: content2 },
+    ],
+  };
+  const archivePath = await writeBundleArchive(
+    gzipSync(Buffer.from(JSON.stringify(bundle), "utf-8")),
+    "dup-norm",
+  );
+  const dst = await makeTargetDir();
+
+  await assert.rejects(
+    mergeCapsule({ sourceArchive: archivePath, targetRoot: dst }),
+    /two entries that resolve to the same target path/i,
+  );
+
+  assert.deepEqual(await listFiles(dst), [], "must not leave partial writes");
+});
+
+test("manifest with two entries that differ only in case is rejected before any write", async () => {
+  // On case-insensitive filesystems (macOS default, Windows), `subdir/File.md`
+  // and `subdir/file.md` refer to the same inode. The dedup check folds case
+  // so both variants are caught regardless of the host's case-sensitivity.
+  const content1 = "lowercase\n";
+  const content2 = "uppercase\n";
+
+  const bundle = {
+    manifest: {
+      format: "openclaw-engram-export" as const,
+      schemaVersion: 2 as const,
+      createdAt: "2026-04-26T00:00:00.000Z",
+      pluginVersion: "9.9.9",
+      includesTranscripts: false,
+      files: [
+        {
+          path: "subdir/file.md",
+          sha256: sha256hex(content1),
+          bytes: Buffer.byteLength(content1, "utf-8"),
+        },
+        {
+          path: "subdir/File.md",
+          sha256: sha256hex(content2),
+          bytes: Buffer.byteLength(content2, "utf-8"),
+        },
+      ],
+      capsule: {
+        id: "case-dup-cap",
+        version: "1.0.0",
+        schemaVersion: "taxonomy-v1",
+        parentCapsule: null,
+        description: "",
+        retrievalPolicy: { tierWeights: {}, directAnswerEnabled: false },
+        includes: {
+          taxonomy: false,
+          identityAnchors: false,
+          peerProfiles: false,
+          procedural: false,
+        },
+      },
+    },
+    records: [
+      { path: "subdir/file.md", content: content1 },
+      { path: "subdir/File.md", content: content2 },
+    ],
+  };
+  const archivePath = await writeBundleArchive(
+    gzipSync(Buffer.from(JSON.stringify(bundle), "utf-8")),
+    "case-dup",
+  );
+  const dst = await makeTargetDir();
+
+  await assert.rejects(
+    mergeCapsule({ sourceArchive: archivePath, targetRoot: dst }),
+    /two entries that resolve to the same target path/i,
+  );
+
+  assert.deepEqual(await listFiles(dst), [], "must not leave partial writes");
+});
+
+// ---------------------------------------------------------------------------
+// 15. conflicts.archiveSha256 and localSha256 are accurate
 // ---------------------------------------------------------------------------
 
 test("conflict record contains accurate sha256 values for both sides", async () => {
