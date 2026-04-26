@@ -94,12 +94,69 @@ function peerDir(memoryDir: string, peerId: string): string {
   assertValidPeerId(peerId);
   const candidate = path.join(peersRoot(memoryDir), peerId);
   const root = peersRoot(memoryDir);
-  // Ensure resolved path stays within peersRoot.
+  // Ensure resolved path stays within peersRoot. Note: this is a
+  // lexical check only — a symlinked peer directory can still escape.
+  // I/O sites must additionally call `assertPeerDirNotEscaped` (below)
+  // before reading or writing, which uses lstat to reject symlinks
+  // and realpath to confirm physical containment (codex P1 #723).
   const relative = path.relative(root, candidate);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error(`peerId "${peerId}" resolves outside peers root`);
   }
   return candidate;
+}
+
+/**
+ * Codex P1 on PR #723: `peerDir` only enforces a lexical
+ * `path.relative` check, so a symlinked peer directory like
+ * `peers/self → /tmp/outside` would slip through. Any I/O site that
+ * touches a peer directory must call this guard, which:
+ *   1. Rejects the path entirely if it (or any direct ancestor up to
+ *      `peers/`) is a symlink.
+ *   2. Verifies that the realpath of the candidate (and its parent
+ *      `peers/` root) keeps the candidate strictly under the
+ *      realpath of the peers root.
+ *
+ * Returns silently when the path either does not exist yet (write
+ * path will create it under a real-directory chain) or is a real
+ * directory inside the peers root. Throws otherwise.
+ */
+async function assertPeerDirNotEscaped(memoryDir: string, peerId: string): Promise<void> {
+  const candidate = peerDir(memoryDir, peerId);
+  const root = peersRoot(memoryDir);
+  // 1. lstat on the candidate itself. If it's a symlink, refuse.
+  let candidateStat: import("node:fs").Stats | null = null;
+  try {
+    candidateStat = await fs.lstat(candidate);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  if (candidateStat && candidateStat.isSymbolicLink()) {
+    throw new Error(`peer directory "${peerId}" is a symlink and is rejected`);
+  }
+  // 2. lstat on the peers root. If the root itself is a symlink, the
+  // realpath check below would compare against the symlink target,
+  // letting an attacker bypass the boundary. Refuse.
+  let rootStat: import("node:fs").Stats | null = null;
+  try {
+    rootStat = await fs.lstat(root);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  if (rootStat && rootStat.isSymbolicLink()) {
+    throw new Error(`peers root "${root}" is a symlink and is rejected`);
+  }
+  // 3. Real-path containment check. Only meaningful if the candidate
+  // exists (writes that create the directory will catch escape via
+  // step 1; reads that hit ENOENT are no-ops anyway).
+  if (candidateStat) {
+    const realRoot = await fs.realpath(root);
+    const realCandidate = await fs.realpath(candidate);
+    const rel = path.relative(realRoot, realCandidate);
+    if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) {
+      throw new Error(`peer directory "${peerId}" escapes the peers root`);
+    }
+  }
 }
 
 function identityPath(memoryDir: string, peerId: string): string {
@@ -262,6 +319,7 @@ export async function readPeer(
   peerId: string,
 ): Promise<Peer | null> {
   assertValidPeerId(peerId);
+  await assertPeerDirNotEscaped(memoryDir, peerId);
   const file = identityPath(memoryDir, peerId);
   let raw: string;
   try {
@@ -330,6 +388,7 @@ export async function writePeer(memoryDir: string, peer: Peer): Promise<void> {
   }
   const dir = peerDir(memoryDir, peer.id);
   await fs.mkdir(dir, { recursive: true });
+  await assertPeerDirNotEscaped(memoryDir, peer.id);
   await fs.writeFile(identityPath(memoryDir, peer.id), emitPeerIdentity(peer), "utf8");
 }
 
@@ -438,6 +497,7 @@ export async function appendInteractionLog(
   }
   const dir = peerDir(memoryDir, peerId);
   await fs.mkdir(dir, { recursive: true });
+  await assertPeerDirNotEscaped(memoryDir, peerId);
   const file = interactionsPath(memoryDir, peerId);
   const line = formatLogEntry(entry) + "\n";
   // `appendFile` creates the file if it does not exist. POSIX guarantees
@@ -508,8 +568,14 @@ function parsePeerProfile(raw: string, peerId: string): PeerProfile {
     throw new Error(`peer profile for "${peerId}" is not an object`);
   }
   const payload = parsed as Partial<ProfileFile>;
-  const updatedAt = payload.updatedAt ?? fm.updatedAt ?? "";
-  if (updatedAt === "") {
+  // Codex P2: only accept string updatedAt values. A malformed payload
+  // like `{ "updatedAt": 123 }` would previously short-circuit through
+  // `payload.updatedAt ?? fm.updatedAt ?? ""` and produce a `PeerProfile`
+  // whose updatedAt is a number — corrupting any downstream code that
+  // assumes the contract.
+  const payloadUpdatedAt = typeof payload.updatedAt === "string" ? payload.updatedAt : undefined;
+  const updatedAt = payloadUpdatedAt ?? fm.updatedAt ?? "";
+  if (typeof updatedAt !== "string" || updatedAt === "") {
     throw new Error(`peer profile for "${peerId}" is missing updatedAt`);
   }
   const fieldsObj =
@@ -554,6 +620,7 @@ export async function readPeerProfile(
   peerId: string,
 ): Promise<PeerProfile | null> {
   assertValidPeerId(peerId);
+  await assertPeerDirNotEscaped(memoryDir, peerId);
   const file = profilePath(memoryDir, peerId);
   let raw: string;
   try {
@@ -580,6 +647,7 @@ export async function writePeerProfile(
   }
   const dir = peerDir(memoryDir, profile.peerId);
   await fs.mkdir(dir, { recursive: true });
+  await assertPeerDirNotEscaped(memoryDir, profile.peerId);
   await fs.writeFile(profilePath(memoryDir, profile.peerId), emitPeerProfile(profile), "utf8");
 }
 
@@ -595,6 +663,7 @@ export async function readInteractionLogRaw(
   peerId: string,
 ): Promise<string> {
   assertValidPeerId(peerId);
+  await assertPeerDirNotEscaped(memoryDir, peerId);
   const file = interactionsPath(memoryDir, peerId);
   try {
     return await fs.readFile(file, "utf8");
