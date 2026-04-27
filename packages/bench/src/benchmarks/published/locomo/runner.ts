@@ -147,6 +147,7 @@ function buildTrial(
     question: qa.question,
     expected: qa.answer,
     recallSessionIds: sessionIds,
+    answerFormat: "short",
     extraDetails: {
       category: qa.category,
       categoryName,
