@@ -14,7 +14,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, rm, readFile, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile, mkdir, symlink } from "node:fs/promises";
 
 import {
   MAGIC_BYTES,
@@ -264,6 +264,58 @@ test("migrateMemoryDirToEncrypted — encrypts all .md files", async () => {
   });
 });
 
+test("migrateMemoryDirToEncrypted — only encrypts storage-secure markdown paths", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const encryptedPaths = [
+      path.join(dir, "facts", "2024-01-01", "fact.md"),
+      path.join(dir, "artifacts", "2024-01-01", "artifact.md"),
+      path.join(dir, "archive", "2024-01-01", "archived.md"),
+      path.join(dir, "profile.md"),
+    ];
+    const plainPaths = [
+      path.join(dir, "entities", "person.md"),
+      path.join(dir, "identity", "IDENTITY.md"),
+    ];
+    for (const f of [...encryptedPaths, ...plainPaths]) {
+      await mkdir(path.dirname(f), { recursive: true });
+      await writeFile(f, `content for ${path.basename(f)}`, "utf8");
+    }
+
+    const result = await migrateMemoryDirToEncrypted(dir, key);
+
+    assert.strictEqual(result.encrypted, encryptedPaths.length);
+    assert.strictEqual(result.errors.length, 0);
+    for (const f of encryptedPaths) {
+      assert.ok(isEncryptedFile(await readFile(f)), `${f} should be encrypted`);
+    }
+    for (const f of plainPaths) {
+      assert.strictEqual((await readFile(f, "utf8")).startsWith("content for"), true);
+    }
+  });
+});
+
+test("migrateMemoryDirToEncrypted — skips symlinked directories", async () => {
+  const outside = await mkdtemp(path.join(os.tmpdir(), "remnic-secure-outside-"));
+  try {
+    await withTempDir(async (dir) => {
+      const key = makeKey();
+      const outsideFile = path.join(outside, "outside.md");
+      await writeFile(outsideFile, "outside content", "utf8");
+      await symlink(outside, path.join(dir, "facts"), "dir");
+
+      const result = await migrateMemoryDirToEncrypted(dir, key);
+
+      assert.strictEqual(result.encrypted, 0);
+      assert.strictEqual(result.errors.length, 0);
+      assert.strictEqual(isEncryptedFile(await readFile(outsideFile)), false);
+      assert.strictEqual(await readFile(outsideFile, "utf8"), "outside content");
+    });
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
 test("migrateMemoryDirToEncrypted — skips already-encrypted files", async () => {
   await withTempDir(async (dir) => {
     const key = makeKey();
@@ -294,7 +346,8 @@ test("migrateMemoryDirToEncrypted — decryptable after migration", async () => 
 test("migrateMemoryDirToEncrypted — invokes onBeforeEncrypt callback", async () => {
   await withTempDir(async (dir) => {
     const key = makeKey();
-    const filePath = path.join(dir, "fact.md");
+    const filePath = path.join(dir, "facts", "2024-01-01", "fact.md");
+    await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, "content", "utf8");
     const snapshotted: string[] = [];
     await migrateMemoryDirToEncrypted(dir, key, async (fp) => {
@@ -308,8 +361,11 @@ test("migrateMemoryDirToEncrypted — partial failure leaves other files intact"
   await withTempDir(async (dir) => {
     const key = makeKey();
     // Two valid files
-    await writeFile(path.join(dir, "a.md"), "content-a", "utf8");
-    await writeFile(path.join(dir, "b.md"), "content-b", "utf8");
+    const fileA = path.join(dir, "facts", "2024-01-01", "a.md");
+    const fileB = path.join(dir, "facts", "2024-01-01", "b.md");
+    await mkdir(path.dirname(fileA), { recursive: true });
+    await writeFile(fileA, "content-a", "utf8");
+    await writeFile(fileB, "content-b", "utf8");
     // Inject a failure by making the onBeforeEncrypt throw for one file — but
     // migration should still encrypt both (onBeforeEncrypt is non-fatal)
     const result = await migrateMemoryDirToEncrypted(dir, key, async (fp) => {

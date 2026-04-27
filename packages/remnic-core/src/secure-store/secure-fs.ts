@@ -43,7 +43,7 @@
  * Naming: `secure-fs.ts` (not `vault-fs.ts`) — see `kdf.ts` naming note.
  */
 
-import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { generateSalt, open, seal } from "./cipher.js";
@@ -300,8 +300,8 @@ export interface MigrateResult {
 }
 
 /**
- * Walk `dir` recursively, find all `.md` files that are not yet
- * encrypted, and re-write them as encrypted files under `key`.
+ * Walk `dir` recursively, find encryptable `.md` files that are not
+ * yet encrypted, and re-write them as encrypted files under `key`.
  *
  * Safety rules per CLAUDE.md gotchas #54 and #25:
  *   1. A page-version snapshot is taken (via `createVersion`) BEFORE
@@ -379,10 +379,11 @@ export async function migrateMemoryDirToEncrypted(
 // ---------------------------------------------------------------------------
 
 /**
- * Recursively collect all `.md` files under `dir`, excluding
- * `.secure-store/` subdirectory (header files are not memory files).
+ * Recursively collect `.md` files under `dir` that are read through
+ * the storage-layer secure-store helpers, excluding symlinked entries
+ * and `.secure-store/` metadata.
  */
-async function collectMdFiles(dir: string): Promise<string[]> {
+async function collectMdFiles(dir: string, rootDir = dir): Promise<string[]> {
   const results: string[] = [];
   let names: string[];
   try {
@@ -396,18 +397,37 @@ async function collectMdFiles(dir: string): Promise<string[]> {
     let isDir = false;
     let isFile = false;
     try {
-      const s = await stat(full);
+      const s = await lstat(full);
+      if (s.isSymbolicLink()) continue;
       isDir = s.isDirectory();
       isFile = s.isFile();
     } catch {
       continue;
     }
     if (isDir) {
-      const sub = await collectMdFiles(full);
+      const sub = await collectMdFiles(full, rootDir);
       results.push(...sub);
-    } else if (isFile && name.endsWith(".md")) {
+    } else if (isFile && name.endsWith(".md") && isEncryptableStoragePath(full, rootDir)) {
       results.push(full);
     }
   }
   return results;
 }
+
+function isEncryptableStoragePath(filePath: string, rootDir: string): boolean {
+  const rel = path.relative(rootDir, filePath);
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return false;
+  const normalized = rel.split(path.sep).join("/");
+  if (normalized === "profile.md") return true;
+  const firstSegment = normalized.split("/", 1)[0];
+  return ENCRYPTABLE_STORAGE_ROOTS.has(firstSegment);
+}
+
+const ENCRYPTABLE_STORAGE_ROOTS = new Set([
+  "facts",
+  "corrections",
+  "procedures",
+  "reasoning-traces",
+  "artifacts",
+  "archive",
+]);
