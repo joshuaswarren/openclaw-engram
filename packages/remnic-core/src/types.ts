@@ -223,11 +223,35 @@ export interface NativeKnowledgeOpenClawWorkspaceConfig {
   sharedSafeGlobs: string[];
 }
 
+/**
+ * OpenClaw SecretRef shape (issue #757).
+ *
+ * OpenClaw resolves these at runtime via its built-in secret resolver
+ * (e.g. exec providers like `kc_*` for macOS Keychain). Plugins receive
+ * the raw object in `pluginConfig` and must call the gateway's resolver
+ * before using the value. Standalone Remnic does NOT resolve SecretRefs;
+ * operators must use plain strings or `${ENV_VAR}` expansion instead.
+ */
+export interface SecretRef {
+  source: string;
+  provider?: string;
+  id?: string;
+  command?: unknown;
+  [key: string]: unknown;
+}
+
+export type AgentAccessAuthToken = string | SecretRef;
+
 export interface AgentAccessHttpConfig {
   enabled: boolean;
   host: string;
   port: number;
-  authToken?: string;
+  /**
+   * Bearer token. Either a literal string (env-expanded) or an unresolved
+   * SecretRef object preserved verbatim from openclaw.json — resolved at
+   * service-start time via {@link resolveAgentAccessAuthToken}.
+   */
+  authToken?: AgentAccessAuthToken;
   principal?: string;
   maxBodyBytes: number;
 }
