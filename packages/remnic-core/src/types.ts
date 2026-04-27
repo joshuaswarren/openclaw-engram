@@ -243,6 +243,105 @@ export interface DreamingConfig {
   watchFile: boolean;
 }
 
+/**
+ * Light-sleep phase config (issue #678 PR 2/4).
+ *
+ * Groups existing top-level lifecycle-policy gates under a unified namespace.
+ * When `dreams.phases.lightSleep.*` keys are set they WIN over the legacy
+ * top-level keys; the legacy keys remain readable for backward compatibility.
+ *
+ * Light sleep: recent activity scoring + clustering (tier-routing value score,
+ * observation ledger, buffer state — `runLifecyclePolicyPass` in orchestrator).
+ */
+export interface DreamsLightSleepConfig {
+  /** Phase master switch. Mirrors `lifecyclePolicyEnabled` when not set explicitly. */
+  enabled: boolean;
+  /** Minimum interval between light-sleep passes in milliseconds. */
+  cadenceMs: number;
+  /** Value score above which a memory is treated as hot. Mirrors `lifecyclePromoteHeatThreshold`. */
+  promoteHeatThreshold: number;
+  /** Value score below which a memory starts to decay. Mirrors `lifecycleStaleDecayThreshold`. */
+  staleDecayThreshold: number;
+  /** Value score below which a memory is eligible for archive. Mirrors `lifecycleArchiveDecayThreshold`. */
+  archiveDecayThreshold: number;
+  /** Whether stale memories are filtered from recall. Mirrors `lifecycleFilterStaleEnabled`. */
+  filterStaleEnabled: boolean;
+}
+
+/**
+ * REM phase config (issue #678 PR 2/4).
+ *
+ * Groups existing top-level semantic-consolidation and supersession gates.
+ * When `dreams.phases.rem.*` keys are set they WIN over the legacy top-level
+ * keys.
+ *
+ * REM: cross-session synthesis, supersession resolution, semantic consolidation
+ * (`runSemanticConsolidation` in orchestrator).
+ */
+export interface DreamsRemConfig {
+  /** Phase master switch. Mirrors `semanticConsolidationEnabled` when not set explicitly. */
+  enabled: boolean;
+  /**
+   * How often the REM pass runs, in milliseconds.
+   * Derived from `semanticConsolidationIntervalHours` (×3 600 000) when not set explicitly.
+   */
+  cadenceMs: number;
+  /** Cosine-similarity threshold for cluster membership. Mirrors `semanticConsolidationThreshold`. */
+  similarityThreshold: number;
+  /** Minimum cluster size before consolidation runs. Mirrors `semanticConsolidationMinClusterSize`. */
+  minClusterSize: number;
+  /** Max cluster operations per run. Mirrors `semanticConsolidationMaxPerRun`. */
+  maxPerRun: number;
+  /** Minimum gap between consolidation passes (ms). Mirrors `consolidationMinIntervalMs`. */
+  minIntervalMs: number;
+}
+
+/**
+ * Deep-sleep phase config (issue #678 PR 2/4).
+ *
+ * Groups existing versioning and tier-migration gates.
+ * When `dreams.phases.deepSleep.*` keys are set they WIN over the legacy
+ * top-level keys.
+ *
+ * Deep sleep: promotion to durable memory, hot→cold tier migration,
+ * page-version snapshots, archive (`engram-nightly-governance` cron,
+ * `tier-migration.ts`, `page-versioning.ts`, `hygiene.ts`).
+ */
+export interface DreamsDeepSleepConfig {
+  /**
+   * Phase master switch. No direct legacy mirror — deep sleep runs as
+   * long as the nightly governance cron is registered. Set to `false`
+   * to disable without removing the cron.
+   */
+  enabled: boolean;
+  /**
+   * Minimum interval between deep-sleep passes in milliseconds.
+   * Informational only in PR 2; PR 4 will wire this into the cron scheduler.
+   */
+  cadenceMs: number;
+  /** Enable page-version snapshots on every overwrite. Mirrors `versioningEnabled`. */
+  versioningEnabled: boolean;
+  /** Max snapshots per page. Mirrors `versioningMaxPerPage`. */
+  versioningMaxPerPage: number;
+}
+
+/**
+ * Unified dreams phases config block (issue #678 PR 2/4).
+ *
+ * Operators set `dreams.phases.{lightSleep,rem,deepSleep}.*` in their plugin
+ * config. Values under this block WIN over the equivalent legacy top-level keys
+ * when both are set. Legacy keys continue to be parsed so existing configs do
+ * not need to change.
+ *
+ * This block is intentionally separate from `DreamingConfig` which controls the
+ * diary surface (`surfaces/dreams.ts`) — a different feature. See docs/dreams.md.
+ */
+export interface DreamsPhasesConfig {
+  lightSleep: DreamsLightSleepConfig;
+  rem: DreamsRemConfig;
+  deepSleep: DreamsDeepSleepConfig;
+}
+
 /** Procedural memory (issue #519): mining + recall gates. All sub-features default off. */
 export interface ProceduralConfig {
   enabled: boolean;
@@ -697,6 +796,12 @@ export interface PluginConfig {
   activeRecallAttachRecallExplain: boolean;
   activeRecallAllowChainedActiveMemory: boolean;
   dreaming: DreamingConfig;
+  /**
+   * Unified dreams-phases config block (issue #678 PR 2/4).
+   * Groups existing lifecycle, REM, and deep-sleep gates under one namespace.
+   * Values here WIN over equivalent legacy top-level keys when set. See docs/dreams.md.
+   */
+  dreamsPhases: DreamsPhasesConfig;
   procedural: ProceduralConfig;
   // Coding-agent project/branch scoping (issue #569)
   codingMode: CodingModeConfig;

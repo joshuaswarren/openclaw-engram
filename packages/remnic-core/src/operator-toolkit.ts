@@ -41,6 +41,7 @@ import {
 } from "./consolidation-provenance-check.js";
 import type {
   BufferSurpriseEvent,
+  DreamsPhasesConfig,
   FileHygieneConfig,
   MemoryFile,
   PluginConfig,
@@ -1211,6 +1212,11 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // counts. Disabled is "ok" with a note; enabled-but-never-run is "warn".
   checks.push(await summarizeGraphEdgeDecayStatus(config));
 
+  // Dreams phases thresholds and last-run timestamps (issue #678 PR 2/4).
+  // Surfaces per-phase: enabled status, cadence, threshold values, and the
+  // best-available last-run timestamp for each of the three pipeline phases.
+  checks.push(await summarizeDreamsPhases(config));
+
   // Security mitigation status (issue #565).
   // Reports whether the cross-namespace budget and anomaly detection
   // mitigations are enabled and surfaces config values for operator review.
@@ -1445,6 +1451,85 @@ async function summarizeGraphEdgeDecayStatus(
       edgesBelowVisibilityThreshold: status.edgesBelowVisibilityThreshold,
       topDecayedEntities: status.topDecayedEntities,
       cadenceMs: config.graphEdgeDecayCadenceMs,
+    },
+  };
+}
+
+/**
+ * Dreams phases doctor check (issue #678 PR 2/4).
+ *
+ * Reports per-phase: enabled status, cadence, threshold values, and last-run
+ * timestamp sourced from `meta.json` (the existing maintenance ledger).
+ *
+ * Last-run mapping (best available in PR 2; PR 3/4 will emit per-phase events):
+ *   light sleep → `meta.lastExtractionAt`   (lifecycle pass runs with extraction)
+ *   REM         → `meta.lastConsolidationAt` (semantic consolidation)
+ *   deep sleep  → governance-status file when present, otherwise null
+ */
+export async function summarizeDreamsPhases(
+  config: Pick<PluginConfig, "memoryDir" | "dreamsPhases">,
+): Promise<OperatorDoctorCheck> {
+  const phases: DreamsPhasesConfig = config.dreamsPhases;
+  const storage = new StorageManager(config.memoryDir);
+
+  // Load meta.json for best-available last-run timestamps.
+  const meta = await storage.loadMeta();
+
+  // Attempt to read the governance-status file (written by memory-governance-cron
+  // after a deep-sleep pass; may not exist on fresh installs).
+  let deepSleepLastRun: string | null = null;
+  try {
+    const governanceStatusPath = path.join(
+      config.memoryDir,
+      "state",
+      "memory-governance-last-run.json",
+    );
+    const raw = await readFile(governanceStatusPath, "utf-8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof parsed.ranAt === "string" && parsed.ranAt.length > 0) {
+      deepSleepLastRun = parsed.ranAt;
+    }
+  } catch {
+    // File absent on fresh installs — not an error.
+  }
+
+  // Build per-phase summary lines for the human-readable `summary` field.
+  const phaseLines: string[] = [
+    `lightSleep: enabled=${phases.lightSleep.enabled}, cadenceMs=${phases.lightSleep.cadenceMs}, promoteHeat=${phases.lightSleep.promoteHeatThreshold}, staleDecay=${phases.lightSleep.staleDecayThreshold}, archiveDecay=${phases.lightSleep.archiveDecayThreshold}, filterStale=${phases.lightSleep.filterStaleEnabled}, lastRun=${meta.lastExtractionAt ?? "never"}`,
+    `rem: enabled=${phases.rem.enabled}, cadenceMs=${phases.rem.cadenceMs}, similarity=${phases.rem.similarityThreshold}, minCluster=${phases.rem.minClusterSize}, maxPerRun=${phases.rem.maxPerRun}, minIntervalMs=${phases.rem.minIntervalMs}, lastRun=${meta.lastConsolidationAt ?? "never"}`,
+    `deepSleep: enabled=${phases.deepSleep.enabled}, cadenceMs=${phases.deepSleep.cadenceMs}, versioning=${phases.deepSleep.versioningEnabled}, versioningMaxPerPage=${phases.deepSleep.versioningMaxPerPage}, lastRun=${deepSleepLastRun ?? "never"}`,
+  ];
+
+  return {
+    key: "dreams_phases",
+    status: "ok",
+    summary: `Dreams pipeline phases: ${phaseLines.join("; ")}`,
+    details: {
+      lightSleep: {
+        enabled: phases.lightSleep.enabled,
+        cadenceMs: phases.lightSleep.cadenceMs,
+        promoteHeatThreshold: phases.lightSleep.promoteHeatThreshold,
+        staleDecayThreshold: phases.lightSleep.staleDecayThreshold,
+        archiveDecayThreshold: phases.lightSleep.archiveDecayThreshold,
+        filterStaleEnabled: phases.lightSleep.filterStaleEnabled,
+        lastRun: meta.lastExtractionAt ?? null,
+      },
+      rem: {
+        enabled: phases.rem.enabled,
+        cadenceMs: phases.rem.cadenceMs,
+        similarityThreshold: phases.rem.similarityThreshold,
+        minClusterSize: phases.rem.minClusterSize,
+        maxPerRun: phases.rem.maxPerRun,
+        minIntervalMs: phases.rem.minIntervalMs,
+        lastRun: meta.lastConsolidationAt ?? null,
+      },
+      deepSleep: {
+        enabled: phases.deepSleep.enabled,
+        cadenceMs: phases.deepSleep.cadenceMs,
+        versioningEnabled: phases.deepSleep.versioningEnabled,
+        versioningMaxPerPage: phases.deepSleep.versioningMaxPerPage,
+        lastRun: deepSleepLastRun,
+      },
     },
   };
 }

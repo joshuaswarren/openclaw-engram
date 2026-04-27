@@ -310,6 +310,134 @@
           }
         }
       },
+      "dreams": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "description": "Consolidation pipeline phases config (issue #678 PR 2). Groups existing lifecycle/REM/deep-sleep gates under a unified namespace. Values here WIN over equivalent legacy top-level keys when set. See docs/dreams.md. (Note: distinct from the `dreaming` diary-surface config.)",
+        "properties": {
+          "phases": {
+            "type": "object",
+            "additionalProperties": false,
+            "default": {},
+            "properties": {
+              "lightSleep": {
+                "type": "object",
+                "additionalProperties": false,
+                "default": {},
+                "description": "Light-sleep phase: recent activity scoring and clustering. Mirrors lifecyclePolicyEnabled and related thresholds when not set explicitly.",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Master switch for the light-sleep phase. Mirrors lifecyclePolicyEnabled when not set."
+                  },
+                  "cadenceMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "Minimum interval between light-sleep passes (ms). 0 = no override; orchestrator uses its internal cadence."
+                  },
+                  "promoteHeatThreshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "default": 0.55,
+                    "description": "Value score above which a memory is treated as hot. Mirrors lifecyclePromoteHeatThreshold when not set."
+                  },
+                  "staleDecayThreshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "default": 0.65,
+                    "description": "Value score below which a memory starts to decay. Mirrors lifecycleStaleDecayThreshold when not set."
+                  },
+                  "archiveDecayThreshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "default": 0.85,
+                    "description": "Value score below which a memory is eligible for archive. Mirrors lifecycleArchiveDecayThreshold when not set."
+                  },
+                  "filterStaleEnabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether stale memories are filtered from recall. Mirrors lifecycleFilterStaleEnabled when not set."
+                  }
+                }
+              },
+              "rem": {
+                "type": "object",
+                "additionalProperties": false,
+                "default": {},
+                "description": "REM phase: cross-session synthesis, supersession resolution, semantic consolidation. Mirrors semanticConsolidation* keys when not set explicitly.",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Master switch for the REM phase. Mirrors semanticConsolidationEnabled when not set."
+                  },
+                  "cadenceMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "How often the REM pass runs (ms). Derived from semanticConsolidationIntervalHours when not set."
+                  },
+                  "similarityThreshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "default": 0.8,
+                    "description": "Cosine-similarity threshold for cluster membership. Mirrors semanticConsolidationThreshold when not set."
+                  },
+                  "minClusterSize": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "default": 3,
+                    "description": "Minimum cluster size before consolidation runs. Mirrors semanticConsolidationMinClusterSize when not set."
+                  },
+                  "maxPerRun": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 100,
+                    "description": "Max cluster operations per run. Mirrors semanticConsolidationMaxPerRun when not set."
+                  },
+                  "minIntervalMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Minimum gap between consolidation passes (ms). Mirrors consolidationMinIntervalMs when not set."
+                  }
+                }
+              },
+              "deepSleep": {
+                "type": "object",
+                "additionalProperties": false,
+                "default": {},
+                "description": "Deep-sleep phase: promotion to durable memory, hot-to-cold tier migration, page-version snapshots, archive. Mirrors versioningEnabled and related keys when not set explicitly.",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Master switch for the deep-sleep phase. Defaults true (nightly governance cron runs unless explicitly disabled)."
+                  },
+                  "cadenceMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 86400000,
+                    "description": "Minimum interval between deep-sleep passes (ms). Default 86400000 (24h). Informational in PR 2; PR 4 wires this into the cron scheduler."
+                  },
+                  "versioningEnabled": {
+                    "type": "boolean",
+                    "description": "Enable page-version snapshots on every overwrite. Mirrors versioningEnabled when not set."
+                  },
+                  "versioningMaxPerPage": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Max snapshots per memory page. Mirrors versioningMaxPerPage when not set."
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       "heartbeat": {
         "type": "object",
         "additionalProperties": false,

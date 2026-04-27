@@ -5,6 +5,10 @@ import type {
   ContradictionScanConfig,
   CodexCompatConfig,
   DreamingConfig,
+  DreamsLightSleepConfig,
+  DreamsRemConfig,
+  DreamsDeepSleepConfig,
+  DreamsPhasesConfig,
   ProceduralConfig,
   HeartbeatConfig,
   IdentityInjectionMode,
@@ -457,6 +461,159 @@ export function parseConfig(raw: unknown): PluginConfig {
         : "reflective",
     watchFile: rawDreaming.watchFile !== false,
   };
+
+  // ── Dreams phases config (issue #678 PR 2/4) ─────────────────────────────
+  // The `dreams.phases.*` block groups existing top-level lifecycle / REM /
+  // deep-sleep gates under a unified namespace.  When a value is explicitly
+  // set under `dreams.phases.*`, it WINS over the corresponding legacy
+  // top-level key.  Legacy top-level keys continue to be parsed so existing
+  // configs work without modification.
+  //
+  // Precedence summary (highest → lowest):
+  //   dreams.phases.lightSleep.enabled  > lifecyclePolicyEnabled
+  //   dreams.phases.rem.enabled         > semanticConsolidationEnabled
+  //   dreams.phases.deepSleep.enabled   > (no legacy top-level equivalent)
+  //
+  // This block is intentionally a DIFFERENT namespace from `dreaming`
+  // (the diary surface — `surfaces/dreams.ts`). See docs/dreams.md.
+  const rawDreamsBlock =
+    cfg.dreams && typeof cfg.dreams === "object" && !Array.isArray(cfg.dreams)
+      ? (cfg.dreams as Record<string, unknown>)
+      : {};
+  const rawDreamsPhases =
+    rawDreamsBlock.phases && typeof rawDreamsBlock.phases === "object" && !Array.isArray(rawDreamsBlock.phases)
+      ? (rawDreamsBlock.phases as Record<string, unknown>)
+      : {};
+  const rawDreamsLightSleep =
+    rawDreamsPhases.lightSleep && typeof rawDreamsPhases.lightSleep === "object" && !Array.isArray(rawDreamsPhases.lightSleep)
+      ? (rawDreamsPhases.lightSleep as Record<string, unknown>)
+      : {};
+  const rawDreamsRem =
+    rawDreamsPhases.rem && typeof rawDreamsPhases.rem === "object" && !Array.isArray(rawDreamsPhases.rem)
+      ? (rawDreamsPhases.rem as Record<string, unknown>)
+      : {};
+  const rawDreamsDeepSleep =
+    rawDreamsPhases.deepSleep && typeof rawDreamsPhases.deepSleep === "object" && !Array.isArray(rawDreamsPhases.deepSleep)
+      ? (rawDreamsPhases.deepSleep as Record<string, unknown>)
+      : {};
+
+  // Resolve legacy top-level defaults that the phases mirror. We compute them
+  // here (before the return statement) so the phase parser can apply precedence
+  // without duplicating the clamping logic.
+  const legacyLifecyclePolicyEnabled = coerceBooleanLike(cfg.lifecyclePolicyEnabled) ?? true;
+  const legacyLifecyclePromoteHeatThreshold =
+    typeof cfg.lifecyclePromoteHeatThreshold === "number"
+      ? Math.min(1, Math.max(0, cfg.lifecyclePromoteHeatThreshold))
+      : 0.55;
+  const legacyLifecycleStaleDecayThreshold =
+    typeof cfg.lifecycleStaleDecayThreshold === "number"
+      ? Math.min(1, Math.max(0, cfg.lifecycleStaleDecayThreshold))
+      : 0.65;
+  const legacyLifecycleArchiveDecayThreshold =
+    typeof cfg.lifecycleArchiveDecayThreshold === "number"
+      ? Math.min(1, Math.max(0, cfg.lifecycleArchiveDecayThreshold))
+      : 0.85;
+  const legacySemanticConsolidationEnabled = cfg.semanticConsolidationEnabled === true;
+  const legacySemanticConsolidationIntervalHours =
+    typeof cfg.semanticConsolidationIntervalHours === "number"
+      ? Math.max(1, Math.floor(cfg.semanticConsolidationIntervalHours))
+      : 168;
+  const legacySemanticConsolidationThreshold =
+    typeof cfg.semanticConsolidationThreshold === "number" ? cfg.semanticConsolidationThreshold : 0.8;
+  const legacySemanticConsolidationMinClusterSize =
+    typeof cfg.semanticConsolidationMinClusterSize === "number"
+      ? Math.max(2, Math.floor(cfg.semanticConsolidationMinClusterSize))
+      : 3;
+  const legacySemanticConsolidationMaxPerRun =
+    typeof cfg.semanticConsolidationMaxPerRun === "number"
+      ? Math.max(0, Math.floor(cfg.semanticConsolidationMaxPerRun))
+      : 100;
+  const legacyConsolidationMinIntervalMs =
+    typeof cfg.consolidationMinIntervalMs === "number" ? cfg.consolidationMinIntervalMs : 10 * 60_000;
+  const legacyVersioningEnabled = cfg.versioningEnabled === true;
+  const legacyVersioningMaxPerPage =
+    typeof cfg.versioningMaxPerPage === "number"
+      ? Math.max(0, Math.floor(cfg.versioningMaxPerPage))
+      : 50;
+
+  // Light sleep phase — dreams.phases.lightSleep.* wins when present.
+  const dreamsLightSleepEnabledRaw = coerceBooleanLike(rawDreamsLightSleep.enabled);
+  const dreamsLightSleep: DreamsLightSleepConfig = {
+    // new key wins; fall back to resolved legacy default
+    enabled: dreamsLightSleepEnabledRaw !== undefined ? dreamsLightSleepEnabledRaw : legacyLifecyclePolicyEnabled,
+    cadenceMs:
+      typeof rawDreamsLightSleep.cadenceMs === "number"
+        ? Math.max(0, Math.floor(rawDreamsLightSleep.cadenceMs))
+        : 0, // 0 = no override; orchestrator uses its own internal cadence
+    promoteHeatThreshold:
+      typeof rawDreamsLightSleep.promoteHeatThreshold === "number"
+        ? Math.min(1, Math.max(0, rawDreamsLightSleep.promoteHeatThreshold))
+        : legacyLifecyclePromoteHeatThreshold,
+    staleDecayThreshold:
+      typeof rawDreamsLightSleep.staleDecayThreshold === "number"
+        ? Math.min(1, Math.max(0, rawDreamsLightSleep.staleDecayThreshold))
+        : legacyLifecycleStaleDecayThreshold,
+    archiveDecayThreshold:
+      typeof rawDreamsLightSleep.archiveDecayThreshold === "number"
+        ? Math.min(1, Math.max(0, rawDreamsLightSleep.archiveDecayThreshold))
+        : legacyLifecycleArchiveDecayThreshold,
+    filterStaleEnabled:
+      rawDreamsLightSleep.filterStaleEnabled !== undefined
+        ? coerceBooleanLike(rawDreamsLightSleep.filterStaleEnabled) === true
+        : cfg.lifecycleFilterStaleEnabled === true,
+  };
+
+  // REM phase — dreams.phases.rem.* wins when present.
+  const dreamsRemEnabledRaw = coerceBooleanLike(rawDreamsRem.enabled);
+  const dreamsRem: DreamsRemConfig = {
+    enabled: dreamsRemEnabledRaw !== undefined ? dreamsRemEnabledRaw : legacySemanticConsolidationEnabled,
+    cadenceMs:
+      typeof rawDreamsRem.cadenceMs === "number"
+        ? Math.max(0, Math.floor(rawDreamsRem.cadenceMs))
+        : legacySemanticConsolidationIntervalHours * 3_600_000,
+    similarityThreshold:
+      typeof rawDreamsRem.similarityThreshold === "number"
+        ? Math.min(1, Math.max(0, rawDreamsRem.similarityThreshold))
+        : legacySemanticConsolidationThreshold,
+    minClusterSize:
+      typeof rawDreamsRem.minClusterSize === "number"
+        ? Math.max(2, Math.floor(rawDreamsRem.minClusterSize))
+        : legacySemanticConsolidationMinClusterSize,
+    maxPerRun:
+      typeof rawDreamsRem.maxPerRun === "number"
+        ? Math.max(0, Math.floor(rawDreamsRem.maxPerRun))
+        : legacySemanticConsolidationMaxPerRun,
+    minIntervalMs:
+      typeof rawDreamsRem.minIntervalMs === "number"
+        ? Math.max(0, Math.floor(rawDreamsRem.minIntervalMs))
+        : legacyConsolidationMinIntervalMs,
+  };
+
+  // Deep sleep phase — dreams.phases.deepSleep.* wins when present.
+  const dreamsDeepSleepEnabledRaw = coerceBooleanLike(rawDreamsDeepSleep.enabled);
+  const dreamsDeepSleep: DreamsDeepSleepConfig = {
+    enabled: dreamsDeepSleepEnabledRaw !== undefined ? dreamsDeepSleepEnabledRaw : true,
+    cadenceMs:
+      typeof rawDreamsDeepSleep.cadenceMs === "number"
+        ? Math.max(0, Math.floor(rawDreamsDeepSleep.cadenceMs))
+        : 24 * 3_600_000, // default: 24 h (mirrors nightly governance cron)
+    versioningEnabled:
+      rawDreamsDeepSleep.versioningEnabled !== undefined
+        ? coerceBooleanLike(rawDreamsDeepSleep.versioningEnabled) === true
+        : legacyVersioningEnabled,
+    versioningMaxPerPage:
+      typeof rawDreamsDeepSleep.versioningMaxPerPage === "number"
+        ? Math.max(0, Math.floor(rawDreamsDeepSleep.versioningMaxPerPage))
+        : legacyVersioningMaxPerPage,
+  };
+
+  const dreamsPhases: DreamsPhasesConfig = {
+    lightSleep: dreamsLightSleep,
+    rem: dreamsRem,
+    deepSleep: dreamsDeepSleep,
+  };
+  // ── End dreams phases ─────────────────────────────────────────────────────
+
   const rawHeartbeat =
     cfg.heartbeat && typeof cfg.heartbeat === "object" && !Array.isArray(cfg.heartbeat)
       ? (cfg.heartbeat as Record<string, unknown>)
@@ -1408,6 +1565,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     activeRecallAllowChainedActiveMemory:
       cfg.activeRecallAllowChainedActiveMemory === true,
     dreaming,
+    dreamsPhases,
     procedural,
     codingMode,
     heartbeat,
