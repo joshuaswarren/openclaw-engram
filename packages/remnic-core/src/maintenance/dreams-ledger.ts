@@ -266,7 +266,7 @@ export interface DreamsRunResult {
 
 /** Internal result shape returned by `runDreamsPhase` — includes the raw ledger entry. */
 export interface DreamsRunResultInternal extends DreamsRunResult {
-  ledgerEntry: DreamsLedgerEntry;
+  ledgerEntry?: DreamsLedgerEntry;
 }
 
 export async function recordDreamsPhaseRun(options: {
@@ -415,22 +415,27 @@ export async function runDreamsPhase(
   }
 
   const completedAt = new Date().toISOString();
-
-  const ledgerEntry = await recordDreamsPhaseRun({
-    memoryDir,
-    startedAt,
-    completedAt,
-    phase,
-    itemsProcessed,
-    dryRun,
-    trigger: "manual",
-    notes,
-  });
+  const durationMs = Math.max(0, Date.parse(completedAt) - Date.parse(startedAt));
+  let ledgerEntry: DreamsLedgerEntry | undefined;
+  try {
+    ledgerEntry = await recordDreamsPhaseRun({
+      memoryDir,
+      startedAt,
+      completedAt,
+      phase,
+      itemsProcessed,
+      dryRun,
+      trigger: "manual",
+      notes,
+    });
+  } catch {
+    // Telemetry is best-effort: the phase work has already completed.
+  }
 
   return {
     phase,
     dryRun,
-    durationMs: ledgerEntry.durationMs,
+    durationMs: ledgerEntry?.durationMs ?? durationMs,
     itemsProcessed,
     notes,
     ledgerEntry,

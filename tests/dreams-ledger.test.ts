@@ -316,7 +316,7 @@ test("runDreamsPhase lightSleep counts recent observation ts entries only", asyn
   });
 
   assert.equal(result.itemsProcessed, 1);
-  assert.equal(result.durationMs, result.ledgerEntry.durationMs);
+  assert.equal(result.durationMs, result.ledgerEntry?.durationMs);
 });
 
 test("runDreamsPhase deepSleep propagates governance failures without ledger entry", async () => {
@@ -386,6 +386,23 @@ test("runDreamsPhase live rem records phase runner telemetry", async () => {
   assert.equal(result.notes, "REM consolidation found 2 clusters");
   const entries = await readDreamsLedgerEntries(memoryDir);
   assert.equal(entries[0]?.itemsProcessed, 4);
+});
+
+test("runDreamsPhase returns success when manual ledger write fails after phase work", async () => {
+  const memoryDir = await makeTmpDir();
+  const blockedPath = path.join(memoryDir, "not-a-directory");
+  await writeFile(blockedPath, "blocks state directory creation", "utf-8");
+
+  const result = await runDreamsPhase(
+    { memoryDir: blockedPath, phase: "rem", dryRun: false },
+    undefined,
+    async () => ({ itemsProcessed: 2, notes: "REM consolidation found 1 clusters" }),
+  );
+
+  assert.equal(result.itemsProcessed, 2);
+  assert.equal(result.notes, "REM consolidation found 1 clusters");
+  assert.equal(result.ledgerEntry, undefined);
+  assert.ok(result.durationMs >= 0);
 });
 
 test("summarizeGovernanceResultForDreams does not double-count proposed actions", () => {

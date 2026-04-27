@@ -2999,6 +2999,16 @@ export class Orchestrator {
       memoryDir: targetStorage.dir,
       mode: options?.dryRun === true ? "shadow" : "apply",
     });
+    if (options?.dryRun !== true) {
+      try {
+        await this.processEntitySynthesisQueue(
+          this.namespaceFromStorageDir(targetStorage.dir),
+          5,
+        );
+      } catch (error) {
+        log.debug(`deep-sleep governance: entity synthesis refresh failed after apply: ${error}`);
+      }
+    }
     return summarizeGovernanceResultForDreams(govResult, options?.dryRun === true);
   }
 

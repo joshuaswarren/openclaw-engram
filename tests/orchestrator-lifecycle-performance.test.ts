@@ -30,3 +30,16 @@ test("runLifecyclePolicyPass uses path-based frontmatter writes (no per-item cor
     "lifecycle pass should avoid ID-based frontmatter updates that rescan corpus",
   );
 });
+
+test("runDeepSleepGovernanceNow refreshes entity synthesis after apply runs", () => {
+  const source = readFileSync(
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"),
+    "utf-8",
+  );
+
+  assert.match(
+    source,
+    /if \(options\?\.dryRun !== true\) \{\s*try \{\s*await this\.processEntitySynthesisQueue\(\s*this\.namespaceFromStorageDir\(targetStorage\.dir\),\s*5,\s*\);/m,
+    "deep-sleep apply runs should refresh entity synthesis for the active namespace",
+  );
+});
