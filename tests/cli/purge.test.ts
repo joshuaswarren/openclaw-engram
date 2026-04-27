@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { purgeMemories } from "../../packages/remnic-core/src/maintenance/purge.js";
-import { parseDurationToMs } from "../../packages/remnic-core/src/cli.js";
+import { hasDestructivePurgeFailures, parseDurationToMs } from "../../packages/remnic-core/src/cli.js";
 import type { MemoryFile, MemoryFrontmatter } from "../../packages/remnic-core/src/types.js";
 import type { StorageManager } from "../../packages/remnic-core/src/storage.js";
 
@@ -59,6 +59,24 @@ test("purge: ISO duration parser rejects partial durations", () => {
   assert.equal(parseDurationToMs("P1YT"), null);
   assert.equal(parseDurationToMs("P30DT"), null);
   assert.equal(parseDurationToMs("P0Y0M0W0DT0H0M0S"), null);
+});
+
+test("purge: exit failure classifier ignores best-effort maintenance errors", () => {
+  assert.equal(
+    hasDestructivePurgeFailures([
+      { id: "(purge-audit)" },
+      { id: "(qmd-update)" },
+      { id: "(fact-hash-index)" },
+    ]),
+    false,
+  );
+  assert.equal(
+    hasDestructivePurgeFailures([
+      { id: "(purge-audit)" },
+      { id: "failed-delete-id" },
+    ]),
+    true,
+  );
 });
 
 test("purge: dryRun defaults to true — no files are deleted without explicit opt-in", async () => {

@@ -2274,6 +2274,18 @@ export function parseDurationToMs(raw: string): number | null {
   return Number.isFinite(totalMs) && totalMs > 0 ? totalMs : null;
 }
 
+const NON_FATAL_PURGE_ERROR_IDS = new Set([
+  "(purge-audit)",
+  "(qmd-update)",
+  "(fact-hash-index)",
+]);
+
+export function hasDestructivePurgeFailures(
+  errors: Array<{ id: string }>,
+): boolean {
+  return errors.some((error) => !NON_FATAL_PURGE_ERROR_IDS.has(error.id));
+}
+
 function resolvePolicySignalNamespaces(orchestrator: PolicyTuningCliOrchestrator): string[] {
   const names = new Set<string>([orchestrator.config.defaultNamespace]);
   if (orchestrator.config.namespacesEnabled) {
@@ -3877,9 +3889,10 @@ export function registerCli(
               coldCollection: orchestrator.config.qmdColdCollection,
               afterFactHashRemoval: () => orchestrator.invalidateLiveContentHashIndex(),
             });
+            const hasDeleteFailures = hasDestructivePurgeFailures(result.errors);
             if (reportHasMachineReadableOutput(options)) {
               console.log(JSON.stringify(result, null, 2));
-              if (!result.dryRun && result.errors.length > 0) {
+              if (!result.dryRun && hasDeleteFailures) {
                 process.exitCode = 1;
               }
             } else {
@@ -3902,11 +3915,13 @@ export function registerCli(
                 }
               }
               if (!result.dryRun && result.errors.length > 0) {
-                console.error(`  Errors (${result.errors.length}):`);
+                console.error(`  ${hasDeleteFailures ? "Errors" : "Warnings"} (${result.errors.length}):`);
                 for (const e of result.errors) {
                   console.error(`    ${e.id}: ${e.error}`);
                 }
-                process.exitCode = 1;
+                if (hasDeleteFailures) {
+                  process.exitCode = 1;
+                }
               }
               if (result.dryRun) {
                 console.log("\nRe-run with --confirm yes to execute.");
