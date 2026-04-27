@@ -10,6 +10,7 @@ import {
   type MemBenchCase,
 } from "./fixture.js";
 import { answerBenchmarkQuestion } from "../../../answering.js";
+import { DEFAULT_BENCH_RECALL_BUDGET_CHARS } from "../../../recall-budget.js";
 import type { Message } from "../../../adapters/types.js";
 import type {
   BenchmarkDefinition,
@@ -104,13 +105,18 @@ export async function runMemBenchBenchmark(
 
       const recallQuery = buildRecallQuery(testCase);
       const { result: recalledText, durationMs } = await timed(async () =>
-        options.system.recall(sessionId, recallQuery),
+        options.system.recall(
+          sessionId,
+          recallQuery,
+          DEFAULT_BENCH_RECALL_BUDGET_CHARS,
+        ),
       );
       const answerQuestion = buildQuestionPrompt(testCase);
       const answered = await answerBenchmarkQuestion({
         question: answerQuestion,
         recalledText,
         responder: options.system.responder,
+        answerMode: "strict",
       });
       const predictedChoice = testCase.choices && options.system.responder
         ? extractChoice(answered.finalAnswer)

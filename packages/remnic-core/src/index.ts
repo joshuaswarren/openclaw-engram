@@ -45,6 +45,12 @@ export {
   defaultWorkspaceDir,
 } from "./orchestrator.js";
 
+export {
+  buildEvidencePack,
+  type EvidencePackItem,
+  type EvidencePackOptions,
+} from "./evidence-pack.js";
+
 // ---------------------------------------------------------------------------
 // Storage
 // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Message } from "../../../adapters/types.js";
 import { answerBenchmarkQuestion } from "../../../answering.js";
+import { DEFAULT_BENCH_RECALL_BUDGET_CHARS } from "../../../recall-budget.js";
 import {
   AMEMGYM_SMOKE_FIXTURE,
   type AMemGymProfile,
@@ -117,12 +118,17 @@ export async function runAMemGymBenchmark(
 
       try {
         const { result: recallText, durationMs } = await timed(async () => {
-          return options.system.recall(sessionId, qa.query);
+          return options.system.recall(
+            sessionId,
+            qa.query,
+            DEFAULT_BENCH_RECALL_BUDGET_CHARS,
+          );
         });
         const answered = await answerBenchmarkQuestion({
           question: benchmarkQuestion,
           recalledText: recallText,
           responder: options.system.responder,
+          answerMode: "strict",
         });
         const selectedChoice = parseAMemGymChoice(answered.finalAnswer, qa);
         const answerForScoring = selectedChoice?.choice.answer ?? answered.finalAnswer;

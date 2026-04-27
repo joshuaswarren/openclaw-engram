@@ -7,6 +7,7 @@ import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { Message } from "../../../adapters/types.js";
 import { answerBenchmarkQuestion } from "../../../answering.js";
+import { DEFAULT_BENCH_RECALL_BUDGET_CHARS } from "../../../recall-budget.js";
 import type {
   BenchmarkDefinition,
   BenchmarkResult,
@@ -99,7 +100,11 @@ export async function runPersonaMemBenchmark(
       }
 
       const { result: recalledText, durationMs } = await timed(async () =>
-        options.system.recall(sessionId, sample.userQuery),
+        options.system.recall(
+          sessionId,
+          sample.userQuery,
+          DEFAULT_BENCH_RECALL_BUDGET_CHARS,
+        ),
       );
       const searchResults = await options.system.search(
         sample.userQuery,
@@ -121,6 +126,7 @@ export async function runPersonaMemBenchmark(
         question: evaluationQuestion,
         recalledText,
         responder: options.system.responder,
+        answerMode: "strict",
       });
       const judgeResult = await llmJudgeScoreDetailed(
         options.system.judge,
