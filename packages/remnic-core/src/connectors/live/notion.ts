@@ -59,6 +59,7 @@ import type {
   SyncIncrementalArgs,
   SyncIncrementalResult,
 } from "./framework.js";
+import { isTransientHttpError } from "./transient-errors.js";
 
 // ---------------------------------------------------------------------------
 // Public constants
@@ -343,82 +344,15 @@ function parseCursorPayload(cursor: ConnectorCursor): NotionCursorPayload {
  *
  * We use raw `fetch`, so errors arrive either as network-layer `Error`
  * instances (no `.status`) or we detect them ourselves by inspecting the
- * HTTP status code from the parsed JSON body.
+ * HTTP status code from the parsed JSON body (attached as `notionStatus`).
  *
- * Transient:
- *   - 429 (rate-limit — retry after backoff)
- *   - 5xx (Notion backend error)
- *   - AbortError / network errors (ECONNRESET, ETIMEDOUT, …)
- *
- * Terminal (skip-and-continue):
- *   - 404 (page/database deleted or not shared with integration)
- *   - 403 (permission denied)
- *   - 400 (bad request — won't be fixed by retrying)
- *   - any other 4xx that isn't 429
+ * Delegates to the shared `isTransientHttpError` helper in
+ * `transient-errors.ts` (Thread 3 — Cursor PRRT_kwDORJXyws59sdH4). The
+ * Notion-specific `notionStatus` property is passed as an extra lookup key
+ * so the shared resolver finds it before the generic `status` field.
  */
 export function isTransientNotionError(err: unknown): boolean {
-  if (err === null || typeof err !== "object") return false;
-  const e = err as {
-    name?: unknown;
-    code?: unknown;
-    status?: unknown;
-    notionStatus?: unknown;
-    message?: unknown;
-  };
-
-  // AbortError
-  if (typeof e.name === "string" && e.name === "AbortError") return true;
-
-  // HTTP status attached by our own error-throwing code (see `notionFetch`).
-  const status = pickNumericStatus(e);
-  if (status !== undefined) {
-    if (status === 429) return true;
-    if (status >= 500 && status <= 599) return true;
-    // Any classified 4xx that isn't 429 is terminal.
-    return false;
-  }
-
-  // Network-layer error codes.
-  const codeStr = typeof e.code === "string" ? e.code : undefined;
-  if (codeStr !== undefined) {
-    const transientCodes = new Set([
-      "ECONNRESET",
-      "ECONNREFUSED",
-      "ECONNABORTED",
-      "ETIMEDOUT",
-      "ESOCKETTIMEDOUT",
-      "ENOTFOUND",
-      "EAI_AGAIN",
-      "EPIPE",
-      "EHOSTUNREACH",
-      "ENETUNREACH",
-      "ENETDOWN",
-      "ERR_NETWORK",
-      "ERR_NETWORK_CHANGED",
-    ]);
-    if (transientCodes.has(codeStr)) return true;
-    return false;
-  }
-
-  // No status, no code — treat as transient (plain network failures).
-  return true;
-}
-
-function pickNumericStatus(e: {
-  status?: unknown;
-  notionStatus?: unknown;
-  code?: unknown;
-}): number | undefined {
-  if (typeof e.notionStatus === "number" && Number.isFinite(e.notionStatus)) {
-    return e.notionStatus;
-  }
-  if (typeof e.status === "number" && Number.isFinite(e.status)) {
-    return e.status;
-  }
-  if (typeof e.code === "number" && Number.isFinite(e.code)) {
-    return e.code;
-  }
-  return undefined;
+  return isTransientHttpError(err, ["notionStatus"]);
 }
 
 // ---------------------------------------------------------------------------

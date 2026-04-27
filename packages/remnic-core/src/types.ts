@@ -1639,6 +1639,8 @@ export interface LiveConnectorsConfig {
   googleDrive: GoogleDriveLiveConnectorConfig;
   /** Notion live connector (issue #683 PR 3/N). */
   notion: NotionLiveConnectorConfig;
+  /** Gmail live connector (issue #683 PR 4/6). */
+  gmail: GmailLiveConnectorConfig;
   /** GitHub live connector (issue #683 PR 5/6). */
   github: GitHubLiveConnectorConfig;
 }
@@ -1688,6 +1690,34 @@ export interface NotionLiveConnectorConfig {
   token: string;
   /** Array of Notion database ids to import pages from. Empty = connector is a no-op. */
   databaseIds: string[];
+  /** Poll interval in ms. Default 300000 (5 min); min 1000; max 86400000 (24h). */
+  pollIntervalMs: number;
+}
+
+/**
+ * Operator-facing config for the Gmail live connector (issue #683 PR 4/6).
+ * The connector module defines a separate validated `GmailConnectorConfig`
+ * shape (frozen, post-validation). This interface is the pre-validation shape
+ * that `parseConfig` round-trips through.
+ *
+ * OAuth2 credentials are stored as strings here so operators can populate
+ * them from a secret store (e.g. env-substituted plist or systemd
+ * EnvironmentFile). They MUST NEVER be committed to source. The repo-wide
+ * privacy policy in CLAUDE.md applies.
+ */
+export interface GmailLiveConnectorConfig {
+  /** Master gate. Default false — operators must opt in explicitly. */
+  enabled: boolean;
+  /** OAuth2 client id. Populate from a secret store; never commit. */
+  clientId: string;
+  /** OAuth2 client secret. Populate from a secret store; never commit. */
+  clientSecret: string;
+  /** OAuth2 refresh token issued for the Gmail scope. Populate from a secret store; never commit. */
+  refreshToken: string;
+  /** Gmail userId. Defaults to "me" (the authenticated user). */
+  userId: string;
+  /** Gmail search query applied in addition to the watermark filter. Default "in:inbox". */
+  query: string;
   /** Poll interval in ms. Default 300000 (5 min); min 1000; max 86400000 (24h). */
   pollIntervalMs: number;
 }

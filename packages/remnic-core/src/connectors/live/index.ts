@@ -35,6 +35,8 @@ export {
   type ConnectorSyncStatus,
 } from "./state-store.js";
 
+export { isTransientHttpError } from "./transient-errors.js";
+
 export {
   GOOGLE_DRIVE_CONNECTOR_ID,
   GOOGLE_DRIVE_CURSOR_KIND,
@@ -65,6 +67,25 @@ export {
   type NotionPage,
   type NotionSyncResult,
 } from "./notion.js";
+
+export {
+  GMAIL_CONNECTOR_ID,
+  GMAIL_CURSOR_KIND,
+  GMAIL_DEFAULT_POLL_INTERVAL_MS,
+  buildListQuery,
+  createGmailConnector,
+  internalDateToEpochSeconds,
+  internalDateToIso,
+  isTransientGmailError,
+  validateGmailConfig,
+  type GmailConnectorConfig,
+  type GmailFetchFn,
+  type GmailHeader,
+  type GmailMessage,
+  type GmailMessagePart,
+  type GmailMessageRef,
+  type GmailSyncResult,
+} from "./gmail.js";
 
 export {
   GITHUB_CONNECTOR_ID,

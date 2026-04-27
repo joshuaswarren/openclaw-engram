@@ -778,6 +778,51 @@
               }
             }
           },
+          "gmail": {
+            "type": "object",
+            "additionalProperties": false,
+            "default": {},
+            "description": "Gmail live connector (issue #683 PR 4/6). Imports new inbox messages from Gmail into Remnic on a poll schedule.",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": false,
+                "description": "Master gate. Default off — set to true to enable Gmail imports. The connector additionally requires clientId, clientSecret, and refreshToken to be populated before it will run."
+              },
+              "clientId": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 client id. Populate from your secret store (e.g. ${GMAIL_CLIENT_ID}). Never commit a real value to source."
+              },
+              "clientSecret": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 client secret. Populate from your secret store (e.g. ${GMAIL_CLIENT_SECRET}). Never commit a real value to source."
+              },
+              "refreshToken": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 refresh token issued for the Gmail scope. Populate from your secret store (e.g. ${GMAIL_REFRESH_TOKEN}). Never commit a real value to source."
+              },
+              "userId": {
+                "type": "string",
+                "default": "me",
+                "description": "Gmail userId. Defaults to 'me' (the authenticated user). Override only in delegated-access scenarios."
+              },
+              "query": {
+                "type": "string",
+                "default": "in:inbox",
+                "description": "Gmail search query applied in addition to the watermark after: filter. Default 'in:inbox'. Set to '' to import all mail."
+              },
+              "pollIntervalMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 86400000,
+                "default": 300000,
+                "description": "How often the scheduler should call the connector's syncIncremental, in milliseconds. Defaults to 5 minutes; max 24 hours."
+              }
+            }
+          },
           "github": {
             "type": "object",
             "additionalProperties": false,
