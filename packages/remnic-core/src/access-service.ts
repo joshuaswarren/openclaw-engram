@@ -4502,7 +4502,7 @@ export class EngramAccessService {
     namespace?: string;
     authenticatedPrincipal?: string;
   }): Promise<import("./types.js").DreamsRunResult> {
-    const { runDreamsPhase, deepSleepGovernanceRunner } = await import("./maintenance/dreams-ledger.js");
+    const { runDreamsPhase } = await import("./maintenance/dreams-ledger.js");
     const validPhases = ["lightSleep", "rem", "deepSleep"];
     if (!validPhases.includes(options.phase)) {
       throw new EngramAccessInputError(
@@ -4541,15 +4541,36 @@ export class EngramAccessService {
             dryRun: false,
             storage,
           });
-          const memFiles = await storage.readAllMemories();
+          let itemsProcessed = result.clusters.reduce(
+            (sum, cluster) => sum + cluster.memories.length,
+            0,
+          );
+          try {
+            const memFiles = await storage.readAllMemories();
+            itemsProcessed = memFiles.length;
+          } catch (err) {
+            log.warn(
+              `dreams REM telemetry read failed after consolidation (non-fatal): ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          }
           return {
-            itemsProcessed: memFiles.length,
+            itemsProcessed,
             notes: `REM consolidation found ${result.clustersFound} clusters`,
           };
         };
+    const governanceRunner = options.phase === "deepSleep"
+      ? async (_opts: { memoryDir: string; dryRun: boolean }) => {
+          return this.orchestrator.runDeepSleepGovernanceNow({
+            storage,
+            dryRun: _opts.dryRun,
+          });
+        }
+      : undefined;
     const result = await runDreamsPhase(
       { memoryDir, phase: options.phase, dryRun },
-      options.phase === "deepSleep" ? deepSleepGovernanceRunner : undefined,
+      governanceRunner,
       phaseRunner,
     );
     return {

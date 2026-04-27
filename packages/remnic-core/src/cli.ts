@@ -8315,8 +8315,12 @@ export function registerCli(
           }
           const { normalizeDreamsStatusWindowHours } = await import("./maintenance/dreams-ledger.js");
           let windowHours: number;
+          const rawWindowHours = options.windowHours;
           try {
-            windowHours = normalizeDreamsStatusWindowHours(Number(options.windowHours ?? "24"));
+            if (typeof rawWindowHours !== "string" || rawWindowHours.trim() === "") {
+              throw new Error("missing window");
+            }
+            windowHours = normalizeDreamsStatusWindowHours(Number(rawWindowHours));
           } catch {
             console.error("--window-hours must be a positive integer");
             process.exit(1);

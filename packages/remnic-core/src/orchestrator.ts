@@ -2988,6 +2988,20 @@ export class Orchestrator {
     return this.runSemanticConsolidation({ ...options, force: true });
   }
 
+  async runDeepSleepGovernanceNow(options?: {
+    dryRun?: boolean;
+    storage?: StorageManager;
+  }): Promise<{ scannedMemories: number; appliedActionCount: number; notes?: string }> {
+    const targetStorage = options?.storage ?? this.storage;
+    const { runMemoryGovernance } = await import("./maintenance/memory-governance.js");
+    const { summarizeGovernanceResultForDreams } = await import("./maintenance/dreams-ledger.js");
+    const govResult = await runMemoryGovernance({
+      memoryDir: targetStorage.dir,
+      mode: options?.dryRun === true ? "shadow" : "apply",
+    });
+    return summarizeGovernanceResultForDreams(govResult, options?.dryRun === true);
+  }
+
   private async runSemanticConsolidation(options?: {
     dryRun?: boolean;
     thresholdOverride?: number;
@@ -3280,7 +3294,7 @@ export class Orchestrator {
     try {
       await materializeAfterSemanticConsolidation({
         config: this.config,
-        memoryDir: this.config.memoryDir,
+        memoryDir: targetStorage.dir,
       });
     } catch (err) {
       log.warn(
@@ -3301,7 +3315,7 @@ export class Orchestrator {
         const { runPeerProfileReasoner } = await import("./peers/index.js");
         const llm = new FallbackLlmClient(this.config.gatewayConfig);
         const peerResult = await runPeerProfileReasoner({
-          memoryDir: this.config.memoryDir,
+          memoryDir: targetStorage.dir,
           enabled: true,
           llm,
           model: this.config.peerProfileReasonerModel,
@@ -12967,9 +12981,18 @@ export class Orchestrator {
         if (shouldRun) {
           const remStartedAt = new Date().toISOString();
           const semResult = await this.runSemanticConsolidation();
+          let remItemsProcessed = allMemories.length;
+          try {
+            allMemories = await this.storage.readAllMemories();
+            remItemsProcessed = allMemories.length;
+          } catch (err) {
+            log.warn(
+              `[semantic-consolidation] post-run telemetry refresh failed (non-fatal): ${err}`,
+            );
+          }
           await this.recordScheduledDreamsPhaseRun(
             "rem",
-            allMemories.length,
+            remItemsProcessed,
             `scheduled REM consolidation found ${semResult.clustersFound} clusters`,
             {
               startedAt: remStartedAt,
@@ -12980,7 +13003,6 @@ export class Orchestrator {
             log.info(
               `[semantic-consolidation] archived ${semResult.memoriesArchived} memories during maintenance`,
             );
-            allMemories = await this.storage.readAllMemories();
           }
           // Only persist last-run timestamp if the run succeeded (had no errors or made progress)
           if (semResult.errors === 0 || semResult.memoriesArchived > 0) {

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { EngramAccessInputError, EngramAccessService } from "../src/access-service.js";
 import { runMemoryGovernance } from "../src/maintenance/memory-governance.ts";
 import { rebuildMemoryProjection } from "../src/maintenance/rebuild-memory-projection.ts";
@@ -119,6 +119,138 @@ test("dreamsRun enforces writable namespace before running phases", async () => 
       err instanceof EngramAccessInputError &&
       /namespace is not writable: project-x/.test(err.message),
   );
+});
+
+test("dreamsRun records REM telemetry when post-consolidation count read fails", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-dreams-rem-"));
+  const storage = {
+    dir: memoryDir,
+    readAllMemories: async () => {
+      throw new Error("telemetry read failed");
+    },
+  };
+  let capturedStorage: unknown;
+  const service = new EngramAccessService({
+    config: {
+      memoryDir,
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-x"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
+      dreamsPhases: dreamsPhasesConfig(),
+    },
+    recall: async () => "ctx",
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async () => storage,
+    runSemanticConsolidationNow: async (options: { storage?: unknown }) => {
+      capturedStorage = options.storage;
+      return {
+        clustersFound: 1,
+        memoriesConsolidated: 1,
+        memoriesArchived: 2,
+        errors: 0,
+        clusters: [
+          { memories: [{}, {}, {}] },
+        ],
+      };
+    },
+  } as any);
+
+  try {
+    const result = await service.dreamsRun({
+      phase: "rem",
+      dryRun: false,
+      namespace: "project-x",
+      authenticatedPrincipal: "project-x",
+    });
+
+    assert.equal(capturedStorage, storage);
+    assert.equal(result.itemsProcessed, 3);
+    assert.equal(result.notes, "REM consolidation found 1 clusters");
+    const ledger = await readFile(path.join(memoryDir, "state", "dreams-ledger.jsonl"), "utf-8");
+    assert.match(ledger, /"phase":"rem"/);
+    assert.match(ledger, /"itemsProcessed":3/);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("dreamsRun delegates deepSleep governance through the resolved namespace storage", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-dreams-deep-"));
+  const namespaceDir = path.join(memoryDir, "namespaces", "project-x");
+  const storage = {
+    dir: namespaceDir,
+  };
+  let capturedOptions: { storage?: unknown; dryRun?: boolean } | null = null;
+  const service = new EngramAccessService({
+    config: {
+      memoryDir,
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-x"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
+      dreamsPhases: dreamsPhasesConfig(),
+    },
+    recall: async () => "ctx",
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async () => storage,
+    runDeepSleepGovernanceNow: async (options: { storage?: unknown; dryRun?: boolean }) => {
+      capturedOptions = options;
+      return {
+        scannedMemories: 7,
+        appliedActionCount: 2,
+        notes: "governance scanned namespace storage",
+      };
+    },
+  } as any);
+
+  try {
+    const result = await service.dreamsRun({
+      phase: "deepSleep",
+      dryRun: true,
+      namespace: "project-x",
+      authenticatedPrincipal: "project-x",
+    });
+
+    assert.equal(capturedOptions?.storage, storage);
+    assert.equal(capturedOptions?.dryRun, true);
+    assert.equal(result.itemsProcessed, 7);
+    assert.equal(result.notes, "governance scanned namespace storage");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
 });
 
 async function writeText(baseDir: string, relPath: string, content: string): Promise<void> {
