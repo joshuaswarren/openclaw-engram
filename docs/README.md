@@ -34,6 +34,7 @@
 ## Feature Guides
 
 - [Advanced Retrieval](advanced-retrieval.md) — Reranking, query expansion, feedback loop
+- [Pattern Reinforcement](pattern-reinforcement.md) — Cross-session pattern detection: reinforced primitives, `remnic patterns list/explain` CLI, recall boost (issue #687)
 - [Recall X-ray](xray.md) — Per-result retrieval attribution: which tier served each memory and why (issue #570)
 - [Temporal Recall](temporal-recall.md) — `valid_at` / `invalid_at` fact lifecycle and `as_of` recall filter (issue #680)
 - [Tags](tags.md) — Free-form tag filter on recall and propose; tags vs taxonomy (issue #689)
