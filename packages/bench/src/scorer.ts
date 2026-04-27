@@ -258,9 +258,32 @@ function normalizeText(value: string | number | unknown): string {
 }
 
 function normalizeTextForContainment(value: string | number | unknown): string {
-  return normalizeText(value)
-    .replace(/\s+/g, " ")
-    .replace(/^[.!?,;:]+|[.!?,;:]+$/g, "");
+  return trimTerminalSentencePunctuation(normalizeText(value).replace(/\s+/g, " "));
+}
+
+function trimTerminalSentencePunctuation(value: string): string {
+  let start = 0;
+  let end = value.length;
+
+  while (start < end && isTerminalSentencePunctuation(value[start]!)) {
+    start += 1;
+  }
+  while (end > start && isTerminalSentencePunctuation(value[end - 1]!)) {
+    end -= 1;
+  }
+
+  return value.slice(start, end);
+}
+
+function isTerminalSentencePunctuation(value: string): boolean {
+  return (
+    value === "." ||
+    value === "!" ||
+    value === "?" ||
+    value === "," ||
+    value === ";" ||
+    value === ":"
+  );
 }
 
 function tokenize(value: string | number | unknown): string[] {
