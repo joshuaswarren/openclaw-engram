@@ -4531,13 +4531,16 @@ export class EngramAccessService {
       ? undefined
       : async (_opts: { memoryDir: string; phase: "lightSleep" | "rem" }) => {
           if (_opts.phase === "lightSleep") {
-            const result = await this.orchestrator.runLifecyclePolicyNow();
+            const result = await this.orchestrator.runLifecyclePolicyNow(storage);
             return {
               itemsProcessed: result.memoriesAssessed,
               notes: `scored ${result.memoriesAssessed} memories`,
             };
           }
-          const result = await this.orchestrator.runSemanticConsolidationNow({ dryRun: false });
+          const result = await this.orchestrator.runSemanticConsolidationNow({
+            dryRun: false,
+            storage,
+          });
           const memFiles = await storage.readAllMemories();
           return {
             itemsProcessed: memFiles.length,

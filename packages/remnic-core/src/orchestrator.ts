@@ -2983,6 +2983,7 @@ export class Orchestrator {
   async runSemanticConsolidationNow(options?: {
     dryRun?: boolean;
     thresholdOverride?: number;
+    storage?: StorageManager;
   }): Promise<SemanticConsolidationResult> {
     return this.runSemanticConsolidation({ ...options, force: true });
   }
@@ -2991,7 +2992,9 @@ export class Orchestrator {
     dryRun?: boolean;
     thresholdOverride?: number;
     force?: boolean;
+    storage?: StorageManager;
   }): Promise<SemanticConsolidationResult> {
+    const targetStorage = options?.storage ?? this.storage;
     const result: SemanticConsolidationResult = {
       clustersFound: 0,
       memoriesConsolidated: 0,
@@ -3007,7 +3010,7 @@ export class Orchestrator {
 
     log.info("[semantic-consolidation] starting run");
 
-    const allMemories = await this.storage.readAllMemories();
+    const allMemories = await targetStorage.readAllMemories();
     if (allMemories.length < 10) {
       log.debug("[semantic-consolidation] too few memories, skipping");
       return result;
@@ -3169,12 +3172,12 @@ export class Orchestrator {
         const derivedFromEntries: string[] = [];
         for (const m of cluster.memories) {
           if (!m.path) continue;
-          const entry = await this.storage.snapshotForProvenance(m.path);
+          const entry = await targetStorage.snapshotForProvenance(m.path);
           if (entry) derivedFromEntries.push(entry);
         }
 
         // Write the canonical memory
-        const canonicalId = await this.storage.writeMemory(
+        const canonicalId = await targetStorage.writeMemory(
           newest.frontmatter.category,
           canonicalContent,
           {
@@ -3196,7 +3199,7 @@ export class Orchestrator {
 
         // Archive originals
         for (const m of cluster.memories) {
-          const archiveResult = await this.storage.archiveMemory(m, {
+          const archiveResult = await targetStorage.archiveMemory(m, {
             actor: "semantic-consolidation",
             reasonCode: "semantic-consolidation",
             relatedMemoryIds: [canonicalId],
@@ -3231,7 +3234,7 @@ export class Orchestrator {
               m.frontmatter?.created
             ) {
               deindexMemory(
-                this.config.memoryDir,
+                targetStorage.dir,
                 m.path,
                 m.frontmatter.created,
                 m.frontmatter.tags ?? [],
@@ -13556,14 +13559,15 @@ export class Orchestrator {
     }
   }
 
-  async runLifecyclePolicyNow(): Promise<{ memoriesAssessed: number }> {
-    const lifecycleCorpus = await this.storage.readAllMemories();
-    await this.runLifecyclePolicyPass(lifecycleCorpus);
+  async runLifecyclePolicyNow(storage: StorageManager = this.storage): Promise<{ memoriesAssessed: number }> {
+    const lifecycleCorpus = await storage.readAllMemories();
+    await this.runLifecyclePolicyPass(lifecycleCorpus, storage);
     return { memoriesAssessed: lifecycleCorpus.length };
   }
 
   private async runLifecyclePolicyPass(
     allMemories: MemoryFile[],
+    storage: StorageManager = this.storage,
   ): Promise<void> {
     const now = new Date();
     const nowIso = now.toISOString();
@@ -13632,7 +13636,7 @@ export class Orchestrator {
 
       if (!shouldPersist) continue;
 
-      const wrote = await this.storage.writeMemoryFrontmatter(memory, {
+      const wrote = await storage.writeMemoryFrontmatter(memory, {
         lifecycleState: nextState,
         heatScore: decision.heatScore,
         decayScore: decision.decayScore,
@@ -13660,7 +13664,7 @@ export class Orchestrator {
       },
     };
     const metricsPath = path.join(
-      this.storage.dir,
+      storage.dir,
       "state",
       "lifecycle-metrics.json",
     );

@@ -333,43 +333,38 @@ export async function runDreamsPhase(
       itemsProcessed = Math.max(0, Math.floor(result.itemsProcessed));
       notes = result.notes ?? `scored ${itemsProcessed} memories`;
     } else {
-    // Light sleep: count observation ledger entries from the last 24h as a
-    // proxy for "items scored".  The full value-scoring pass runs in the
-    // orchestrator maintenance cycle; this surface reports what's queued.
-    try {
-      const ledgerPath = path.join(memoryDir, "state", "observation-ledger", "rebuilt-observations.jsonl");
-      let raw = "";
+      // Light sleep: count observation ledger entries from the last 24h as a
+      // proxy for "items scored". The live value-scoring pass runs through the
+      // phase runner above.
       try {
-        raw = await readFile(ledgerPath, "utf-8");
-      } catch {
-        // No ledger yet — zero items.
-      }
-      const lines = raw.split("\n").filter((l) => l.trim().length > 0);
-      // Count entries from the last 24h as the "pending" corpus.
-      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-      itemsProcessed = lines.filter((line) => {
+        const ledgerPath = path.join(memoryDir, "state", "observation-ledger", "rebuilt-observations.jsonl");
+        let raw = "";
         try {
-          const obj = JSON.parse(line) as { timestamp?: string; ts?: string };
-          const timestamp = typeof obj.ts === "string"
-            ? obj.ts
-            : typeof obj.timestamp === "string"
-              ? obj.timestamp
-              : null;
-          if (!timestamp) return false;
-          const ms = Date.parse(timestamp);
-          return Number.isFinite(ms) && ms >= cutoff;
+          raw = await readFile(ledgerPath, "utf-8");
         } catch {
-          return false;
+          // No ledger yet — zero items.
         }
-      }).length;
-      if (dryRun) {
+        const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+        itemsProcessed = lines.filter((line) => {
+          try {
+            const obj = JSON.parse(line) as { timestamp?: string; ts?: string };
+            const timestamp = typeof obj.ts === "string"
+              ? obj.ts
+              : typeof obj.timestamp === "string"
+                ? obj.timestamp
+                : null;
+            if (!timestamp) return false;
+            const ms = Date.parse(timestamp);
+            return Number.isFinite(ms) && ms >= cutoff;
+          } catch {
+            return false;
+          }
+        }).length;
         notes = `dry-run: would score ${itemsProcessed} observation entries`;
-      } else {
-        notes = `scored ${itemsProcessed} recent observation entries`;
+      } catch (err) {
+        throw new Error(`light-sleep scan failed: ${err instanceof Error ? err.message : String(err)}`);
       }
-    } catch (err) {
-      throw new Error(`light-sleep scan failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
     }
   } else if (phase === "rem") {
     if (!dryRun) {
@@ -380,29 +375,23 @@ export async function runDreamsPhase(
       itemsProcessed = Math.max(0, Math.floor(result.itemsProcessed));
       notes = result.notes ?? `REM pass assessed ${itemsProcessed} memories`;
     } else {
-    // REM: count memories eligible for consolidation by reading the
-    // semantic-consolidation state and estimating the cluster candidates.
-    try {
-      const stateFilePath = path.join(memoryDir, "state", "semantic-consolidation-last-run.json");
-      let lastRunAt: string | null = null;
+      // REM dry-runs estimate candidates without synthesizing or archiving.
       try {
-        const stateRaw = await readFile(stateFilePath, "utf-8");
-        const stateData = JSON.parse(stateRaw) as { lastRunAt?: string };
-        lastRunAt = stateData.lastRunAt ?? null;
-      } catch {
-        // No state file — never run.
-      }
-      // Count all memory files as rough "candidate" count.
-      const memFiles = await listMemoryFiles(memoryDir);
-      itemsProcessed = memFiles.length;
-      if (dryRun) {
+        const stateFilePath = path.join(memoryDir, "state", "semantic-consolidation-last-run.json");
+        let lastRunAt: string | null = null;
+        try {
+          const stateRaw = await readFile(stateFilePath, "utf-8");
+          const stateData = JSON.parse(stateRaw) as { lastRunAt?: string };
+          lastRunAt = stateData.lastRunAt ?? null;
+        } catch {
+          // No state file — never run.
+        }
+        const memFiles = await listMemoryFiles(memoryDir);
+        itemsProcessed = memFiles.length;
         notes = `dry-run: ${itemsProcessed} memories would enter REM consolidation pass${lastRunAt ? ` (last run: ${lastRunAt})` : " (never run)"}`;
-      } else {
-        notes = `REM pass assessed ${itemsProcessed} memories${lastRunAt ? `; last scheduled run: ${lastRunAt}` : ""}`;
+      } catch (err) {
+        throw new Error(`REM scan failed: ${err instanceof Error ? err.message : String(err)}`);
       }
-    } catch (err) {
-      throw new Error(`REM scan failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
     }
   } else {
     // deep sleep
