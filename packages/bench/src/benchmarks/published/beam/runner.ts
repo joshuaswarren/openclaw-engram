@@ -48,7 +48,7 @@ const SPLIT_ORDER: Record<string, number> = {
 const SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN =
   "(?:syntax highlight(?:ed|ing) code blocks?|code blocks? with syntax highlighting)";
 const SYNTAX_HIGHLIGHTING_WEAKENING_AFTER_PATTERN =
-  "\\b(?:(?:is|are|be|being)?\\s*(?:not required|not needed|optional|unnecessary)|(?:must|should|do|does|is|are)?\\s*(?:not|never)\\s+(?:be\\s+)?(?:used|required|needed|enabled|applied)|avoid|disable)\\b";
+  "\\b(?:(?:is|are|be|being)?\\s*(?:not required|not needed|optional|unnecessary)|(?:must|should|do|does|is|are)?\\s*(?:not|never)\\s+(?:be\\s+)?(?:used|required|needed|enabled|applied)|disable)\\b";
 const SYNTAX_HIGHLIGHTING_DIRECT_NEGATED_BEFORE = new RegExp(
   "\\b(?:do not|don't|dont|must not|should not|never)\\s+(?:\\w+\\s+){0,3}(?:use|include|format|write|return|provide|apply|enable)\\s+(?:\\w+\\s+){0,3}" +
     SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN,
