@@ -7018,6 +7018,10 @@ export function registerCli(
           const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace, {
             rejectUnsupportedOverride: true,
           });
+          const deepSleep = orchestrator.config.dreamsPhases.deepSleep;
+          if (deepSleep.enabled === false && deepSleep.enabledExplicitlySet === true) {
+            throw new Error("memory governance is disabled by dreams.phases.deepSleep.enabled=false");
+          }
           const result = await runMemoryGovernanceCliCommand({
             memoryDir,
             mode,
