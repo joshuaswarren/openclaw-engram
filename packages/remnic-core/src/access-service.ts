@@ -4191,7 +4191,16 @@ export class EngramAccessService {
     // orchestrator (buffer, qmd, extraction queue, etc. are process-global
     // and don't require further namespace scoping for a read-only snapshot).
     const orchestratorProxy = Object.create(this.orchestrator) as typeof this.orchestrator;
-    orchestratorProxy.config = { ...this.orchestrator.config, memoryDir: storage.dir };
+    // `config` is declared readonly on the orchestrator class, but the proxy
+    // is a fresh object created from the prototype — assigning to its own
+    // property does not mutate the underlying orchestrator. Cast to a
+    // mutable shape locally so the readonly modifier doesn't reject the
+    // initial property write on the proxy. (Pre-existing typecheck issue
+    // surfaced after main's #688 PR landed; left otherwise unchanged.)
+    (orchestratorProxy as { config: PluginConfig }).config = {
+      ...this.orchestrator.config,
+      memoryDir: storage.dir,
+    };
     return gatherConsoleState(orchestratorProxy);
   }
 
