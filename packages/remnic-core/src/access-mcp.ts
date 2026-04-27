@@ -1072,6 +1072,22 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
+      // ── Operator Console state (issue #688 PR 2/3) ─────────────────────────
+      {
+        name: "engram.console_state",
+        description:
+          "Return a point-in-time ConsoleStateSnapshot of the engine's runtime state — buffer, extraction queue, dedup decisions, maintenance ledger tail, QMD probe, and daemon info (issue #688). Read-only; never mutates state.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            namespace: {
+              type: "string",
+              description: "Optional namespace to scope the snapshot.",
+            },
+          },
+          additionalProperties: false,
+        },
+      },
     ].flatMap((tool) => withToolAliases(tool));
   }
 
@@ -2110,6 +2126,13 @@ export class EngramMcpServer {
         if (!id) throw new Error("engram.peer_profile_get: id is required");
         return this.service.peerProfileGet(id);
       }
+      // ── Operator Console state (issue #688 PR 2/3) ──────────────────────────
+      case "engram.console_state":
+      case "remnic.console_state":
+        return this.service.consoleState(
+          typeof args.namespace === "string" ? args.namespace : undefined,
+          effectivePrincipal,
+        );
       default:
         throw new Error(`unknown tool: ${name}`);
     }
