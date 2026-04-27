@@ -4321,6 +4321,41 @@ export class EngramAccessService {
   }
 
   /**
+   * Destructively purge the entire peer directory for a given peerId —
+   * `identity.md`, `profile.md`, `interactions.log.md`, and any other
+   * files in `peers/{id}/`. Requires `confirm: "yes"` to prevent
+   * accidental invocation.
+   *
+   * This is the DESTRUCTIVE counterpart to `peerDelete`, which only
+   * removes `identity.md`. All companion files are permanently removed.
+   *
+   * Returns `{ ok: true, purged: true }` when the directory existed and
+   * was removed; `{ ok: true, purged: false }` when the directory did
+   * not exist (idempotent no-op).
+   */
+  async peerForget(
+    peerId: string,
+    opts: { confirm: string },
+  ): Promise<{ ok: true; purged: boolean }> {
+    const peers = await import("./peers/index.js");
+    const validateId: (id: unknown) => void = peers.assertValidPeerId;
+    try {
+      validateId(peerId);
+    } catch (err) {
+      throw new EngramAccessInputError((err as Error).message);
+    }
+    if (opts.confirm !== "yes") {
+      throw new EngramAccessInputError(
+        "peerForget requires confirm: 'yes' to prevent accidental data loss",
+      );
+    }
+    const result = await peers.forgetPeer(this.orchestrator.config.memoryDir, peerId, {
+      confirm: "yes",
+    });
+    return { ok: true, purged: result.purged };
+  }
+
+  /**
    * Get the evolving cognitive profile for a peer. Returns `{ found: false }`
    * when no profile file exists yet (profile is written by the async reasoner,
    * PR 2/5). The peer identity itself need not exist for a profile to exist,
