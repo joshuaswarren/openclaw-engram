@@ -258,21 +258,17 @@ function normalizeText(value: string | number | unknown): string {
 }
 
 function normalizeTextForContainment(value: string | number | unknown): string {
-  return trimTerminalSentencePunctuation(normalizeText(value).replace(/\s+/g, " "));
+  return trimTrailingSentencePunctuation(normalizeText(value).replace(/\s+/g, " "));
 }
 
-function trimTerminalSentencePunctuation(value: string): string {
-  let start = 0;
+function trimTrailingSentencePunctuation(value: string): string {
   let end = value.length;
 
-  while (start < end && isTerminalSentencePunctuation(value[start]!)) {
-    start += 1;
-  }
-  while (end > start && isTerminalSentencePunctuation(value[end - 1]!)) {
+  while (end > 0 && isTerminalSentencePunctuation(value[end - 1]!)) {
     end -= 1;
   }
 
-  return value.slice(start, end);
+  return value.slice(0, end);
 }
 
 function isTerminalSentencePunctuation(value: string): boolean {
