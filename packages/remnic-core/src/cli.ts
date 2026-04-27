@@ -2210,6 +2210,43 @@ function parseSinceDurationMs(since: string): number {
   return amount * 24 * 60 * 60 * 1000;
 }
 
+/**
+ * Parse an ISO 8601 duration string (e.g. "P1Y", "P90D", "P6M") or a plain
+ * integer number of days (e.g. "365", "90") into milliseconds.
+ *
+ * Returns null if the value cannot be parsed.
+ */
+function parseDurationToMs(raw: string): number | null {
+  const trimmed = raw.trim();
+
+  // Plain number of days
+  if (/^\d+$/.test(trimmed)) {
+    const days = Number.parseInt(trimmed, 10);
+    return Number.isFinite(days) && days > 0 ? days * 86_400_000 : null;
+  }
+
+  // ISO 8601 duration — simplified subset: P[nY][nM][nD]
+  const iso = trimmed.toUpperCase();
+  if (!iso.startsWith("P")) return null;
+  const rest = iso.slice(1);
+
+  // Reject time part (T...) for simplicity
+  if (rest.includes("T")) return null;
+
+  let totalMs = 0;
+  const yearMatch = rest.match(/(\d+)Y/);
+  const monthMatch = rest.match(/(\d+)M/);
+  const dayMatch = rest.match(/(\d+)D/);
+
+  if (!yearMatch && !monthMatch && !dayMatch) return null;
+
+  if (yearMatch) totalMs += Number.parseInt(yearMatch[1], 10) * 365 * 86_400_000;
+  if (monthMatch) totalMs += Number.parseInt(monthMatch[1], 10) * 30 * 86_400_000;
+  if (dayMatch) totalMs += Number.parseInt(dayMatch[1], 10) * 86_400_000;
+
+  return totalMs > 0 ? totalMs : null;
+}
+
 function resolvePolicySignalNamespaces(orchestrator: PolicyTuningCliOrchestrator): string[] {
   const names = new Set<string>([orchestrator.config.defaultNamespace]);
   if (orchestrator.config.namespacesEnabled) {
@@ -3698,6 +3735,148 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               console.log(JSON.stringify({ ok: false, error: message }, null, 2));
             } else {
               console.error(`forget: ${message}`);
+            }
+            process.exitCode = 1;
+          }
+        });
+
+      cmd
+        .command("purge")
+        .description(
+          "Hard-delete memories by age + tier (issue #686 retention-completion). " +
+          "Removes files from disk, removes from QMD index, and logs to the " +
+          "observation ledger. Requires --confirm yes to execute. Defaults to " +
+          "--dry-run when --confirm is absent.",
+        )
+        .option(
+          "--older-than <duration>",
+          "Delete memories older than this duration. Accepts ISO 8601 durations " +
+          "(e.g. P1Y, P90D) or plain numbers of days (e.g. 365).",
+        )
+        .option(
+          "--tier <tier>",
+          "Which tier to purge: 'cold' (default) or 'all'",
+        )
+        .option(
+          "--forgotten-only",
+          "Only purge memories with status=forgotten",
+        )
+        .option("--dry-run", "Report candidates without deleting (default when --confirm absent)")
+        .option(
+          "--confirm <value>",
+          "Must be the literal string 'yes' to execute mutations",
+        )
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+
+          // Validate --older-than
+          const olderThanRaw = options.olderThan ?? options["older-than"];
+          if (typeof olderThanRaw !== "string" || olderThanRaw.trim().length === 0) {
+            const msg = "purge: --older-than <duration> is required (e.g. --older-than P1Y or --older-than 365)";
+            if (reportHasMachineReadableOutput(options)) {
+              console.log(JSON.stringify({ ok: false, error: msg }, null, 2));
+            } else {
+              console.error(msg);
+            }
+            process.exitCode = 1;
+            return;
+          }
+
+          // Parse duration to ms
+          const olderThanMs = parseDurationToMs(olderThanRaw.trim());
+          if (olderThanMs === null || olderThanMs <= 0) {
+            const msg = `purge: cannot parse duration '${olderThanRaw}'. Use ISO 8601 (P1Y, P90D, P30D) or plain days (365).`;
+            if (reportHasMachineReadableOutput(options)) {
+              console.log(JSON.stringify({ ok: false, error: msg }, null, 2));
+            } else {
+              console.error(msg);
+            }
+            process.exitCode = 1;
+            return;
+          }
+
+          // Validate --tier
+          const tierRaw = typeof options.tier === "string" ? options.tier.trim() : "cold";
+          if (tierRaw !== "cold" && tierRaw !== "all") {
+            const msg = `purge: invalid --tier '${tierRaw}'. Valid values: cold, all`;
+            if (reportHasMachineReadableOutput(options)) {
+              console.log(JSON.stringify({ ok: false, error: msg }, null, 2));
+            } else {
+              console.error(msg);
+            }
+            process.exitCode = 1;
+            return;
+          }
+
+          // --confirm guard: must be literally "yes"
+          const confirmValue = options.confirm;
+          const hasDryRunFlag = options.dryRun === true || options["dry-run"] === true;
+          const confirmed = confirmValue === "yes";
+          const dryRun = hasDryRunFlag || !confirmed;
+
+          if (!dryRun && confirmValue !== "yes") {
+            const msg =
+              "purge: --confirm yes is required to execute mutations. " +
+              "Run with --dry-run to preview candidates without deleting.";
+            if (reportHasMachineReadableOutput(options)) {
+              console.log(JSON.stringify({ ok: false, error: msg }, null, 2));
+            } else {
+              console.error(msg);
+            }
+            process.exitCode = 1;
+            return;
+          }
+
+          const { purgeMemories } = await import("./maintenance/purge.js");
+          try {
+            const result = await purgeMemories({
+              storage: orchestrator.storage,
+              olderThanMs,
+              tier: tierRaw as "cold" | "all",
+              forgottenOnly: options.forgottenOnly === true || options["forgotten-only"] === true,
+              dryRun,
+              qmd: confirmed ? orchestrator.qmd : undefined,
+              hotCollection: orchestrator.config.qmdCollection,
+              coldCollection: orchestrator.config.qmdColdCollection,
+            });
+            if (reportHasMachineReadableOutput(options)) {
+              console.log(JSON.stringify(result, null, 2));
+            } else {
+              if (result.dryRun) {
+                console.log(`=== Purge dry-run: ${result.candidates.length} candidate(s) would be deleted ===`);
+              } else {
+                console.log(`=== Purge complete: ${result.purgedCount} deleted, ${result.errorCount} error(s) ===`);
+              }
+              console.log(`  tier:       ${result.tier}`);
+              console.log(`  older-than: ${olderThanRaw} (${Math.round(olderThanMs / 86_400_000)}d)`);
+              if (result.candidates.length === 0) {
+                console.log("  No candidates found.");
+              } else {
+                for (const c of result.candidates.slice(0, 20)) {
+                  console.log(`  ${c.id}  [${c.tier}] status=${c.status}  age=${Math.round(c.ageMs / 86_400_000)}d  ${c.path}`);
+                }
+                if (result.candidates.length > 20) {
+                  console.log(`  ... and ${result.candidates.length - 20} more`);
+                }
+              }
+              if (!result.dryRun && result.errors.length > 0) {
+                console.error(`  Errors (${result.errors.length}):`);
+                for (const e of result.errors) {
+                  console.error(`    ${e.id}: ${e.error}`);
+                }
+                process.exitCode = 1;
+              }
+              if (result.dryRun) {
+                console.log("\nRe-run with --confirm yes to execute.");
+              }
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            if (reportHasMachineReadableOutput(options)) {
+              console.log(JSON.stringify({ ok: false, error: message }, null, 2));
+            } else {
+              console.error(`purge: ${message}`);
             }
             process.exitCode = 1;
           }
