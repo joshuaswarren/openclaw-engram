@@ -7819,6 +7819,75 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           }
         });
 
+      // ── peer migrate (issue #679 PR 5/5) ────────────────────────────────
+      peerCmd
+        .command("migrate")
+        .description(
+          "Migrate legacy identity-anchor data into peers/self/identity.md (issue #679 PR 5/5). " +
+          "Idempotent: safe to run multiple times. Use --dry-run to preview without writing.",
+        )
+        .option("--dry-run", "Preview the proposed peer record without writing anything to disk")
+        .option("--display-name <name>", "Override the default display name for the self peer (default: \"Self\")")
+        .option("--json", "Emit machine-readable JSON result")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const isDryRun = options.dryRun === true;
+          const displayName =
+            typeof options.displayName === "string" && options.displayName.length > 0
+              ? options.displayName
+              : undefined;
+          const { migrateFromIdentityAnchor } = await import("./peers/migrate-from-identity-anchor.js");
+          let result;
+          try {
+            result = await migrateFromIdentityAnchor({
+              memoryDir: orchestrator.config.memoryDir,
+              dryRun: isDryRun,
+              ...(displayName !== undefined ? { displayName } : {}),
+            });
+          } catch (err) {
+            console.error(`Migration failed: ${(err as Error).message}`);
+            process.exit(1);
+          }
+          if (options.json === true) {
+            console.log(JSON.stringify(result, null, 2));
+            return;
+          }
+          if (result.skipped) {
+            console.log(`Peer "self" already exists — migration skipped (idempotent).`);
+            console.log(`  peers/self/identity.md is unchanged.`);
+            return;
+          }
+          if (result.dryRun) {
+            console.log(`[dry-run] Migration preview — nothing was written.`);
+            console.log(`  Proposed peer id:   ${result.peer.id}`);
+            console.log(`  Proposed kind:      ${result.peer.kind}`);
+            console.log(`  Proposed name:      ${result.peer.displayName}`);
+            if (result.identityAnchorSource) {
+              console.log(`  Would read anchor:  ${result.identityAnchorSource}`);
+            }
+            if (result.identityMdSource) {
+              console.log(`  Would read identity:${result.identityMdSource}`);
+            }
+            if (!result.identityAnchorSource && !result.identityMdSource) {
+              console.log(`  No legacy source files found — self peer would be created with no notes.`);
+            }
+            return;
+          }
+          // Written successfully.
+          console.log(`Migrated identity-anchor data to peers/self/identity.md.`);
+          if (result.identityAnchorSource) {
+            console.log(`  Read anchor:  ${result.identityAnchorSource}`);
+          }
+          if (result.identityMdSource) {
+            console.log(`  Read identity:${result.identityMdSource}`);
+          }
+          if (!result.identityAnchorSource && !result.identityMdSource) {
+            console.log(`  No legacy source files found — self peer created with no notes.`);
+          }
+          console.log(`\nLegacy identity-anchor files are untouched. Verify the migration result`);
+          console.log(`with \`remnic peer show self\` before archiving legacy files.`);
+        });
+
       // ── Console subcommand (issue #688) ─────────────────────────────────
       // PR 1/3 (#721) shipped the structured engine-state aggregator
       // and the `--state-only` flag (one-shot JSON snapshot). PR 2/3

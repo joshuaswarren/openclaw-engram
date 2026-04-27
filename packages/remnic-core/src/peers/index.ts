@@ -4,9 +4,11 @@
  * Issue #679 PR 1/5 — schema + storage primitives only.
  * Issue #679 PR 2/5 — async peer profile reasoner (re-exports
  * `runPeerProfileReasoner`; implementation in `./profile-reasoner.ts`).
- *
- * Recall injection (PR 3/5), CLI/HTTP/MCP surfaces (PR 4/5), and
- * migration of existing identity-anchor data (PR 5) are deferred.
+ * Issue #679 PR 3/5 — recall integration (peer field on recall requests).
+ * Issue #679 PR 4/5 — CLI/HTTP/MCP surfaces (remnic peer list/show/set/delete/profile).
+ * Issue #679 PR 5/5 — migration of existing identity-anchor data into
+ * `peers/self/identity.md` via `migrateFromIdentityAnchor` and
+ * `remnic peer migrate` CLI command.
  */
 
 export type {
@@ -43,3 +45,9 @@ export {
   type PeerProfileReasonerLlm,
   type PeerProfileReasonerProposal,
 } from "./profile-reasoner.js";
+
+export {
+  migrateFromIdentityAnchor,
+  type MigrateFromIdentityAnchorOptions,
+  type MigrateFromIdentityAnchorResult,
+} from "./migrate-from-identity-anchor.js";
