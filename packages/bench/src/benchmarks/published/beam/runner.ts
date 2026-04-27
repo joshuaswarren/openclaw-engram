@@ -905,32 +905,36 @@ function rubricTargetMatches(actual: string, target: string): boolean {
     return true;
   }
 
-  const actualTokens = new Set(tokenizeRubricText(actual));
-  const targetTokens = tokenizeRubricText(target);
+  return syntaxHighlightingRubricMatches(actual, target);
+}
+
+function syntaxHighlightingRubricMatches(actual: string, target: string): boolean {
   return (
-    targetTokens.length > 0 &&
-    targetTokens.every((token) => actualTokens.has(token))
+    mentionsSyntaxHighlightingRequirement(target) &&
+    mentionsSyntaxHighlightingRequirement(actual) &&
+    !negatesSyntaxHighlighting(actual)
   );
 }
 
-function tokenizeRubricText(value: string): string[] {
+function mentionsSyntaxHighlightingRequirement(value: string): boolean {
+  return /(?:syntax highlight(?:ed|ing)|code blocks? with syntax highlighting)/.test(
+    normalizeRubricPhrase(value),
+  );
+}
+
+function negatesSyntaxHighlighting(value: string): boolean {
+  return /\b(?:do not|don't|dont|not|never|no|without|avoid|disable)\b.{0,60}(?:syntax highlight(?:ed|ing)|code blocks? with syntax highlighting)/.test(
+    normalizeRubricPhrase(value),
+  );
+}
+
+function normalizeRubricPhrase(value: string): string {
   return value
     .trim()
     .toLowerCase()
-    .replace(/[^\w\s]/g, " ")
-    .split(/\s+/)
-    .filter((token) => token.length > 0)
-    .map(stemRubricToken);
-}
-
-function stemRubricToken(token: string): string {
-  if (token.endsWith("ing") && token.length > 5) {
-    return token.slice(0, -3);
-  }
-  if (token.endsWith("ed") && token.length > 4) {
-    return token.slice(0, -2);
-  }
-  return token;
+    .replace(/[-_]+/g, " ")
+    .replace(/[^\w\s']/g, " ")
+    .replace(/\s+/g, " ");
 }
 
 function normalizeLimit(limit: number | undefined): number | undefined {

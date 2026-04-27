@@ -259,10 +259,8 @@ function normalizeText(value: string | number | unknown): string {
 
 function normalizeTextForContainment(value: string | number | unknown): string {
   return normalizeText(value)
-    .replace(/[^\w\s]/g, " ")
-    .split(/\s+/)
-    .filter((token) => token.length > 0)
-    .join(" ");
+    .replace(/\s+/g, " ")
+    .replace(/^[.!?,;:]+|[.!?,;:]+$/g, "");
 }
 
 function tokenize(value: string | number | unknown): string[] {

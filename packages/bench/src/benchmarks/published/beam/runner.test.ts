@@ -98,3 +98,64 @@ test("BEAM quick mode uses answer formats for concise facts and remembered instr
     1,
   );
 });
+
+test("BEAM rubric coverage does not reward negated syntax highlighting answers", async () => {
+  const result = await runBeamBenchmark({
+    benchmark: beamDefinition,
+    mode: "quick",
+    system: {
+      async reset() {},
+      async store() {},
+      async recall(_sessionId, question) {
+        return [
+          "I want sprint one to end on March 29.",
+          "For the transactions table, I want to add two new columns: category and notes.",
+          "Whenever I ask about implementation, format the answer with syntax-highlighted code blocks.",
+          "The dashboard API now averages around 250ms.",
+          `Question: ${question}`,
+        ].join("\n");
+      },
+      async search() {
+        return [{ id: "hit", text: "hit" }];
+      },
+      async destroy() {},
+      async getStats() {
+        return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: 0 };
+      },
+      responder: {
+        async respond(question) {
+          if (question.includes("implement a login feature")) {
+            return {
+              text: "Do not use syntax highlighting for implementation help.",
+              tokens: { input: 1, output: 1 },
+              latencyMs: 1,
+              model: "beam-test-responder",
+            };
+          }
+          return {
+            text: question.includes("sprint")
+              ? "March 29"
+              : question.includes("dashboard API")
+                ? "250ms"
+                : "Two columns: category and notes.",
+            tokens: { input: 1, output: 1 },
+            latencyMs: 1,
+            model: "beam-test-responder",
+          };
+        },
+      },
+      judge: {
+        async score() {
+          return 0;
+        },
+      },
+    },
+  });
+
+  assert.equal(
+    result.results.tasks.find((task) =>
+      task.taskId.includes("instruction_following"),
+    )?.scores.rubric_coverage,
+    0,
+  );
+});

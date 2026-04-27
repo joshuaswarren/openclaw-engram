@@ -57,3 +57,9 @@ test("containsAnswer ignores punctuation-only differences", () => {
     1,
   );
 });
+
+test("containsAnswer preserves semantic punctuation", () => {
+  assert.equal(containsAnswer("I use C", "C++"), 0);
+  assert.equal(containsAnswer("I went on a run", "N/A"), 0);
+  assert.equal(containsAnswer("The selected language is C++.", "C++"), 1);
+});
