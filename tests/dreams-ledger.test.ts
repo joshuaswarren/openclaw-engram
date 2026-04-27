@@ -8,6 +8,7 @@ import {
   readDreamsLedgerEntries,
   getDreamsStatus,
   dreamsLedgerPath,
+  summarizeGovernanceResultForDreams,
   type DreamsLedgerEntry,
 } from "../packages/remnic-core/src/maintenance/dreams-ledger.js";
 
@@ -243,4 +244,19 @@ test("getDreamsStatus honours custom windowHours", async () => {
 
   const oneHour = await getDreamsStatus(memoryDir, 1, now);
   assert.equal(oneHour.phases.lightSleep.runCount, 0);
+});
+
+test("summarizeGovernanceResultForDreams does not double-count proposed actions", () => {
+  const result = summarizeGovernanceResultForDreams(
+    {
+      reviewQueue: [{ memoryId: "m1" }, { memoryId: "m2" }],
+      proposedActions: [{ memoryId: "m1" }, { memoryId: "m2" }],
+      appliedActions: [{ memoryId: "m1" }],
+    },
+    true,
+  );
+
+  assert.equal(result.scannedMemories, 2);
+  assert.equal(result.appliedActionCount, 1);
+  assert.match(result.notes ?? "", /2 actions proposed/);
 });

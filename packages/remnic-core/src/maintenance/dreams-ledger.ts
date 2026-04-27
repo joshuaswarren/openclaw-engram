@@ -394,12 +394,23 @@ export async function deepSleepGovernanceRunner(opts: {
     memoryDir: opts.memoryDir,
     mode: opts.dryRun ? "shadow" : "apply",
   });
+  return summarizeGovernanceResultForDreams(govResult, opts.dryRun);
+}
+
+export function summarizeGovernanceResultForDreams(
+  govResult: {
+    proposedActions: unknown[];
+    appliedActions: unknown[];
+    reviewQueue: unknown[];
+  },
+  dryRun: boolean,
+): { scannedMemories: number; appliedActionCount: number; notes?: string } {
   const proposedCount = govResult.proposedActions.length;
   const appliedCount = govResult.appliedActions.length;
   return {
-    scannedMemories: proposedCount + govResult.reviewQueue.length,
+    scannedMemories: govResult.reviewQueue.length,
     appliedActionCount: appliedCount,
-    notes: opts.dryRun
+    notes: dryRun
       ? `shadow mode: ${proposedCount} actions proposed`
       : `applied ${appliedCount} actions`,
   };
