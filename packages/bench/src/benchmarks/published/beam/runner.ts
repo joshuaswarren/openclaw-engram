@@ -50,7 +50,7 @@ const SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN =
 const SYNTAX_HIGHLIGHTING_WEAKENING_AFTER_PATTERN =
   "\\b(?:(?:is|are|be|being)?\\s*(?:not required|not needed|optional|unnecessary)|(?:must|should|do|does|is|are)?\\s*(?:not|never)\\s+(?:be\\s+)?(?:used|required|needed|enabled|applied)|avoid|disable)\\b";
 const SYNTAX_HIGHLIGHTING_DIRECT_NEGATED_BEFORE = new RegExp(
-  "\\b(?:do not|don't|dont|must not|should not|never)\\s+(?:use|include|format|write|return|provide|apply|enable)\\s+(?:\\w+\\s+){0,3}" +
+  "\\b(?:do not|don't|dont|must not|should not|never)\\s+(?:\\w+\\s+){0,3}(?:use|include|format|write|return|provide|apply|enable)\\s+(?:\\w+\\s+){0,3}" +
     SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN,
 );
 const SYNTAX_HIGHLIGHTING_SHORT_NEGATED_BEFORE = new RegExp(
@@ -937,7 +937,7 @@ function syntaxHighlightingRubricMatches(actual: string, target: string): boolea
     mentionsSyntaxHighlightingRequirement(actual) &&
     !negatesSyntaxHighlighting(actual) &&
     (extraTargetDetails.length === 0 ||
-      containsAnswer(actual, extraTargetDetails) === 1)
+      rubricPhraseContains(actual, extraTargetDetails))
   );
 }
 
@@ -967,6 +967,14 @@ function syntaxHighlightingExtraTargetDetails(target: string): string {
     .replace(/\b(?:and|with|the|a|an)\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function rubricPhraseContains(actual: string, expected: string): boolean {
+  const normalizedExpected = normalizeRubricPhrase(expected);
+  if (normalizedExpected.length === 0) {
+    return true;
+  }
+  return normalizeRubricPhrase(actual).includes(normalizedExpected);
 }
 
 function normalizeRubricPhrase(value: string): string {

@@ -128,6 +128,19 @@ test("BEAM rubric coverage checks negation before exact syntax containment", asy
   );
 });
 
+test("BEAM rubric coverage catches syntax negation with intervening words", async () => {
+  const result = await runBeamWithInstructionAnswer(
+    "Do not ever use code blocks with syntax highlighting.",
+  );
+
+  assert.equal(
+    result.results.tasks.find((task) =>
+      task.taskId.includes("instruction_following"),
+    )?.scores.rubric_coverage,
+    0,
+  );
+});
+
 test("BEAM rubric coverage does not reward post-mention negation", async () => {
   const result = await runBeamWithInstructionAnswer(
     "Syntax highlighting is not required for implementation help.",
@@ -272,6 +285,74 @@ test("BEAM rubric coverage requires extra syntax target details", async () => {
   });
 
   assert.equal(result.results.tasks[0]?.scores.rubric_coverage, 0);
+});
+
+test("BEAM rubric coverage matches hyphenated extra syntax target details", async () => {
+  const datasetDir = await mkdtemp(path.join(tmpdir(), "remnic-beam-hyphen-"));
+  await writeFile(
+    path.join(datasetDir, "100k.json"),
+    JSON.stringify([
+      {
+        conversation_id: "hyphen-target",
+        chat: [
+          [
+            {
+              role: "user",
+              content:
+                "Please remember implementation help should use syntax-highlighted code blocks with well-formatted output.",
+            },
+          ],
+        ],
+        probing_questions: {
+          instruction_following: [
+            {
+              question: "Could you show me how to implement a login feature?",
+              rubric: [
+                "LLM response should contain: code blocks with syntax highlighting and well-formatted output",
+              ],
+            },
+          ],
+        },
+      },
+    ]),
+  );
+
+  const result = await runBeamBenchmark({
+    benchmark: beamDefinition,
+    mode: "quick",
+    datasetDir,
+    system: {
+      async reset() {},
+      async store() {},
+      async recall() {
+        return "Implementation help should use syntax-highlighted code blocks with well-formatted output.";
+      },
+      async search() {
+        return [{ id: "hit", text: "hit" }];
+      },
+      async destroy() {},
+      async getStats() {
+        return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: 0 };
+      },
+      responder: {
+        async respond() {
+          return {
+            text: "Always use code blocks with syntax highlighting and well-formatted output.",
+            tokens: { input: 1, output: 1 },
+            latencyMs: 1,
+            model: "beam-test-responder",
+          };
+        },
+      },
+      judge: {
+        async score() {
+          return 0;
+        },
+      },
+    },
+  });
+
+  assert.equal(result.results.tasks[0]?.scores.rubric_coverage, 1);
 });
 
 async function runBeamWithInstructionAnswer(instructionAnswer: string) {

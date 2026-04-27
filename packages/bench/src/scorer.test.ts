@@ -65,3 +65,9 @@ test("containsAnswer preserves semantic punctuation", () => {
   assert.equal(containsAnswer("I use the internet daily", ".NET"), 0);
   assert.equal(containsAnswer("I use .NET daily", ".NET"), 1);
 });
+
+test("containsAnswer does not match short labels inside unrelated words", () => {
+  assert.equal(containsAnswer("March 29", "A."), 0);
+  assert.equal(containsAnswer("The answer is A.", "A."), 1);
+  assert.equal(containsAnswer("Option B is selected.", "B."), 1);
+});

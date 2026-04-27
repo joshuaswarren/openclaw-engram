@@ -97,9 +97,14 @@ export function containsAnswer(
   const normalizedExpected = normalizeTextForContainment(expected);
   if (normalizedExpected.length === 0) return 0;
 
-  return normalizeTextForContainment(predicted).includes(normalizedExpected)
-    ? 1
-    : 0;
+  const normalizedPredicted = normalizeTextForContainment(predicted);
+  if (isShortContainmentLabel(normalizedExpected)) {
+    return containsShortContainmentLabel(normalizedPredicted, normalizedExpected)
+      ? 1
+      : 0;
+  }
+
+  return normalizedPredicted.includes(normalizedExpected) ? 1 : 0;
 }
 
 export async function llmJudgeScore(
@@ -259,6 +264,23 @@ function normalizeText(value: string | number | unknown): string {
 
 function normalizeTextForContainment(value: string | number | unknown): string {
   return trimTrailingSentencePunctuation(normalizeText(value).replace(/\s+/g, " "));
+}
+
+function isShortContainmentLabel(value: string): boolean {
+  return value.length === 1 && isAsciiAlphaNumeric(value);
+}
+
+function containsShortContainmentLabel(value: string, label: string): boolean {
+  return value
+    .split(/[^a-z0-9]+/)
+    .some((token) => token === label);
+}
+
+function isAsciiAlphaNumeric(value: string): boolean {
+  return (
+    (value >= "a" && value <= "z") ||
+    (value >= "0" && value <= "9")
+  );
 }
 
 function trimTrailingSentencePunctuation(value: string): string {
