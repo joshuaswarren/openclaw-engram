@@ -389,6 +389,39 @@ test("engram.dreams_status rejects invalid windowHours without calling service",
   assert.equal(calls, 1);
 });
 
+test("engram.dreams_status rejects non-string namespace without calling service", async () => {
+  let calls = 0;
+  const service = {
+    ...createFakeService(),
+    dreamsStatus: async () => {
+      calls += 1;
+      return {
+        windowStart: "2026-04-01T00:00:00.000Z",
+        windowEnd: "2026-04-02T00:00:00.000Z",
+        phases: {
+          lightSleep: { phase: "lightSleep", runCount: 0, totalDurationMs: 0, totalItemsProcessed: 0, lastRunAt: null, lastDurationMs: null },
+          rem: { phase: "rem", runCount: 0, totalDurationMs: 0, totalItemsProcessed: 0, lastRunAt: null, lastDurationMs: null },
+          deepSleep: { phase: "deepSleep", runCount: 0, totalDurationMs: 0, totalItemsProcessed: 0, lastRunAt: null, lastDurationMs: null },
+        },
+      };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(service);
+
+  const invalid = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: {
+      name: "engram.dreams_status",
+      arguments: { windowHours: 24, namespace: 123 },
+    },
+  });
+
+  assert.match(toolCallErrorMessage(invalid), /namespace must be a string/);
+  assert.equal(calls, 0);
+});
+
 test("engram.dreams_run rejects non-boolean dryRun without calling service", async () => {
   let calls = 0;
   const service = {
@@ -416,6 +449,36 @@ test("engram.dreams_run rejects non-boolean dryRun without calling service", asy
   });
 
   assert.match(toolCallErrorMessage(invalid), /dryRun must be a boolean/);
+  assert.equal(calls, 0);
+});
+
+test("engram.dreams_run rejects non-string namespace without calling service", async () => {
+  let calls = 0;
+  const service = {
+    ...createFakeService(),
+    dreamsRun: async () => {
+      calls += 1;
+      return {
+        phase: "deepSleep",
+        dryRun: false,
+        durationMs: 0,
+        itemsProcessed: 0,
+      };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(service);
+
+  const invalid = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: {
+      name: "engram.dreams_run",
+      arguments: { phase: "deepSleep", namespace: 123 },
+    },
+  });
+
+  assert.match(toolCallErrorMessage(invalid), /namespace must be a string/);
   assert.equal(calls, 0);
 });
 

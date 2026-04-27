@@ -2222,9 +2222,18 @@ export class EngramMcpServer {
             `engram.dreams_status: windowHours must be a positive integer (e.g. 24). Got: ${String(args.windowHours)}`,
           );
         }
+        if (
+          "namespace" in args &&
+          args.namespace !== undefined &&
+          typeof args.namespace !== "string"
+        ) {
+          throw new Error("engram.dreams_status: namespace must be a string when provided");
+        }
+        const namespace =
+          typeof args.namespace === "string" ? args.namespace : undefined;
         return this.service.dreamsStatus({
           windowHours,
-          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          namespace,
           principal: effectivePrincipal,
         });
       }
@@ -2244,11 +2253,20 @@ export class EngramMcpServer {
         ) {
           throw new Error("engram.dreams_run: dryRun must be a boolean when provided");
         }
+        if (
+          "namespace" in args &&
+          args.namespace !== undefined &&
+          typeof args.namespace !== "string"
+        ) {
+          throw new Error("engram.dreams_run: namespace must be a string when provided");
+        }
+        const namespace =
+          typeof args.namespace === "string" ? args.namespace : undefined;
         const dryRun = args.dryRun === true;
         return this.service.dreamsRun({
           phase: phase as import("./types.js").DreamsPhase,
           dryRun,
-          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          namespace,
           authenticatedPrincipal: effectivePrincipal,
         });
       }
