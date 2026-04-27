@@ -91,8 +91,10 @@ phase. It reads recent `interactions.log.md` entries and derives structured
 - `sourceSessionId` — (optional) originating session.
 - `note` — (optional) free-form reasoner annotation.
 
-The reasoner is **disabled by default** and must be opted in via
-`peer.profileReasoner.enabled: true` in the plugin config.
+The reasoner is **disabled by default** and must be opted in via the flat
+config key `peerProfileReasonerEnabled: true` in the plugin config (not the
+nested form `peer.profileReasoner.enabled` which is not read by the config
+parser).
 
 ## Recall integration
 

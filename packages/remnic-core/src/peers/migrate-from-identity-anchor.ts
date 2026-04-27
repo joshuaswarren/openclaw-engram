@@ -317,12 +317,18 @@ export async function migrateFromIdentityAnchor(
     const identityFilePath = path.join(
       memoryDir, PEERS_DIR_NAME, "self", "identity.md",
     );
+    // Track whether we created a zero-byte placeholder so we can clean it
+    // up on writePeer failure (Codex P2 PR #758: a crash between O_EXCL and
+    // writePeer leaves a zero-byte file that readPeer treats as malformed,
+    // blocking the idempotent recovery path on any subsequent run).
+    let placeholderCreated = false;
     let exclusiveFh: import("node:fs/promises").FileHandle | null = null;
     try {
       exclusiveFh = await fs.open(
         identityFilePath,
         fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
       );
+      placeholderCreated = true;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "EEXIST") {
@@ -349,7 +355,21 @@ export async function migrateFromIdentityAnchor(
     // writePeer calls mkdirPeerDirAtomic (symlink+inode-safe) then writes
     // the file. If it races with another writePeer on the same peer id, the
     // last write wins — that is the documented contract for writePeer.
-    await writePeer(memoryDir, peer);
+    // On failure, clean up any zero-byte placeholder we created so the next
+    // run can retry cleanly rather than hitting a malformed-frontmatter error.
+    try {
+      await writePeer(memoryDir, peer);
+    } catch (writeErr) {
+      if (placeholderCreated) {
+        try {
+          await fs.unlink(identityFilePath);
+        } catch {
+          // Best-effort cleanup — swallow unlink errors so the original
+          // writePeer error propagates to the caller unchanged.
+        }
+      }
+      throw writeErr;
+    }
   }
 
   return {
