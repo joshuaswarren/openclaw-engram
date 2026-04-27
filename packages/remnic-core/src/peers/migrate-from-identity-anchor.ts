@@ -53,7 +53,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import { readPeer, writePeer, type Peer } from "./storage.js";
+import { readPeer, writePeer } from "./storage.js";
+import type { Peer } from "./types.js";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Public types
