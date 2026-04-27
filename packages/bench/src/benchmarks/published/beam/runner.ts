@@ -48,7 +48,7 @@ const SPLIT_ORDER: Record<string, number> = {
 const SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN =
   "(?:syntax highlight(?:ed|ing) code blocks?|code blocks? with syntax highlighting)";
 const SYNTAX_HIGHLIGHTING_WEAKENING_AFTER_PATTERN =
-  "\\b(?:(?:is|are|be|being)?\\s*(?:not required|not needed|optional|unnecessary)|(?:isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent)\\s+(?:required|needed|used|enabled|applied)|(?:is|are|be|being)?\\s*disabled|(?:must|should|do|does|is|are)?\\s*(?:not|never)\\s+(?:be\\s+)?(?:used|required|needed|enabled|applied)|disable)\\b";
+  "\\b(?:(?:is|are|be|being)?\\s*(?:not required|not needed|optional|unnecessary)|(?:isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent)\\s+(?:required|needed|used|enabled|applied)|(?:is|are|be|being)?\\s*disabled|(?:must|should|do|does|is|are)?\\s*(?:not|never)\\s+(?:be\\s+)?(?:used|required|needed|enabled|applied))\\b";
 const SYNTAX_HIGHLIGHTING_DIRECT_NEGATED_BEFORE = new RegExp(
   "\\b(?:do not|don't|dont|must not|should not|never)\\s+(?:\\w+\\s+){0,3}(?:use|include|format|write|return|provide|apply|enable)\\s+(?:\\w+\\s+){0,3}" +
     SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN,
@@ -988,11 +988,26 @@ function extractPunctuatedDetailTokens(target: string): string[] {
 }
 
 function rubricPhraseContains(actual: string, expected: string): boolean {
-  const normalizedExpected = normalizeRubricPhrase(expected);
-  if (normalizedExpected.length === 0) {
+  const actualTokens = tokenizeRubricPhrase(actual);
+  const expectedTokens = tokenizeRubricPhrase(expected);
+  if (expectedTokens.length === 0) {
     return true;
   }
-  return normalizeRubricPhrase(actual).includes(normalizedExpected);
+  if (expectedTokens.length > actualTokens.length) {
+    return false;
+  }
+
+  return actualTokens.some((_, index) =>
+    expectedTokens.every(
+      (token, offset) => actualTokens[index + offset] === token,
+    ),
+  );
+}
+
+function tokenizeRubricPhrase(value: string): string[] {
+  return normalizeRubricPhrase(value)
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
 }
 
 function normalizeRubricPhrase(value: string): string {

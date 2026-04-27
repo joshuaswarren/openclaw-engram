@@ -232,6 +232,19 @@ test("BEAM rubric coverage allows compliant syntax answers that avoid plain text
   );
 });
 
+test("BEAM rubric coverage allows compliant syntax answers that disable plain text", async () => {
+  const result = await runBeamWithInstructionAnswer(
+    "Always use code blocks with syntax highlighting and disable plain-text output.",
+  );
+
+  assert.equal(
+    result.results.tasks.find((task) =>
+      task.taskId.includes("instruction_following"),
+    )?.scores.rubric_coverage,
+    1,
+  );
+});
+
 test("BEAM rubric coverage allows pre-mention contrastive negation", async () => {
   const result = await runBeamWithInstructionAnswer(
     "Do not use plain text; use code blocks with syntax highlighting.",
@@ -490,6 +503,87 @@ test("BEAM rubric coverage requires punctuated extra syntax target details", asy
     1,
   );
 });
+
+test("BEAM rubric coverage uses token boundaries for extra syntax details", async () => {
+  const missingDetailResult = await runBeamWithCustomRubricAnswer(
+    "LLM response should contain: code blocks with syntax highlighting and C examples",
+    "Always use code blocks with syntax highlighting and basic examples.",
+  );
+  const matchingDetailResult = await runBeamWithCustomRubricAnswer(
+    "LLM response should contain: code blocks with syntax highlighting and C examples",
+    "Always use code blocks with syntax highlighting and C examples.",
+  );
+
+  assert.equal(missingDetailResult.results.tasks[0]?.scores.rubric_coverage, 0);
+  assert.equal(matchingDetailResult.results.tasks[0]?.scores.rubric_coverage, 1);
+});
+
+async function runBeamWithCustomRubricAnswer(
+  rubricTarget: string,
+  instructionAnswer: string,
+) {
+  const datasetDir = await mkdtemp(path.join(tmpdir(), "remnic-beam-custom-"));
+  await writeFile(
+    path.join(datasetDir, "100k.json"),
+    JSON.stringify([
+      {
+        conversation_id: "custom-target",
+        chat: [
+          [
+            {
+              role: "user",
+              content:
+                "Please remember implementation help should use syntax-highlighted code blocks.",
+            },
+          ],
+        ],
+        probing_questions: {
+          instruction_following: [
+            {
+              question: "Could you show me how to implement a login feature?",
+              rubric: [rubricTarget],
+            },
+          ],
+        },
+      },
+    ]),
+  );
+
+  return runBeamBenchmark({
+    benchmark: beamDefinition,
+    mode: "quick",
+    datasetDir,
+    system: {
+      async reset() {},
+      async store() {},
+      async recall() {
+        return "Implementation help should use syntax-highlighted code blocks.";
+      },
+      async search() {
+        return [{ id: "hit", text: "hit" }];
+      },
+      async destroy() {},
+      async getStats() {
+        return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: 0 };
+      },
+      responder: {
+        async respond() {
+          return {
+            text: instructionAnswer,
+            tokens: { input: 1, output: 1 },
+            latencyMs: 1,
+            model: "beam-test-responder",
+          };
+        },
+      },
+      judge: {
+        async score() {
+          return 0;
+        },
+      },
+    },
+  });
+}
 
 async function runBeamWithInstructionAnswer(instructionAnswer: string) {
   return runBeamBenchmark({
