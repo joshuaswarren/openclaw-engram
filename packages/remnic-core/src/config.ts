@@ -1591,6 +1591,29 @@ export function parseConfig(raw: unknown): PluginConfig {
           .map((v) => v.trim())
           .filter((v) => v.length > 0)
       : ["preference", "fact", "decision"],
+    // issue #687 PR 3/4: reinforcement recall boost config.
+    reinforcementRecallBoostEnabled:
+      coerceBool(cfg.reinforcementRecallBoostEnabled) ?? false,
+    reinforcementRecallBoostWeight: (() => {
+      if (cfg.reinforcementRecallBoostWeight === undefined) return 0.05;
+      const n = coerceNumber(cfg.reinforcementRecallBoostWeight);
+      if (n === undefined || !Number.isFinite(n) || n < 0 || n > 1) {
+        throw new Error(
+          `reinforcementRecallBoostWeight must be a number in [0, 1] (got ${JSON.stringify(cfg.reinforcementRecallBoostWeight)}).`,
+        );
+      }
+      return n;
+    })(),
+    reinforcementRecallBoostMax: (() => {
+      if (cfg.reinforcementRecallBoostMax === undefined) return 0.3;
+      const n = coerceNumber(cfg.reinforcementRecallBoostMax);
+      if (n === undefined || !Number.isFinite(n) || n < 0 || n > 1) {
+        throw new Error(
+          `reinforcementRecallBoostMax must be a number in [0, 1] (got ${JSON.stringify(cfg.reinforcementRecallBoostMax)}).`,
+        );
+      }
+      return n;
+    })(),
     // Async peer profile reasoner (issue #679 PR 2/5). Defaults to
     // `false` (opt-in) per Gotchas #30/#48 — least-privileged default.
     // `coerceBool` handles "true"/"1"/"yes"/"on" CLI strings (Gotcha
@@ -1626,6 +1649,19 @@ export function parseConfig(raw: unknown): PluginConfig {
       cfg.peerProfileReasonerMaxFieldsPerRun,
       8,
       "peerProfileReasonerMaxFieldsPerRun",
+    ),
+    // Peer profile recall injection (issue #679 PR 3/5). Default-off
+    // per Gotcha #30/#48 (least-privileged default, new feature gate).
+    // `coerceBool` handles CLI string forms "true"/"1"/"yes"/"on"
+    // (Gotcha #36). `coerceNonNegativeInt` handles string CLI values
+    // (Gotcha #28) and documents 0 as the disable value (Gotcha #45 —
+    // schema minimum must also be 0 so they stay consistent).
+    peerProfileRecallEnabled:
+      coerceBool(cfg.peerProfileRecallEnabled) ?? false,
+    peerProfileRecallMaxFields: coerceNonNegativeInt(
+      cfg.peerProfileRecallMaxFields,
+      5,
+      "peerProfileRecallMaxFields",
     ),
     creationMemoryEnabled: cfg.creationMemoryEnabled === true,
     memoryUtilityLearningEnabled: cfg.memoryUtilityLearningEnabled === true,
@@ -2711,6 +2747,65 @@ export function parseConfig(raw: unknown): PluginConfig {
         gmailPollIntervalMs = gmailPollCoerced;
       }
 
+      // github (#683 PR 5/6)
+      if (
+        rawConnectors.github !== undefined &&
+        (rawConnectors.github === null ||
+          typeof rawConnectors.github !== "object" ||
+          Array.isArray(rawConnectors.github))
+      ) {
+        throw new Error(
+          `connectors.github must be an object (got ${JSON.stringify(rawConnectors.github)}).`,
+        );
+      }
+      const rawGitHub =
+        rawConnectors.github &&
+        typeof rawConnectors.github === "object" &&
+        !Array.isArray(rawConnectors.github)
+          ? (rawConnectors.github as Record<string, unknown>)
+          : {};
+      const githubEnabled = coerceBool(rawGitHub.enabled) === true;
+      const githubToken =
+        typeof rawGitHub.token === "string" ? rawGitHub.token : "";
+      const githubUserLogin =
+        typeof rawGitHub.userLogin === "string" ? rawGitHub.userLogin : "";
+      const githubPollCoerced = coerceNumber(rawGitHub.pollIntervalMs);
+      let githubPollIntervalMs = 300_000;
+      if (githubPollCoerced !== undefined) {
+        if (
+          !Number.isFinite(githubPollCoerced) ||
+          !Number.isInteger(githubPollCoerced) ||
+          githubPollCoerced < 1_000 ||
+          githubPollCoerced > 86_400_000
+        ) {
+          throw new Error(
+            `connectors.github.pollIntervalMs must be an integer in [1000, 86400000] ms (got ${JSON.stringify(rawGitHub.pollIntervalMs)})`,
+          );
+        }
+        githubPollIntervalMs = githubPollCoerced;
+      }
+      let githubRepos: string[] = [];
+      if (rawGitHub.repos !== undefined) {
+        if (!Array.isArray(rawGitHub.repos)) {
+          throw new Error(
+            `connectors.github.repos must be an array of strings (got ${typeof rawGitHub.repos})`,
+          );
+        }
+        const seen = new Set<string>();
+        for (const value of rawGitHub.repos) {
+          if (typeof value !== "string") {
+            throw new Error(
+              `connectors.github.repos entries must be strings; found ${typeof value}`,
+            );
+          }
+          const trimmed = value.trim();
+          if (trimmed.length === 0) continue;
+          if (seen.has(trimmed)) continue;
+          seen.add(trimmed);
+          githubRepos.push(trimmed);
+        }
+      }
+      const githubIncludeDiscussions = coerceBool(rawGitHub.includeDiscussions) === true;
       return {
         googleDrive: {
           enabled: driveEnabled,
@@ -2734,6 +2829,14 @@ export function parseConfig(raw: unknown): PluginConfig {
           userId: gmailUserId,
           query: gmailQuery,
           pollIntervalMs: gmailPollIntervalMs,
+        },
+        github: {
+          enabled: githubEnabled,
+          token: githubToken,
+          userLogin: githubUserLogin,
+          repos: githubRepos,
+          pollIntervalMs: githubPollIntervalMs,
+          includeDiscussions: githubIncludeDiscussions,
         },
       };
     })(),

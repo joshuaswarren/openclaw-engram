@@ -862,6 +862,12 @@ export interface PluginConfig {
    * the procedural mining pipeline.
    */
   patternReinforcementCategories: string[];
+  /** issue #687 PR 3/4: opt-in recall score boost for reinforced memories. Default false. */
+  reinforcementRecallBoostEnabled: boolean;
+  /** Score bonus per unit of reinforcement_count. Range [0, 1]. Default 0.05. */
+  reinforcementRecallBoostWeight: number;
+  /** Maximum additive reinforcement boost per result. Range [0, 1]. Default 0.3. */
+  reinforcementRecallBoostMax: number;
   /**
    * Async peer profile reasoner — issue #679 PR 2/5.
    *
@@ -888,6 +894,20 @@ export interface PluginConfig {
    * apply across all peers in a single run. Default 8.
    */
   peerProfileReasonerMaxFieldsPerRun: number;
+  /**
+   * When true, inject the active peer's profile fields into the recall
+   * context as a "## Peer Profile" section. Default false (opt-in,
+   * Gotcha #30/#48 — least-privileged default). Requires the session's
+   * peer ID to be registered via `setPeerIdForSession` before recall.
+   */
+  peerProfileRecallEnabled: boolean;
+  /**
+   * Maximum number of peer profile fields to inject per recall. Only
+   * the most-recently-updated N fields are included to keep the context
+   * budget predictable. Default 5. Setting to 0 disables field
+   * injection even when `peerProfileRecallEnabled` is true.
+   */
+  peerProfileRecallMaxFields: number;
   // Creation-memory foundation
   creationMemoryEnabled: boolean;
   memoryUtilityLearningEnabled: boolean;
@@ -1621,6 +1641,8 @@ export interface LiveConnectorsConfig {
   notion: NotionLiveConnectorConfig;
   /** Gmail live connector (issue #683 PR 4/6). */
   gmail: GmailLiveConnectorConfig;
+  /** GitHub live connector (issue #683 PR 5/6). */
+  github: GitHubLiveConnectorConfig;
 }
 
 /**
@@ -1698,6 +1720,32 @@ export interface GmailLiveConnectorConfig {
   query: string;
   /** Poll interval in ms. Default 300000 (5 min); min 1000; max 86400000 (24h). */
   pollIntervalMs: number;
+}
+
+/**
+ * Operator-facing config for the GitHub live connector (issue #683 PR 5/6).
+ * The connector module defines a separate validated `GitHubConnectorConfig`
+ * shape (frozen, post-validation). This interface is the pre-validation shape
+ * that `parseConfig` round-trips through.
+ *
+ * `token` is stored as a string here so operators can populate it from a
+ * secret store (e.g. an env-substituted plist or systemd EnvironmentFile).
+ * It MUST NEVER be committed to source. The repo-wide privacy policy in
+ * CLAUDE.md applies.
+ */
+export interface GitHubLiveConnectorConfig {
+  /** Master gate. Default false — operators must opt in explicitly. */
+  enabled: boolean;
+  /** GitHub personal access token. Populate from a secret store; never commit. */
+  token: string;
+  /** GitHub login of the user whose comments will be imported. Required. */
+  userLogin: string;
+  /** Repos to poll in "owner/repo" format. Empty = connector is a no-op. */
+  repos: string[];
+  /** Poll interval in ms. Default 300000 (5 min); min 1000; max 86400000 (24h). */
+  pollIntervalMs: number;
+  /** Whether to fetch Discussion comments in addition to issue/PR comments. Default false. */
+  includeDiscussions: boolean;
 }
 
 export interface BootstrapOptions {
@@ -2356,6 +2404,8 @@ export interface QmdSearchExplain {
   rrf?: number;
   rerankScore?: number;
   blendedScore?: number;
+  /** Additive boost applied from `reinforcement_count` frontmatter (issue #687 PR 3/4). */
+  reinforcementBoost?: number;
 }
 
 export interface MetaState {

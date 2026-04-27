@@ -174,14 +174,17 @@ interface RecallXrayScoreDecomposition {
   importance?: number;
   mmrPenalty?: number;
   tierPrior?: number;
+  reinforcementBoost?: number;  // additive boost from reinforcement_count (issue #687 PR 3/4)
   final: number;             // the only guaranteed field
 }
 ```
 
 Different tiers populate different terms. `hybrid` typically reports
 `vector` + `bm25` + `mmrPenalty`; `direct-answer` reports `importance`
-+ `tierPrior`. The renderer formats each known field with four decimal
-places and keeps the line stable across missing fields.
++ `tierPrior`. When `reinforcementRecallBoostEnabled` is `true`, memories
+with `reinforcement_count` frontmatter also carry `reinforcementBoost`.
+The renderer formats each known field with four decimal places and keeps
+the line stable across missing fields.
 
 ### `RecallFilterTrace` (lines 104-110)
 

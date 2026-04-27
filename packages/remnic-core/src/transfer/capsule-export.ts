@@ -18,6 +18,7 @@ import {
   type ExportManifestV2,
   type ExportMemoryRecordV1,
 } from "./types.js";
+import { encryptCapsuleFile } from "./capsule-crypto.js";
 
 /**
  * Default subdirectory excludes applied to every capsule export. These match
@@ -28,6 +29,14 @@ import {
 const DEFAULT_EXCLUDE_DIRS: ReadonlySet<string> = new Set([
   "node_modules",
   ".git",
+  // Never export the secure-store directory: it contains the encryption
+  // header (KDF params + verifier) which is security-sensitive and
+  // machine-specific. The passphrase is not stored here, but including
+  // the header in a capsule would let an attacker brute-force the
+  // passphrase offline if the capsule is intercepted.
+  ".secure-store",
+  // Exclude .capsules to avoid recursive self-inclusion.
+  ".capsules",
 ]);
 
 const TRANSCRIPTS_DIR = "transcripts" as const;
@@ -74,6 +83,15 @@ const PEERS_DIR = "peers" as const;
  *
  * `now` — optional clock override (ms epoch) used for `manifest.createdAt`.
  * Tests pass a fixed value for deterministic output.
+ *
+ * `encrypt` — when `true`, encrypt the output archive using the secure-store
+ * master key for `memoryDir`. The keyring must be unlocked before calling
+ * (`remnic secure-store unlock`). The plaintext `.capsule.json.gz` is written
+ * first, then encrypted to `<name>.capsule.json.gz.enc`; the plaintext is
+ * removed after successful encryption. Requires `memoryDir` to be provided.
+ *
+ * `memoryDir` — required when `encrypt` is `true`. The memory directory whose
+ * secure-store keyring holds the master key.
  */
 export interface ExportCapsuleOptions {
   name: string;
@@ -85,12 +103,35 @@ export interface ExportCapsuleOptions {
   pluginVersion?: string;
   capsule?: Partial<Omit<CapsuleBlock, "id">>;
   now?: number;
+  /**
+   * When `true`, encrypt the output archive. Requires the secure-store to be
+   * unlocked and `memoryDir` to be set. The plaintext `.capsule.json.gz` is
+   * replaced by `<name>.capsule.json.gz.enc` on success.
+   */
+  encrypt?: boolean;
+  /**
+   * Memory directory whose secure-store keyring holds the master key. Required
+   * when `encrypt` is `true`; ignored otherwise.
+   */
+  memoryDir?: string;
+  /**
+   * When `true`, include the `transcripts/` directory in the export even
+   * though it is excluded by default. Using this flag avoids hard-coding an
+   * explicit `includeKinds` allow-list that would inadvertently drop other
+   * valid memory directories (`peers/`, `forks/`, etc.). (Cursor / #747)
+   *
+   * Ignored when `includeKinds` is provided and already contains
+   * `"transcripts"`.
+   */
+  includeTranscripts?: boolean;
 }
 
 export interface ExportCapsuleResult {
   archivePath: string;
   manifestPath: string;
   manifest: ExportManifestV2;
+  /** When the export was encrypted, the `.enc` path. `null` when unencrypted. */
+  encryptedArchivePath: string | null;
 }
 
 /**
@@ -123,6 +164,11 @@ export async function exportCapsule(
   const sinceMs = parseSince(opts.since);
   const includeKinds = normalizeIncludeKinds(opts.includeKinds);
   const peerFilter = normalizePeerIds(opts.peerIds);
+  // `includeTranscripts: true` overrides the default transcripts exclusion
+  // without requiring an explicit `includeKinds` list — so callers that want
+  // all memory dirs + transcripts don't need to hard-code a list that would
+  // inadvertently drop new dirs like `peers/` or `forks/`. (Cursor / #747)
+  const transcriptsOverride = opts.includeTranscripts === true;
 
   const rootAbs = path.resolve(opts.root);
   await assertIsDirectory(rootAbs);
@@ -154,7 +200,7 @@ export async function exportCapsule(
 
   for (const abs of filesAbs) {
     const relPosix = toPosixRelPath(abs, rootAbs);
-    if (!shouldInclude(relPosix, includeKinds, peerFilter, outDirRelPosix)) continue;
+    if (!shouldInclude(relPosix, includeKinds, peerFilter, outDirRelPosix, transcriptsOverride)) continue;
 
     if (sinceMs !== null) {
       const st = await stat(abs);
@@ -171,7 +217,8 @@ export async function exportCapsule(
   manifestFiles.sort((a, b) => a.path.localeCompare(b.path));
 
   const capsule = buildCapsuleBlock(opts.name, opts.capsule);
-  const includesTranscripts = (includeKinds ?? new Set<string>()).has(TRANSCRIPTS_DIR);
+  const includesTranscripts =
+    transcriptsOverride || (includeKinds ?? new Set<string>()).has(TRANSCRIPTS_DIR);
 
   const createdAtMs = opts.now ?? Date.now();
   const manifest = ExportManifestV2Schema.parse({
@@ -203,7 +250,28 @@ export async function exportCapsule(
   const gz = gzipSync(Buffer.from(json, "utf-8"));
   await writeFile(archivePath, gz);
 
-  return { archivePath, manifestPath, manifest };
+  // Optional encryption (PR 4/4). When opts.encrypt is true, wrap the
+  // plaintext gzip in a REMNIC-ENC sealed envelope and remove the plaintext.
+  // Per gotcha #54: write the encrypted file before removing the plaintext so
+  // a crash mid-encrypt does not destroy the only copy.
+  if (opts.encrypt === true) {
+    if (!opts.memoryDir) {
+      throw new Error(
+        "exportCapsule: 'memoryDir' is required when 'encrypt' is true so the " +
+          "secure-store key can be retrieved.",
+      );
+    }
+    const { encPath } = await encryptCapsuleFile({
+      sourceGzPath: archivePath,
+      memoryDir: opts.memoryDir,
+    });
+    // Remove the plaintext only after the encrypted file was written successfully.
+    const { unlink } = await import("node:fs/promises");
+    await unlink(archivePath);
+    return { archivePath: encPath, manifestPath, manifest, encryptedArchivePath: encPath };
+  }
+
+  return { archivePath, manifestPath, manifest, encryptedArchivePath: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -391,6 +459,7 @@ function shouldInclude(
   includeKinds: ReadonlySet<string> | null,
   peerFilter: ReadonlySet<string> | null,
   outDirRelPosix: string | null,
+  transcriptsOverride = false,
 ): boolean {
   const parts = relPosix.split("/");
   if (parts.some((p) => DEFAULT_EXCLUDE_DIRS.has(p))) return false;
@@ -408,8 +477,14 @@ function shouldInclude(
   const top = parts[0];
 
   // Transcripts are opt-in: excluded unless caller explicitly listed them
-  // in includeKinds. This matches existing exporter behavior.
-  if (top === TRANSCRIPTS_DIR && (includeKinds === null || !includeKinds.has(TRANSCRIPTS_DIR))) {
+  // in includeKinds OR passed `includeTranscripts: true`. The override flag
+  // avoids the footgun of having the CLI build a hard-coded kinds list that
+  // inadvertently drops valid memory dirs like `peers/` or `forks/`. (Cursor / #747)
+  if (
+    top === TRANSCRIPTS_DIR &&
+    !transcriptsOverride &&
+    (includeKinds === null || !includeKinds.has(TRANSCRIPTS_DIR))
+  ) {
     return false;
   }
 
@@ -455,11 +530,28 @@ function buildCapsuleBlock(
   name: string,
   override: Partial<Omit<CapsuleBlock, "id">> | undefined,
 ): CapsuleBlock {
+  // `parent` (structured, PR 4/6) and `parentCapsule` (legacy string) carry
+  // overlapping information. The schema documents the invariant: when
+  // `parent` is non-null, `parentCapsule` SHOULD equal `parent.capsuleId`.
+  // We derive the legacy field from the structured field whenever the
+  // caller supplies `parent` but omits `parentCapsule`, so a single-source
+  // override path produces a manifest that satisfies the documented
+  // invariant for legacy V2 readers (Cursor medium #751 round 3).
+  // An explicit `parentCapsule` override still wins — including an explicit
+  // `null` — so callers can intentionally diverge from the structured field
+  // for migration scenarios.
+  const parent = override?.parent ?? null;
+  const parentCapsule =
+    override && Object.prototype.hasOwnProperty.call(override, "parentCapsule")
+      ? (override.parentCapsule ?? null)
+      : (parent?.capsuleId ?? null);
+
   const merged: CapsuleBlock = {
     id: name,
     version: override?.version ?? "0.1.0",
     schemaVersion: override?.schemaVersion ?? "taxonomy-v1",
-    parentCapsule: override?.parentCapsule ?? null,
+    parentCapsule,
+    parent,
     description: override?.description ?? "",
     retrievalPolicy: override?.retrievalPolicy ?? {
       tierWeights: {},

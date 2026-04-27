@@ -650,7 +650,8 @@ async function seedTrustZoneDemo(dryRun) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Memory Graph — force-directed Verlet simulation (issue #691 PR 3/5)
-// No external dependencies.  ~150 lines.
+// Semantic search highlight + drill-through (issue #691 PR 4/5)
+// No external dependencies.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Stable colour palette keyed by category string. */
@@ -670,6 +671,119 @@ const GRAPH_EDGE_COLORS = { entity: "#0f6b63", time: "#c9a227", causal: "#8b3a22
 /** Per-session category → colour mapping, built lazily. */
 const graphCategoryColors = new Map();
 let graphCategoryColorIndex = 0;
+
+// ─── Highlight state (issue #691 PR 4/5) ────────────────────────────────────
+
+/**
+ * Map of highlighted node IDs → frontmatter memory IDs, populated by search.
+ * Empty map = no active search.  Values are the recall result `id` field, which
+ * is the frontmatter memory ID required by GET /engram/v1/memories/:id.
+ */
+let graphHighlightIds = new Map();
+
+/**
+ * Pulse animation state.
+ * `graphPulsePhase` advances each frame; nodes use it to vary their ring size.
+ */
+let graphPulsePhase = 0;
+
+/**
+ * Return true if `str` ends with `suffix` at a path-segment boundary.
+ * Prevents "ammemory.md" matching against suffix "memory.md".
+ * Accepts an exact match or a match preceded by "/".
+ *
+ * @param {string} str
+ * @param {string} suffix
+ * @returns {boolean}
+ */
+/**
+ * Normalize a file path to forward-slash form so Windows backslash paths
+ * compare correctly against the forward-slash-normalized graph node IDs.
+ * @param {string} p
+ * @returns {string}
+ */
+function normalizeSep(p) {
+  return p.replace(/\\/g, "/");
+}
+
+function pathEndsWith(str, suffix) {
+  if (!str || !suffix) return false;
+  // Normalize separators before comparison so Windows backslash paths
+  // (from recall result.path) match forward-slash graph node IDs.
+  const s = normalizeSep(str);
+  const fx = normalizeSep(suffix);
+  if (s === fx) return true;
+  return s.endsWith("/" + fx);
+}
+
+/**
+ * Pure function — given a snapshot node list and a recall result list, return a
+ * Map from matched node ID → recall result frontmatter ID.
+ *
+ * Recall results have two identifiers:
+ *   - `result.id`   — frontmatter memory ID (e.g. "fact-abc123"); used by the
+ *                     memory-detail endpoint GET /engram/v1/memories/:id.
+ *   - `result.path` — absolute file path (e.g. "/home/user/.remnic/facts/foo.md");
+ *                     path-based matching bridges absolute backend paths to
+ *                     relative graph node IDs.
+ *
+ * Graph snapshot `node.id` values are relative memory paths (e.g. "facts/foo.md").
+ *
+ * Matching rules (applied in order, first match wins per node):
+ *   1. `node.id` === `result.path` (exact absolute path — rare)
+ *   2. `result.path` ends with "/" + `node.id` (absolute path has node's relative tail)
+ *   3. `node.id` ends with "/" + `result.path` (inverse, node has absolute prefix)
+ *   4. `node.id` === `result.id` (frontmatter ID match — only for non-path IDs)
+ *   5. `node.id` ends with "/" + `result.id` (relative path ends with frontmatter ID)
+ *   6. `result.id` ends with "/" + `node.id` (inverse suffix)
+ *
+ * All suffix comparisons use path-segment boundary checks (pathEndsWith) so that
+ * e.g. "ammemory.md" does NOT match a suffix of "memory.md".
+ *
+ * Returns a Map so callers can retrieve the frontmatter ID for the memory-detail
+ * endpoint without a separate lookup.
+ *
+ * @param {Array<{id: string}>} nodes   - nodes from the snapshot
+ * @param {Array<{id: string, path?: string}>} results - recall result objects
+ * @returns {Map<string, string>}  nodeId → frontmatterMemoryId
+ */
+function resolveHighlights(nodes, results) {
+  /** @type {Map<string, string>} */
+  const matched = new Map();
+  if (!Array.isArray(nodes) || !Array.isArray(results) || results.length === 0) {
+    return matched;
+  }
+  for (const node of nodes) {
+    const nid = node.id;
+    if (!nid) continue;
+    // Normalize the node ID once for all comparisons.
+    const nidN = normalizeSep(nid);
+    for (const result of results) {
+      const rid = result.id;
+      const rpath = result.path || "";
+      // Path-based matching (handles the typical production case where graph
+      // node IDs are relative paths and recall results carry absolute or
+      // relative paths).  Both sides are separator-normalized so
+      // Windows backslash paths compare correctly against forward-slash
+      // graph node IDs.  Uses pathEndsWith() to respect path-segment
+      // boundaries.
+      if (rpath) {
+        const rpathN = normalizeSep(rpath);
+        if (nidN === rpathN || pathEndsWith(rpathN, nidN) || pathEndsWith(nidN, rpathN)) {
+          matched.set(nid, rid);
+          break;
+        }
+      }
+      // Frontmatter-ID matching as fallback (e.g. custom deployments where
+      // node IDs are not file paths).
+      if (rid && (nid === rid || pathEndsWith(nid, rid) || pathEndsWith(rid, nid))) {
+        matched.set(nid, rid);
+        break;
+      }
+    }
+  }
+  return matched;
+}
 
 function graphColorForCategory(cat) {
   if (!cat || cat === "unknown") return GRAPH_UNKNOWN_COLOR;
@@ -848,14 +962,35 @@ function drawGraph() {
   }
 
   // Draw nodes.
+  const hasHighlights = graphHighlightIds.size > 0;
+  graphPulsePhase = (graphPulsePhase + 0.06) % (2 * Math.PI);
+  const pulseExtra = Math.sin(graphPulsePhase) * 3.5;
+
   for (const n of graphData.nodes) {
     const r = nodeRadius(n.score);
+    const isHighlighted = hasHighlights && graphHighlightIds.has(n.id);  // Map.has()
+    const isDimmed = hasHighlights && !isHighlighted;
+
+    // Draw highlight ring + pulse halo before the node fill.
+    if (isHighlighted) {
+      const haloR = r + 5 + Math.max(0, pulseExtra);
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, haloR, 0, 2 * Math.PI);
+      ctx.strokeStyle = "#f5c842";
+      ctx.globalAlpha = 0.55 + Math.sin(graphPulsePhase) * 0.2;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
     ctx.beginPath();
     ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
     ctx.fillStyle = graphColorForCategory(n.kind);
+    ctx.globalAlpha = isDimmed ? 0.22 : 1;
     ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.6)";
-    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = isHighlighted ? "#f5c842" : "rgba(255,255,255,0.6)";
+    ctx.lineWidth = isHighlighted ? 2.5 : 1.5;
     ctx.stroke();
   }
 
@@ -932,16 +1067,44 @@ function attachGraphInteractions(canvas) {
   if (graphInteractionsAttached) return;
   graphInteractionsAttached = true;
 
-  // Pan.
+  // Pan + click-to-drill-through.
   let dragging = false;
   let dragStart = { x: 0, y: 0 };
   let viewStart = { tx: 0, ty: 0 };
+  /** Track whether the mousedown moved before mouseup (drag vs click). */
+  let didDrag = false;
+  /**
+   * mousedownOnCanvas: set to true only when the mousedown that began the
+   * gesture originated on this canvas.  Prevents a mouseup from a pan that
+   * started outside the canvas (e.g. drag from a sidebar) from spuriously
+   * opening the node panel.
+   */
+  let mousedownOnCanvas = false;
 
   canvas.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     dragging = true;
+    didDrag = false;
+    mousedownOnCanvas = true;
     dragStart = { x: e.clientX, y: e.clientY };
     viewStart = { tx: graphView.tx, ty: graphView.ty };
+  });
+
+  canvas.addEventListener("mouseup", (e) => {
+    if (e.button !== 0) { dragging = false; return; }
+    // Only open a node panel if this mouseup has a matching mousedown on the
+    // same canvas and no drag movement occurred (click vs drag-pan).
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    if (mousedownOnCanvas && !didDrag) {
+      const node = hitTestNode(cx, cy);
+      if (node) {
+        void openGraphNodePanel(node);
+      }
+    }
+    dragging = false;
+    mousedownOnCanvas = false;
   });
 
   canvas.addEventListener("mousemove", (e) => {
@@ -950,8 +1113,11 @@ function attachGraphInteractions(canvas) {
     const cy = e.clientY - rect.top;
 
     if (dragging) {
-      graphView.tx = viewStart.tx + (e.clientX - dragStart.x);
-      graphView.ty = viewStart.ty + (e.clientY - dragStart.y);
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) didDrag = true;
+      graphView.tx = viewStart.tx + dx;
+      graphView.ty = viewStart.ty + dy;
       drawGraph();
       hideGraphTooltip();
       return;
@@ -978,8 +1144,7 @@ function attachGraphInteractions(canvas) {
     hideGraphTooltip();
   });
 
-  canvas.addEventListener("mouseup", () => { dragging = false; });
-  canvas.addEventListener("mouseleave", () => { dragging = false; hideGraphTooltip(); });
+  canvas.addEventListener("mouseleave", () => { dragging = false; didDrag = false; mousedownOnCanvas = false; hideGraphTooltip(); });
 
   // Zoom via scroll wheel.
   canvas.addEventListener("wheel", (e) => {
@@ -1045,6 +1210,12 @@ async function loadMemoryGraph() {
   const nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
   const edges = Array.isArray(snapshot.edges) ? snapshot.edges : [];
 
+  // Always reset highlights, invalidate in-flight searches, and close panel
+  // at the start of every reload — so stale state never persists.
+  graphSearchToken += 1;
+  graphHighlightIds = new Map();
+  closeGraphNodePanel();
+
   if (nodes.length === 0) {
     graphData = null;
     const ctx = canvas.getContext("2d");
@@ -1081,6 +1252,17 @@ async function loadMemoryGraph() {
     edge._tgtNode = nodeIndex.get(edge.target) ?? null;
   }
 
+  // Pre-bind each node's frontmatter memory ID from snapshot metadata so
+  // drill-through works for every node, not just those matched by a search.
+  // `node.metadata.memoryId` is the field the graph-snapshot endpoint sets
+  // when it can resolve the node back to a stored memory record.
+  // Any later runGraphSearch() result will overwrite this with the recall-
+  // result ID (which may be more precise), but this ensures non-searched
+  // nodes also open with a valid memory-detail fetch.
+  for (const n of nodes) {
+    n._memoryId = n.metadata?.memoryId || null;
+  }
+
   graphData = { nodes, edges };
   // Reset view on fresh load.
   graphView.tx = 0;
@@ -1096,11 +1278,518 @@ async function loadMemoryGraph() {
   attachGraphInteractions(canvas);
   renderGraphLegend();
 
+  // Open (or re-open) the SSE stream so new edges appear in real time
+  // without a full re-fetch (issue #691 PR 5/5).
+  mountGraphEventSource();
+
   setStatus(
     "graphStatus",
     `Loaded ${nodes.length} nodes, ${edges.length} edges. Generated ${snapshot.generatedAt}.`,
     "ok",
   );
+}
+
+// ─── Real-time graph SSE updates (issue #691 PR 5/5) ────────────────────────
+
+/**
+ * Pending edge-added payloads whose source or target node had not yet arrived
+ * when the event was first processed.  Retried on every subsequent node-added
+ * event (Codex review thread PRRT_kwDORJXyws59soGK).
+ *
+ * Entries are removed once both endpoint nodes exist in graphData.nodes.
+ * The queue is bounded to 200 entries to prevent unbounded growth from a
+ * disconnected or very busy stream.
+ */
+const _orphanEdgeQueue = [];
+const _ORPHAN_EDGE_QUEUE_MAX = 200;
+
+/**
+ * Active EventSource connection for /engram/v1/graph/events.
+ * Only one connection is maintained at a time; `mountGraphEventSource` closes
+ * the previous one before opening a new one.
+ */
+let graphEventSource = null;
+
+/**
+ * Apply a single graph mutation event to the in-memory graphData and
+ * re-render without a full re-fetch.
+ *
+ * Supported mutation types:
+ *   node-added    — add a node if not already present
+ *   node-updated  — update label/kind on an existing node
+ *   edge-added    — add an edge if the source/target nodes exist
+ *   edge-updated  — update weight/confidence on a matching edge
+ *   edge-removed  — remove matching edges from the simulation
+ */
+function applyGraphEvent(event) {
+  if (!graphData) return; // graph not loaded yet; skip
+  const p = event.payload;
+
+  if (event.type === "node-added") {
+    const existing = graphData.nodes.find((n) => n.id === p.nodeId);
+    if (!existing) {
+      const node = {
+        id: p.nodeId,
+        label: p.label || p.nodeId,
+        kind: p.kind || "unknown",
+        score: 1,
+        lastUpdated: p.lastUpdated || event.ts,
+        // Place new nodes at a random position near the canvas centre.
+        x: (Math.random() - 0.5) * 200,
+        y: (Math.random() - 0.5) * 200,
+        vx: 0,
+        vy: 0,
+        _memoryId: null,
+      };
+      graphData.nodes.push(node);
+      graphColorForCategory(node.kind);
+      // Drain any queued orphan edges now that a new node has arrived.
+      // Iterate backwards so splicing by index is safe.
+      let drainedAny = false;
+      for (let i = _orphanEdgeQueue.length - 1; i >= 0; i--) {
+        const op = _orphanEdgeQueue[i];
+        const s = graphData.nodes.find((n) => n.id === op.source);
+        const t = graphData.nodes.find((n) => n.id === op.target);
+        if (s && t) {
+          _orphanEdgeQueue.splice(i, 1);
+          const alreadyExists = graphData.edges.some(
+            (e) => e.source === op.source && e.target === op.target && e.kind === op.kind,
+          );
+          if (!alreadyExists) {
+            graphData.edges.push({
+              source: op.source,
+              target: op.target,
+              kind: op.kind,
+              weight: typeof op.weight === "number" ? op.weight : 1.0,
+              label: op.label || "",
+              confidence: typeof op.confidence === "number" ? op.confidence : 1.0,
+              _srcNode: s,
+              _tgtNode: t,
+            });
+            drainedAny = true;
+          }
+        }
+      }
+      if (graphSim) graphSim.reheat();
+      drawGraph();
+      if (drainedAny && graphSim) graphSim.reheat();
+    }
+    return;
+  }
+
+  if (event.type === "node-updated") {
+    const node = graphData.nodes.find((n) => n.id === p.nodeId);
+    if (node) {
+      node.label = p.label || node.label;
+      node.kind = p.kind || node.kind;
+      if (p.lastUpdated) node.lastUpdated = p.lastUpdated;
+      drawGraph();
+    }
+    return;
+  }
+
+  if (event.type === "edge-added") {
+    const srcNode = graphData.nodes.find((n) => n.id === p.source);
+    const tgtNode = graphData.nodes.find((n) => n.id === p.target);
+    if (srcNode && tgtNode) {
+      const alreadyExists = graphData.edges.some(
+        (e) => e.source === p.source && e.target === p.target && e.kind === p.kind,
+      );
+      if (!alreadyExists) {
+        const edge = {
+          source: p.source,
+          target: p.target,
+          kind: p.kind,
+          weight: typeof p.weight === "number" ? p.weight : 1.0,
+          label: p.label || "",
+          confidence: typeof p.confidence === "number" ? p.confidence : 1.0,
+          _srcNode: srcNode,
+          _tgtNode: tgtNode,
+        };
+        graphData.edges.push(edge);
+        if (graphSim) graphSim.reheat();
+        drawGraph();
+      }
+    } else {
+      // One or both endpoint nodes haven't arrived yet — queue the edge payload
+      // so it can be applied once the missing nodes appear (Codex review thread
+      // PRRT_kwDORJXyws59soGK).  Enforce a cap to prevent unbounded growth.
+      const alreadyQueued = _orphanEdgeQueue.some(
+        (e) => e.source === p.source && e.target === p.target && e.kind === p.kind,
+      );
+      if (!alreadyQueued) {
+        if (_orphanEdgeQueue.length >= _ORPHAN_EDGE_QUEUE_MAX) {
+          _orphanEdgeQueue.shift(); // drop the oldest orphan
+        }
+        _orphanEdgeQueue.push({
+          source: p.source,
+          target: p.target,
+          kind: p.kind,
+          weight: p.weight,
+          label: p.label,
+          confidence: p.confidence,
+        });
+      }
+    }
+    return;
+  }
+
+  if (event.type === "edge-updated") {
+    for (const edge of graphData.edges) {
+      if (edge.source === p.source && edge.target === p.target && edge.kind === p.kind) {
+        if (typeof p.weight === "number") edge.weight = p.weight;
+        if (typeof p.confidence === "number") edge.confidence = p.confidence;
+      }
+    }
+    drawGraph();
+    return;
+  }
+
+  if (event.type === "edge-removed") {
+    // Track which nodes had at least one edge BEFORE this removal so we
+    // only prune nodes that lost their last edge.  Nodes that were already
+    // isolated (no edges at all) are intentional standalone nodes and must
+    // not be removed (Cursor review thread `app.js:1398`).
+    const hadEdges = new Set();
+    for (const e of graphData.edges) {
+      hadEdges.add(e.source);
+      hadEdges.add(e.target);
+    }
+    graphData.edges = graphData.edges.filter(
+      (e) => !(e.source === p.source && e.target === p.target && e.kind === p.kind),
+    );
+    // Build the still-connected set after removal.
+    const stillConnected = new Set();
+    for (const e of graphData.edges) {
+      stillConnected.add(e.source);
+      stillConnected.add(e.target);
+    }
+    // Only prune a node when it was connected before AND is now orphaned.
+    graphData.nodes = graphData.nodes.filter(
+      (n) => !hadEdges.has(n.id) || stillConnected.has(n.id),
+    );
+    if (graphSim) graphSim.reheat();
+    drawGraph();
+  }
+}
+
+/**
+ * Open a Server-Sent Events connection to /engram/v1/graph/events and
+ * patch graphData in-place as events arrive.
+ *
+ * Called once during graph pane initialisation (inside loadMemoryGraph).
+ * Re-opening is handled via the EventSource's built-in reconnect logic.
+ *
+ * The EventSource spec requires the URL to carry auth, because the
+ * EventSource constructor does not support headers.  We pass the bearer
+ * token as `?token=...` — the server checks both the Authorization header
+ * and this query parameter so curl/browser callers both work.
+ */
+function mountGraphEventSource() {
+  // Close any previous connection first (e.g. after a graph refresh).
+  if (graphEventSource) {
+    try { graphEventSource.close(); } catch { /* ignore */ }
+    graphEventSource = null;
+  }
+
+  const token = readToken();
+  if (!token) return; // no token → no stream; user can still use manual refresh
+
+  const url = `/engram/v1/graph/events?token=${encodeURIComponent(token)}`;
+  let es;
+  try {
+    es = new EventSource(url);
+  } catch {
+    // EventSource not supported (e.g. test environment); silently skip.
+    return;
+  }
+  graphEventSource = es;
+
+  es.onmessage = (e) => {
+    let parsed;
+    try { parsed = JSON.parse(e.data); } catch { return; }
+    if (!parsed || typeof parsed !== "object") return;
+
+    if (parsed.type === "connected" || parsed.type === "heartbeat") {
+      // Control frames — no graphData mutation needed.
+      return;
+    }
+
+    if (parsed.type === "batch" && Array.isArray(parsed.events)) {
+      for (const ev of parsed.events) {
+        applyGraphEvent(ev);
+      }
+      return;
+    }
+
+    // Fallback: treat as a single event (forward compatibility).
+    if (parsed.type) applyGraphEvent(parsed);
+  };
+
+  es.onerror = () => {
+    // EventSource reconnects automatically; nothing to do here.
+  };
+}
+
+// ─── Graph search + drill-through (issue #691 PR 4/5) ───────────────────────
+
+/**
+ * Monotonically incrementing token for in-flight graph search requests.
+ * Incremented on every runGraphSearch call; the async continuation discards
+ * results if the token changed while the fetch was in flight (e.g. because
+ * the user refreshed the graph or cleared search before it resolved).
+ */
+let graphSearchToken = 0;
+
+/**
+ * Run a recall search against the existing recall endpoint and highlight the
+ * matching nodes in the graph.  Uses `POST /engram/v1/recall` — the same
+ * endpoint as the Recall Debugger — with a fixed `sessionKey` so it does not
+ * pollute the user's recall state.
+ */
+async function runGraphSearch() {
+  const query = $("graphSearchQuery")?.value?.trim() || "";
+  if (!query) return;
+  if (!graphData) {
+    setStatus("graphStatus", "Load the graph first before searching.", "error");
+    return;
+  }
+  // Claim a token before the first await so a concurrent call gets a
+  // different value and this response is discarded when it resolves late.
+  const myToken = ++graphSearchToken;
+  setStatus("graphStatus", `Searching for "${query}"…`);
+  try {
+    const recall = await fetchJson("/engram/v1/recall", {
+      method: "POST",
+      body: JSON.stringify({ query, sessionKey: "admin-console-graph-search" }),
+    });
+    // Discard if a newer search (or a graph refresh/clear) ran while we awaited.
+    if (myToken !== graphSearchToken) return;
+    // Normalise: recall response may have results in different shapes.
+    // `recall.memories`, `recall.results`, or fall back to empty.
+    const rawResults =
+      Array.isArray(recall.memories) ? recall.memories :
+      Array.isArray(recall.results)  ? recall.results  :
+      [];
+    // Guard again: graphData may have been cleared during the fetch.
+    if (!graphData) return;
+    // Second token check immediately before mutating shared highlight state.
+    // A graph reload that ran between the first guard and here will have bumped
+    // graphSearchToken, so stale responses from a superseded search are dropped
+    // even if graphData was coincidentally re-populated in the interim.
+    if (myToken !== graphSearchToken) return;
+    graphHighlightIds = resolveHighlights(graphData.nodes, rawResults);
+    // Store frontmatter IDs on matched nodes for drill-through.
+    // Preserve any snapshot-bound _memoryId for nodes that weren't in results
+    // by only overwriting nodes that are actually in the highlight set.
+    for (const [nodeId, memId] of graphHighlightIds.entries()) {
+      const node = graphData.nodes.find((n) => n.id === nodeId);
+      if (node) node._memoryId = memId;
+    }
+    drawGraph();
+    const count = graphHighlightIds.size;
+    setStatus(
+      "graphStatus",
+      count > 0
+        ? `Highlighted ${count} node${count === 1 ? "" : "s"} matching "${query}".`
+        : `No graph nodes matched "${query}".`,
+      count > 0 ? "ok" : "default",
+    );
+  } catch (err) {
+    if (myToken !== graphSearchToken) return;
+    setStatus("graphStatus", err.message || String(err), "error");
+  }
+}
+
+/** Clear the current highlight selection and redraw. */
+function clearGraphSearch() {
+  // Invalidate any in-flight search so its response is discarded.
+  graphSearchToken += 1;
+  graphHighlightIds = new Map();
+  // Clear search-assigned _memoryId from all nodes so subsequent drill-through
+  // fetches fall back to the snapshot-bound metadata ID rather than using a
+  // stale frontmatter ID from a previous search query.
+  if (graphData) {
+    for (const n of graphData.nodes) {
+      n._memoryId = n.metadata?.memoryId || null;
+    }
+  }
+  const input = $("graphSearchQuery");
+  if (input) input.value = "";
+  if (graphData) drawGraph();
+  closeGraphNodePanel();
+  setStatus("graphStatus", "Search cleared.", "default");
+}
+
+/** Close the node detail panel. */
+function closeGraphNodePanel() {
+  const panel = $("graphNodePanel");
+  if (panel) panel.classList.remove("visible");
+}
+
+/**
+ * Monotonically incrementing token for in-flight node-panel requests.
+ * Incremented on every openGraphNodePanel call; the async continuation
+ * compares against the token at the time the fetch resolved to discard
+ * stale responses when the user clicks multiple nodes in quick succession.
+ */
+let graphNodePanelToken = 0;
+
+/**
+ * Fetch `GET /engram/v1/memories/:id` and render the result into the
+ * node detail side panel.  Builds a frontmatter table, renders raw content,
+ * and lists related edges from the in-memory snapshot.
+ *
+ * Uses a monotonic token to discard stale responses when the user clicks
+ * a second node before the first fetch resolves (race-free panel updates).
+ *
+ * @param {object} node - graph node object (has `.id`, `.kind`, `.score`, etc.)
+ */
+async function openGraphNodePanel(node) {
+  const panel = $("graphNodePanel");
+  if (!panel) return;
+
+  // Claim this request's token before any await so concurrent calls get a
+  // different value and their responses are discarded when they resolve.
+  const myToken = ++graphNodePanelToken;
+
+  // Show panel immediately with loading state.
+  panel.classList.add("visible");
+  const title = $("graphNodePanelTitle");
+  const status = $("graphNodePanelStatus");
+  const frontmatterEl = $("graphNodeFrontmatter");
+  const contentEl = $("graphNodeContent");
+  const edgesEl = $("graphNodeEdges");
+
+  if (title) title.textContent = node.id;
+  if (status) { status.textContent = `Loading ${node.id}…`; status.className = "status"; }
+  if (frontmatterEl) {
+    clearChildren(frontmatterEl);
+    const em = document.createElement("em");
+    em.textContent = "Loading…";
+    frontmatterEl.appendChild(em);
+  }
+  if (contentEl) contentEl.textContent = "Loading…";
+  if (edgesEl) {
+    clearChildren(edgesEl);
+    const strong = document.createElement("strong");
+    strong.textContent = "Loading edges…";
+    edgesEl.appendChild(strong);
+  }
+
+  // Resolve the frontmatter memory ID to use for GET /engram/v1/memories/:id.
+  // Priority order:
+  //   1. node._memoryId  — set by runGraphSearch() from recall result.id, or
+  //                        pre-bound from snapshot metadata in loadMemoryGraph()
+  //   2. node.metadata?.memoryId — snapshot field (direct access, in case
+  //                        _memoryId was not pre-bound for some reason)
+  //   3. node.id         — last resort; the endpoint will 404 for path IDs but
+  //                        the caller handles 404 gracefully by showing snapshot
+  //                        data, so the panel is still informative.
+  const lookupId = node._memoryId || node.metadata?.memoryId || node.id;
+
+  let response = null;
+  try {
+    response = await fetchJson(`/engram/v1/memories/${encodeURIComponent(lookupId)}`);
+  } catch (err) {
+    // Discard stale errors.
+    if (myToken !== graphNodePanelToken) return;
+    // On 404 (no frontmatter ID known yet) fall through with null response so
+    // the panel still shows snapshot data.  Surface real errors as-is.
+    const isNotFound = err?.payload?.error === "Not found" ||
+      (err?.message || "").includes("404");
+    if (!isNotFound) {
+      if (status) { status.textContent = err.message || String(err); status.className = "status error"; }
+      if (contentEl) contentEl.textContent = "Failed to load memory content.";
+      return;
+    }
+    // 404 — fall through with response = null; we'll show snapshot data.
+  }
+
+  // Discard if a newer openGraphNodePanel call was made while we awaited.
+  if (myToken !== graphNodePanelToken) return;
+
+  // When lookup succeeded, use the full memory record.
+  // When it 404-ed (response === null), synthesise from snapshot node data
+  // so the panel is informative for every node, not just searched ones.
+  const mem = response?.memory || {};
+  const isSnapshotOnly = !response?.found;
+
+  // Build frontmatter table from top-level scalar fields.
+  if (frontmatterEl) {
+    const table = document.createElement("table");
+    const FRONTMATTER_KEYS = [
+      "id", "category", "status", "importance", "entityRef",
+      "created", "updated", "path",
+    ];
+    FRONTMATTER_KEYS.forEach((key) => {
+      const val = mem[key];
+      if (val == null) return;
+      const tr = document.createElement("tr");
+      const tdKey = document.createElement("td");
+      tdKey.textContent = key;
+      const tdVal = document.createElement("td");
+      tdVal.textContent = String(val);
+      tr.appendChild(tdKey);
+      tr.appendChild(tdVal);
+      table.appendChild(tr);
+    });
+    clearChildren(frontmatterEl);
+    frontmatterEl.appendChild(table);
+  }
+
+  // Render content — raw text, or snapshot summary when no detail loaded.
+  if (contentEl) {
+    if (isSnapshotOnly) {
+      contentEl.textContent = [
+        `id: ${node.id}`,
+        `category: ${node.kind || "unknown"}`,
+        `score: ${typeof node.score === "number" ? node.score.toFixed(3) : "?"}`,
+        node.lastUpdated ? `updated: ${node.lastUpdated}` : null,
+        "",
+        "(Run a graph search to load the full memory detail for this node.)",
+      ].filter((l) => l !== null).join("\n");
+    } else {
+      contentEl.textContent = typeof mem.content === "string"
+        ? mem.content
+        : JSON.stringify(mem, null, 2);
+    }
+  }
+
+  // Render related edges from the snapshot already in memory.
+  // Uses DOM methods exclusively — no innerHTML — to avoid XSS.
+  if (edgesEl && graphData) {
+    const related = graphData.edges.filter(
+      (e) => e._srcNode?.id === node.id || e._tgtNode?.id === node.id,
+    );
+    clearChildren(edgesEl);
+    if (related.length === 0) {
+      edgesEl.textContent = "No edges in current snapshot.";
+    } else {
+      const ul = document.createElement("ul");
+      related.forEach((e) => {
+        const li = document.createElement("li");
+        const isSource = e._srcNode?.id === node.id;
+        const peerId = isSource ? e._tgtNode?.id : e._srcNode?.id;
+        const direction = isSource ? "→" : "←";
+        const strong = document.createElement("strong");
+        strong.textContent = `${direction} ${e.kind ?? ""}`;
+        li.appendChild(strong);
+        li.appendChild(document.createTextNode(
+          ` ${peerId || "?"} (confidence ${e.confidence?.toFixed(2) ?? "?"})`,
+        ));
+        ul.appendChild(li);
+      });
+      edgesEl.appendChild(ul);
+    }
+  }
+
+  if (status) {
+    status.textContent = isSnapshotOnly
+      ? `Snapshot data for ${node.id}. Search to load full detail.`
+      : `Loaded ${lookupId}.`;
+    status.className = isSnapshotOnly ? "status" : "status ok";
+  }
 }
 
 async function connectAndBootstrap() {
@@ -1188,6 +1877,11 @@ function bootstrap() {
   $("copyMemoryPathButton")?.addEventListener("click", copyMemoryPath);
   $("refreshGraphButton")?.addEventListener("click", () => void loadMemoryGraph());
   $("resetGraphViewButton")?.addEventListener("click", resetGraphView);
+  $("graphSearchButton")?.addEventListener("click", () => void runGraphSearch());
+  $("graphClearSearchButton")?.addEventListener("click", clearGraphSearch);
+  $("graphSearchQuery")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") void runGraphSearch();
+  });
 
   if (remembered) {
     void connectAndBootstrap();

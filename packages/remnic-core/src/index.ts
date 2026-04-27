@@ -975,3 +975,15 @@ export {
   readPeerProfile,
   writePeerProfile,
 } from "./peers/index.js";
+
+// ---------------------------------------------------------------------------
+// Capsule fork (issue #676 PR 4/6)
+// ---------------------------------------------------------------------------
+
+export {
+  forkCapsule,
+  readForkLineage,
+  type ForkCapsuleOptions,
+  type ForkCapsuleResult,
+  type ForkLineage,
+} from "./transfer/capsule-fork.js";

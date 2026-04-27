@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 
 export async function sha256File(filePath: string): Promise<{ sha256: string; bytes: number }> {
@@ -62,4 +70,90 @@ export function toPosixRelPath(absPath: string, rootDir: string): string {
 
 export function fromPosixRelPath(relPath: string): string {
   return relPath.split("/").join(path.sep);
+}
+
+// ---------------------------------------------------------------------------
+// Shared path-safety helpers (used by capsule-import, capsule-merge, and
+// capsule-fork).
+//
+// These helpers are security-critical (path-traversal and symlink-bypass
+// guards), so any future fix must apply uniformly. The `errorPrefix` and
+// `argName` arguments let each caller surface module-specific error messages
+// ("importCapsule:" vs "mergeCapsule:" vs "forkCapsule:") without forking the
+// implementation.
+// ---------------------------------------------------------------------------
+
+/**
+ * Return true when {@link absPath} is the same as {@link rootReal} or a
+ * descendant. {@link rootReal} should be the value returned by
+ * `realpath(rootAbs)` so that symlinked subdirectories are detected.
+ */
+export function isPathInsideRoot(rootReal: string, absPath: string): boolean {
+  const rel = path.relative(rootReal, absPath);
+  if (rel === "") return true;
+  if (rel === "..") return false;
+  if (rel.startsWith(`..${path.sep}`)) return false;
+  if (path.isAbsolute(rel)) return false;
+  return true;
+}
+
+/**
+ * Assert that {@link absPath} is an existing directory and is not itself a
+ * symlink. `existsSync` returns true for files (gotcha #24); a stat-based
+ * check is required. Symlinked roots are rejected up-front so an attacker
+ * cannot hand the importer a `~/import-target` link → `/etc` and have writes
+ * silently follow the link (Codex P1 round 5 thread on PR #741).
+ */
+export async function assertIsDirectoryNotSymlink(
+  absPath: string,
+  errorPrefix: string,
+  argName: string,
+): Promise<void> {
+  const st = await stat(absPath).catch(() => null);
+  if (!st || !st.isDirectory()) {
+    throw new Error(
+      `${errorPrefix}: '${argName}' must be an existing directory: ${absPath}`,
+    );
+  }
+  const lst = await lstat(absPath).catch(() => null);
+  if (lst && lst.isSymbolicLink()) {
+    throw new Error(
+      `${errorPrefix}: '${argName}' must not be a symlink — resolve it to its real path first: ${absPath}`,
+    );
+  }
+}
+
+/**
+ * Walk upward from {@link targetAbs} to find the nearest existing ancestor,
+ * resolve it via `fs.realpath` (which follows symlinks), then re-append the
+ * remaining suffix and verify the result is inside {@link rootReal}.
+ *
+ * This catches the case where an existing subdirectory at any point in the
+ * path is a symlink that points outside the intended root. Because the file
+ * does not exist yet we cannot realpath it directly; we resolve the deepest
+ * existing prefix and re-apply the non-existent suffix. Callers must ensure
+ * {@link rootReal} was already resolved via `realpath`.
+ */
+export async function assertRealpathInsideRoot(
+  rootReal: string,
+  targetAbs: string,
+  sourcePath: string,
+  errorPrefix: string,
+): Promise<void> {
+  let existing = targetAbs;
+  const suffix: string[] = [];
+  while (existing !== path.dirname(existing)) {
+    const st = await lstat(existing).catch(() => null);
+    if (st !== null) break;
+    suffix.unshift(path.basename(existing));
+    existing = path.dirname(existing);
+  }
+  const existingReal = await realpath(existing).catch(() => existing);
+  const targetReal =
+    suffix.length > 0 ? path.join(existingReal, ...suffix) : existingReal;
+  if (!isPathInsideRoot(rootReal, targetReal)) {
+    throw new Error(
+      `${errorPrefix}: record path escapes target root via symlink: ${sourcePath}`,
+    );
+  }
 }

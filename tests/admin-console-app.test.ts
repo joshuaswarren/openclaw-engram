@@ -98,6 +98,13 @@ async function loadAdminConsoleContext(pageSizeValue: string, extraElements: Rec
     navigator: {},
   });
   vm.runInContext(script, context, { filename: scriptPath });
+
+  type GraphNode = { id: string; label: string; kind: string; score: number; lastUpdated: string; x: number; y: number; vx: number; vy: number; _memoryId: null };
+  type GraphEdge = { source: string; target: string; kind: string; weight: number; label: string; confidence: number; _srcNode: GraphNode; _tgtNode: GraphNode };
+  type GraphData = { nodes: GraphNode[]; edges: GraphEdge[] } | null;
+  type OrphanEdge = { source: string; target: string; kind: string; weight?: number; label?: string; confidence?: number };
+  type AppEvent = { type: string; payload: Record<string, unknown>; ts: string };
+
   return {
     browserState: vm.runInContext("browserState", context) as { limit: number; offset: number; total: number },
     copyMemoryPath: vm.runInContext("copyMemoryPath", context) as () => void,
@@ -111,8 +118,15 @@ async function loadAdminConsoleContext(pageSizeValue: string, extraElements: Rec
       height: number,
     ) => { start: (fn: () => void) => void; stop: () => void },
     drawGraph: vm.runInContext("drawGraph", context) as () => void,
-    graphData: vm.runInContext("graphData", context),
+    graphData: vm.runInContext("graphData", context) as GraphData,
     graphView: vm.runInContext("graphView", context) as { tx: number; ty: number; scale: number },
+    resolveHighlights: vm.runInContext("resolveHighlights", context) as (
+      nodes: Array<{ id: string }>,
+      results: Array<{ id: string; path?: string }>,
+    ) => Map<string, string>,
+    applyGraphEvent: vm.runInContext("applyGraphEvent", context) as (event: AppEvent) => void,
+    _orphanEdgeQueue: vm.runInContext("_orphanEdgeQueue", context) as OrphanEdge[],
+    getContext: () => context,
   };
 }
 
@@ -241,4 +255,218 @@ test("graph pane HTML elements are present in index.html", async () => {
   assert.ok(html.includes('id="resetGraphViewButton"'), "resetGraphViewButton missing");
   assert.ok(html.includes('id="graphLimit"'), "graphLimit select missing");
   assert.ok(html.includes('id="graphFocusNodeId"'), "graphFocusNodeId input missing");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Semantic-search highlight + drill-through — issue #691 PR 4/5
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("graph search highlight HTML elements are present in index.html", async () => {
+  const htmlPath = path.resolve("admin-console/public/index.html");
+  const html = await readFile(htmlPath, "utf8");
+
+  assert.ok(html.includes('id="graphSearchQuery"'), "graphSearchQuery input missing");
+  assert.ok(html.includes('id="graphSearchButton"'), "graphSearchButton missing");
+  assert.ok(html.includes('id="graphClearSearchButton"'), "graphClearSearchButton missing");
+  assert.ok(html.includes('id="graphNodePanel"'), "graphNodePanel missing");
+  assert.ok(html.includes('id="graphNodeFrontmatter"'), "graphNodeFrontmatter missing");
+  assert.ok(html.includes('id="graphNodeContent"'), "graphNodeContent missing");
+  assert.ok(html.includes('id="graphNodeEdges"'), "graphNodeEdges missing");
+});
+
+test("resolveHighlights returns empty map when results array is empty", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  const nodes = [{ id: "facts/foo.md" }, { id: "facts/bar.md" }];
+  const result = resolveHighlights(nodes, []);
+  assert.equal(result.size, 0);
+});
+
+test("resolveHighlights matches via result.path suffix against node.id (production case)", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  // Typical production: node.id is relative path, result carries absolute path + frontmatter id.
+  const nodes = [
+    { id: "facts/foo.md" },
+    { id: "facts/bar.md" },
+    { id: "decisions/baz.md" },
+  ];
+  const results = [
+    { id: "fact-abc123", path: "/Users/me/.remnic/facts/foo.md" },
+    { id: "decision-xyz", path: "/Users/me/.remnic/decisions/baz.md" },
+  ];
+  const matched = resolveHighlights(nodes, results);
+  assert.equal(matched.size, 2);
+  // Map keys are node IDs; values are frontmatter IDs for the detail endpoint.
+  assert.ok(matched.has("facts/foo.md"));
+  assert.equal(matched.get("facts/foo.md"), "fact-abc123");
+  assert.ok(matched.has("decisions/baz.md"));
+  assert.equal(matched.get("decisions/baz.md"), "decision-xyz");
+  assert.ok(!matched.has("facts/bar.md"));
+});
+
+test("resolveHighlights falls back to frontmatter id match when path absent", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  // When result has no path, fall back to id-based suffix matching.
+  const nodes = [{ id: "facts/foo.md" }];
+  const results = [{ id: "facts/foo.md" }];
+  const matched = resolveHighlights(nodes, results);
+  assert.equal(matched.size, 1);
+  assert.ok(matched.has("facts/foo.md"));
+});
+
+test("resolveHighlights matches when result id is a suffix of node id (no path)", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  const nodes = [{ id: "/Users/me/.remnic/facts/foo.md" }];
+  const results = [{ id: "facts/foo.md" }];
+  const matched = resolveHighlights(nodes, results);
+  assert.equal(matched.size, 1);
+  assert.ok(matched.has("/Users/me/.remnic/facts/foo.md"));
+});
+
+test("resolveHighlights matches when node id is a suffix of result path", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  const nodes = [{ id: "facts/foo.md" }];
+  const results = [{ id: "fact-xyz", path: "/Users/me/.remnic/facts/foo.md" }];
+  const matched = resolveHighlights(nodes, results);
+  assert.equal(matched.size, 1);
+  // Value is the frontmatter ID, not the path.
+  assert.equal(matched.get("facts/foo.md"), "fact-xyz");
+});
+
+test("resolveHighlights does not match unrelated ids", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  const nodes = [{ id: "facts/alpha.md" }, { id: "facts/beta.md" }];
+  const results = [{ id: "decision-xyz", path: "/Users/me/.remnic/decisions/gamma.md" }];
+  const matched = resolveHighlights(nodes, results);
+  assert.equal(matched.size, 0);
+});
+
+test("resolveHighlights handles nodes with missing ids gracefully", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  const nodes = [{ id: "" }, { id: "facts/foo.md" }] as Array<{ id: string }>;
+  const results = [{ id: "fact-abc", path: "/Users/me/.remnic/facts/foo.md" }];
+  const matched = resolveHighlights(nodes, results);
+  assert.equal(matched.size, 1);
+  assert.ok(matched.has("facts/foo.md"));
+});
+
+test("resolveHighlights returns empty map when nodes array is empty", async () => {
+  const { resolveHighlights } = await loadAdminConsoleContext("25");
+  const matched = resolveHighlights([], [{ id: "fact-abc", path: "/Users/me/.remnic/facts/foo.md" }]);
+  assert.equal(matched.size, 0);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Orphan edge queue — issue #691 PR 5/5 (Codex thread PRRT_kwDORJXyws59soGK)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build a minimal graphData-aware context for applyGraphEvent unit tests.
+ * We initialise graphData using a small VM snippet that assigns the script's
+ * own `let graphData` binding, so applyGraphEvent's closure sees the value.
+ */
+async function loadGraphEventContext() {
+  const ctx = await loadAdminConsoleContext("25");
+  const ts = new Date().toISOString();
+  // Run a snippet inside the same VM context that assigns the module-level
+  // `graphData` variable directly.  Setting vmCtx.graphData would NOT work
+  // because the script's `let graphData` shadows the context property.
+  vm.runInContext("graphData = { nodes: [], edges: [] };", ctx.getContext());
+  // Expose a live reference to the array objects via the VM's own getter.
+  const getGraphData = vm.runInContext("() => graphData", ctx.getContext()) as () => { nodes: unknown[]; edges: unknown[] };
+  return { ...ctx, ts, getGraphData };
+}
+
+test("edge-added with both nodes present is applied immediately (no orphan queue)", async () => {
+  const { applyGraphEvent, _orphanEdgeQueue, getGraphData, ts } = await loadGraphEventContext();
+
+  applyGraphEvent({ type: "node-added", payload: { nodeId: "facts/a.md", kind: "fact", label: "A" }, ts });
+  applyGraphEvent({ type: "node-added", payload: { nodeId: "facts/b.md", kind: "fact", label: "B" }, ts });
+  applyGraphEvent({ type: "edge-added", payload: { source: "facts/a.md", target: "facts/b.md", kind: "entity", weight: 1, label: "", confidence: 1 }, ts });
+
+  assert.equal(getGraphData().edges.length, 1, "edge must be applied immediately when both nodes exist");
+  assert.equal(_orphanEdgeQueue.length, 0, "orphan queue must be empty when both nodes were present");
+});
+
+test("edge-added with missing source node is queued and applied when node arrives", async () => {
+  const { applyGraphEvent, _orphanEdgeQueue, getGraphData, ts } = await loadGraphEventContext();
+
+  // Only target node present.
+  applyGraphEvent({ type: "node-added", payload: { nodeId: "facts/b.md", kind: "fact", label: "B" }, ts });
+
+  // Edge arrives before source node.
+  applyGraphEvent({ type: "edge-added", payload: { source: "facts/a.md", target: "facts/b.md", kind: "entity", weight: 1, label: "", confidence: 1 }, ts });
+
+  assert.equal(getGraphData().edges.length, 0, "edge must not be applied while source node is absent");
+  assert.equal(_orphanEdgeQueue.length, 1, "edge must be queued while source node is absent");
+
+  // Source node arrives later.
+  applyGraphEvent({ type: "node-added", payload: { nodeId: "facts/a.md", kind: "fact", label: "A" }, ts });
+
+  assert.equal(getGraphData().edges.length, 1, "queued edge must be applied once source node arrives");
+  assert.equal(_orphanEdgeQueue.length, 0, "orphan queue must be drained after source node arrives");
+});
+
+test("edge-added with missing target node is queued and applied when node arrives", async () => {
+  const { applyGraphEvent, _orphanEdgeQueue, getGraphData, ts } = await loadGraphEventContext();
+
+  // Only source node present.
+  applyGraphEvent({ type: "node-added", payload: { nodeId: "facts/a.md", kind: "fact", label: "A" }, ts });
+  applyGraphEvent({ type: "edge-added", payload: { source: "facts/a.md", target: "facts/c.md", kind: "entity", weight: 0.8, label: "x", confidence: 0.9 }, ts });
+
+  assert.equal(getGraphData().edges.length, 0);
+  assert.equal(_orphanEdgeQueue.length, 1);
+
+  applyGraphEvent({ type: "node-added", payload: { nodeId: "facts/c.md", kind: "fact", label: "C" }, ts });
+
+  assert.equal(getGraphData().edges.length, 1);
+  assert.equal(_orphanEdgeQueue.length, 0);
+  // Weight and confidence must be preserved through the queue.
+  const edge = getGraphData().edges[0] as Record<string, unknown>;
+  assert.equal(edge.weight, 0.8);
+  assert.equal(edge.confidence, 0.9);
+});
+
+test("orphan edge with both nodes missing is applied once the second node arrives", async () => {
+  const { applyGraphEvent, _orphanEdgeQueue, getGraphData, ts } = await loadGraphEventContext();
+
+  // Neither endpoint node is present yet.
+  applyGraphEvent({ type: "edge-added", payload: { source: "facts/x.md", target: "facts/y.md", kind: "entity", weight: 1, label: "", confidence: 1 }, ts });
+
+  assert.equal(_orphanEdgeQueue.length, 1, "edge must be queued when both nodes are absent");
+
+  // First node arrives — still can't apply edge.
+  applyGraphEvent({ type: "node-added", payload: { nodeId: "facts/x.md", kind: "fact", label: "X" }, ts });
+  assert.equal(getGraphData().edges.length, 0, "edge still pending after only one node arrives");
+  assert.equal(_orphanEdgeQueue.length, 1, "edge still in queue after only one node arrives");
+
+  // Second node arrives — edge can now be applied.
+  applyGraphEvent({ type: "node-added", payload: { nodeId: "facts/y.md", kind: "fact", label: "Y" }, ts });
+  assert.equal(getGraphData().edges.length, 1, "edge applied once second node arrives");
+  assert.equal(_orphanEdgeQueue.length, 0, "orphan queue empty after both nodes arrived");
+});
+
+test("duplicate orphan edges are not queued twice", async () => {
+  const { applyGraphEvent, _orphanEdgeQueue, ts } = await loadGraphEventContext();
+
+  // Same edge twice before either node arrives.
+  applyGraphEvent({ type: "edge-added", payload: { source: "facts/p.md", target: "facts/q.md", kind: "entity", weight: 1, label: "", confidence: 1 }, ts });
+  applyGraphEvent({ type: "edge-added", payload: { source: "facts/p.md", target: "facts/q.md", kind: "entity", weight: 1, label: "", confidence: 1 }, ts });
+
+  assert.equal(_orphanEdgeQueue.length, 1, "duplicate orphan edge must not be queued twice");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// applyGraphEvent: guard for graphData === null
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("applyGraphEvent is a no-op when graphData is null", async () => {
+  const ctx = await loadAdminConsoleContext("25");
+  // graphData starts as null; applyGraphEvent must not throw.
+  assert.doesNotThrow(() =>
+    ctx.applyGraphEvent({
+      type: "edge-added",
+      payload: { source: "facts/a.md", target: "facts/b.md", kind: "entity", weight: 1, label: "", confidence: 1 },
+      ts: new Date().toISOString(),
+    }),
+  );
 });

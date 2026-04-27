@@ -106,6 +106,35 @@ export const CapsuleIncludesSchema = z.object({
 
 export type CapsuleIncludes = z.infer<typeof CapsuleIncludesSchema>;
 
+/**
+ * Structured linkage to the capsule that was forked to produce this one.
+ *
+ * - `capsuleId`  — the `id` field from the parent capsule's manifest block.
+ * - `version`    — the `version` field from the parent capsule's manifest block
+ *                  at the time the fork was taken.
+ * - `forkRoot`   — the posix-relative directory prefix under which the parent's
+ *                  records were planted inside the fork's memory root, e.g.
+ *                  `forks/parent-id`. Stored here so downstream tooling can
+ *                  locate the imported parent tree without re-parsing paths.
+ */
+export const CapsuleParentSchema = z.object({
+  capsuleId: CapsuleIdSchema,
+  version: SemverLikeSchema,
+  /**
+   * Posix-relative path prefix under the fork's memory root where the parent
+   * capsule's records were placed. Typically `forks/<parent-capsule-id>`.
+   * Must be a non-empty string with no leading slash.
+   */
+  forkRoot: z
+    .string()
+    .min(1, "capsule.parent.forkRoot must not be empty")
+    .refine((v) => !v.startsWith("/"), {
+      message: "capsule.parent.forkRoot must be a relative path (no leading slash)",
+    }),
+});
+
+export type CapsuleParent = z.infer<typeof CapsuleParentSchema>;
+
 export const CapsuleBlockSchema = z.object({
   id: CapsuleIdSchema,
   version: SemverLikeSchema,
@@ -118,8 +147,27 @@ export const CapsuleBlockSchema = z.object({
    * Optional reference to the parent capsule this one was forked or derived
    * from. `null` (not `undefined`) is the explicit "no parent" sentinel so
    * that round-trips through JSON do not silently drop the field.
+   *
+   * @deprecated Prefer {@link parent} (structured). This field is preserved
+   *   for backward compatibility with V2 manifests written before PR 4/6.
    */
   parentCapsule: z.string().min(1).nullable(),
+  /**
+   * Structured fork-lineage pointer added in PR 4/6. When present, this
+   * capsule is a fork of the described parent. `null` is the explicit
+   * "not a fork" sentinel — round-trips through JSON cleanly without
+   * silently dropping the field.
+   *
+   * Defaults to `null` so that V2 manifests written before PR 4/6 (which
+   * omit this field) still parse without error. This preserves backward
+   * compatibility with the existing `makeV2Manifest()` test fixtures and
+   * any in-the-wild V2 archives produced by PR 2/6 and PR 3/6.
+   *
+   * Invariant: when `parent` is non-null, `parentCapsule` SHOULD equal
+   * `parent.capsuleId` for backward compatibility with readers that only
+   * understand the legacy field. `forkCapsule()` sets both.
+   */
+  parent: CapsuleParentSchema.nullable().default(null),
   description: z.string(),
   retrievalPolicy: CapsuleRetrievalPolicySchema,
   includes: CapsuleIncludesSchema,

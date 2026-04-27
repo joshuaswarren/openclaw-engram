@@ -14,6 +14,7 @@ import test from "node:test";
 import {
   appendInteractionLog,
   assertValidPeerId,
+  deletePeer,
   listPeers,
   PEER_ID_PATTERN,
   readInteractionLogRaw,
@@ -351,4 +352,68 @@ test("identity.md is YAML frontmatter + markdown body", async () => {
   assert.ok(fmBlock.includes("updatedAt:"));
   const body = lines.slice(closeIndex + 1).join("\n");
   assert.ok(body.includes("Operator notes."));
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// deletePeer (Cursor M, PR #756) — symlink-safe unlink contract.
+// ──────────────────────────────────────────────────────────────────────
+
+test("deletePeer removes identity.md and is idempotent", async () => {
+  const dir = await makeTempDir();
+  const peer = samplePeer({ id: "alice", kind: "human" });
+  await writePeer(dir, peer);
+  const first = await deletePeer(dir, "alice");
+  assert.equal(first, true);
+  const second = await deletePeer(dir, "alice");
+  assert.equal(second, false);
+});
+
+test("deletePeer returns false when peer dir does not exist", async () => {
+  const dir = await makeTempDir();
+  const result = await deletePeer(dir, "ghost");
+  assert.equal(result, false);
+});
+
+test("deletePeer rejects invalid peer ids", async () => {
+  const dir = await makeTempDir();
+  await assert.rejects(() => deletePeer(dir, "../escape"), /invalid|peerId/i);
+});
+
+test("deletePeer refuses to follow a symlinked identity.md", async () => {
+  const dir = await makeTempDir();
+  // Build a peer dir without writing identity.md, then plant a symlink at
+  // identity.md pointing outside memoryDir. A naive `fs.unlink` would
+  // remove the symlink itself, but the safe-delete contract refuses to
+  // touch it (we can't safely distinguish symlink-removal from following
+  // a redirected-target unlink without lstat).
+  const peerDir = path.join(dir, "peers", "alice");
+  await fs.mkdir(peerDir, { recursive: true });
+  const outsideTarget = path.join(dir, "outside-target.md");
+  await fs.writeFile(outsideTarget, "should not be deleted", "utf8");
+  await fs.symlink(outsideTarget, path.join(peerDir, "identity.md"));
+  await assert.rejects(() => deletePeer(dir, "alice"), /symlink/);
+  // The outside file is intact.
+  const stillThere = await fs.readFile(outsideTarget, "utf8");
+  assert.equal(stillThere, "should not be deleted");
+});
+
+test("deletePeer leaves sibling profile and interaction log intact", async () => {
+  const dir = await makeTempDir();
+  const peer = samplePeer({ id: "alice", kind: "human" });
+  await writePeer(dir, peer);
+  const profile: PeerProfile = {
+    peerId: "alice",
+    fields: { tone: "warm" },
+    provenance: {},
+    updatedAt: "2026-04-26T00:00:00.000Z",
+  };
+  await writePeerProfile(dir, profile);
+  const result = await deletePeer(dir, "alice");
+  assert.equal(result, true);
+  // Profile survives.
+  const reread = await readPeerProfile(dir, "alice");
+  assert.ok(reread, "profile should still exist after deletePeer");
+  // Identity is gone.
+  const identity = await readPeer(dir, "alice");
+  assert.equal(identity, null);
 });
