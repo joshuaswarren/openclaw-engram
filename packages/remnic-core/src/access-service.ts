@@ -4191,7 +4191,14 @@ export class EngramAccessService {
     // orchestrator (buffer, qmd, extraction queue, etc. are process-global
     // and don't require further namespace scoping for a read-only snapshot).
     const orchestratorProxy = Object.create(this.orchestrator) as typeof this.orchestrator;
-    orchestratorProxy.config = { ...this.orchestrator.config, memoryDir: storage.dir };
+    // config is readonly on Orchestrator, so use defineProperty to override
+    // it on the proxy object without touching the real instance.
+    Object.defineProperty(orchestratorProxy, "config", {
+      value: { ...this.orchestrator.config, memoryDir: storage.dir },
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    });
     return gatherConsoleState(orchestratorProxy);
   }
 
