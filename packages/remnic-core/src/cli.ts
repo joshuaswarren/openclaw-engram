@@ -8399,6 +8399,14 @@ export function registerCli(
           }
 
           const { runDreamsPhase, deepSleepGovernanceRunner } = await import("./maintenance/dreams-ledger.js");
+          const deepSleep = orchestrator.config.dreamsPhases.deepSleep;
+          if (
+            phase === "deepSleep" &&
+            deepSleep.enabled === false &&
+            deepSleep.enabledExplicitlySet === true
+          ) {
+            throw new Error("memory governance is disabled by dreams.phases.deepSleep.enabled=false");
+          }
           const result = await runDreamsPhase(
             { memoryDir: orchestrator.config.memoryDir, phase, dryRun },
             phase === "deepSleep" ? deepSleepGovernanceRunner : undefined,

@@ -309,6 +309,22 @@ test("runDreamsPhase lightSleep counts recent observation ts entries only", asyn
   assert.equal(result.itemsProcessed, 1);
 });
 
+test("runDreamsPhase deepSleep propagates governance failures without ledger entry", async () => {
+  const memoryDir = await makeTmpDir();
+
+  await assert.rejects(
+    () => runDreamsPhase(
+      { memoryDir, phase: "deepSleep", dryRun: false },
+      async () => {
+        throw new Error("backend unavailable");
+      },
+    ),
+    /deep-sleep governance run failed: backend unavailable/,
+  );
+
+  assert.deepEqual(await readDreamsLedgerEntries(memoryDir), []);
+});
+
 test("summarizeGovernanceResultForDreams does not double-count proposed actions", () => {
   const result = summarizeGovernanceResultForDreams(
     {

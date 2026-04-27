@@ -391,7 +391,7 @@ export async function runDreamsPhase(
         itemsProcessed = result.scannedMemories;
         notes = result.notes ?? (dryRun ? `dry-run: ${result.appliedActionCount} actions proposed` : `${result.appliedActionCount} actions applied`);
       } catch (err) {
-        notes = `deep-sleep governance run failed: ${err}`;
+        throw new Error(`deep-sleep governance run failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     } else {
       // Fallback: count memory files.
