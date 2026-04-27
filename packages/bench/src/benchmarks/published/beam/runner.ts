@@ -931,10 +931,13 @@ function rubricTargetMatches(actual: string, target: string): boolean {
 }
 
 function syntaxHighlightingRubricMatches(actual: string, target: string): boolean {
+  const extraTargetDetails = syntaxHighlightingExtraTargetDetails(target);
   return (
     mentionsSyntaxHighlightingRequirement(target) &&
     mentionsSyntaxHighlightingRequirement(actual) &&
-    !negatesSyntaxHighlighting(actual)
+    !negatesSyntaxHighlighting(actual) &&
+    (extraTargetDetails.length === 0 ||
+      containsAnswer(actual, extraTargetDetails) === 1)
   );
 }
 
@@ -956,6 +959,14 @@ function splitRubricClauses(value: string): string[] {
     .split(/[.,;:]+/)
     .map(normalizeRubricPhrase)
     .filter((clause) => clause.length > 0);
+}
+
+function syntaxHighlightingExtraTargetDetails(target: string): string {
+  return normalizeRubricPhrase(target)
+    .replace(SYNTAX_HIGHLIGHTING_RUBRIC, " ")
+    .replace(/\b(?:and|with|the|a|an)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeRubricPhrase(value: string): string {

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { beamDefinition, runBeamBenchmark } from "./runner.ts";
@@ -201,6 +204,74 @@ test("BEAM rubric coverage allows comma-separated contrastive negation", async (
     )?.scores.rubric_coverage,
     1,
   );
+});
+
+test("BEAM rubric coverage requires extra syntax target details", async () => {
+  const datasetDir = await mkdtemp(path.join(tmpdir(), "remnic-beam-extra-"));
+  await writeFile(
+    path.join(datasetDir, "100k.json"),
+    JSON.stringify([
+      {
+        conversation_id: "extra-target",
+        chat: [
+          [
+            {
+              role: "user",
+              content:
+                "Please remember implementation help should use syntax-highlighted code blocks with line numbers.",
+            },
+          ],
+        ],
+        probing_questions: {
+          instruction_following: [
+            {
+              question: "Could you show me how to implement a login feature?",
+              rubric: [
+                "LLM response should contain: code blocks with syntax highlighting and line numbers",
+              ],
+            },
+          ],
+        },
+      },
+    ]),
+  );
+
+  const result = await runBeamBenchmark({
+    benchmark: beamDefinition,
+    mode: "quick",
+    datasetDir,
+    system: {
+      async reset() {},
+      async store() {},
+      async recall() {
+        return "Implementation help should use syntax-highlighted code blocks with line numbers.";
+      },
+      async search() {
+        return [{ id: "hit", text: "hit" }];
+      },
+      async destroy() {},
+      async getStats() {
+        return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: 0 };
+      },
+      responder: {
+        async respond() {
+          return {
+            text: "Always use code blocks with syntax highlighting.",
+            tokens: { input: 1, output: 1 },
+            latencyMs: 1,
+            model: "beam-test-responder",
+          };
+        },
+      },
+      judge: {
+        async score() {
+          return 0;
+        },
+      },
+    },
+  });
+
+  assert.equal(result.results.tasks[0]?.scores.rubric_coverage, 0);
 });
 
 async function runBeamWithInstructionAnswer(instructionAnswer: string) {
