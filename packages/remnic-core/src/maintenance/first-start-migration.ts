@@ -17,7 +17,7 @@
  */
 
 import path from "node:path";
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, unlink, writeFile } from "node:fs/promises";
 import type { StorageManager } from "../storage.js";
 import type { PluginConfig } from "../types.js";
 import {
@@ -33,6 +33,7 @@ import {
 
 export const FIRST_START_DEMOTION_CAP = 50;
 export const LIFECYCLE_INIT_DONE_MARKER = ".lifecycle-init-done";
+const LIFECYCLE_QMD_REFRESH_PENDING_MARKER = ".lifecycle-qmd-refresh-pending";
 
 export interface FirstStartMigrationOptions {
   storage: StorageManager;
@@ -69,6 +70,10 @@ function markerPath(memoryDir: string): string {
   return path.join(memoryDir, "state", LIFECYCLE_INIT_DONE_MARKER);
 }
 
+function qmdRefreshPendingPath(memoryDir: string): string {
+  return path.join(memoryDir, "state", LIFECYCLE_QMD_REFRESH_PENDING_MARKER);
+}
+
 async function markerExists(memoryDir: string): Promise<boolean> {
   try {
     await access(markerPath(memoryDir));
@@ -82,6 +87,25 @@ async function writeMarker(memoryDir: string, now: Date): Promise<void> {
   const p = markerPath(memoryDir);
   await mkdir(path.dirname(p), { recursive: true });
   await writeFile(p, JSON.stringify({ createdAt: now.toISOString() }), "utf-8");
+}
+
+async function qmdRefreshPendingExists(memoryDir: string): Promise<boolean> {
+  try {
+    await access(qmdRefreshPendingPath(memoryDir));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function writeQmdRefreshPending(memoryDir: string, now: Date): Promise<void> {
+  const p = qmdRefreshPendingPath(memoryDir);
+  await mkdir(path.dirname(p), { recursive: true });
+  await writeFile(p, JSON.stringify({ createdAt: now.toISOString() }), "utf-8");
+}
+
+async function clearQmdRefreshPending(memoryDir: string): Promise<void> {
+  await unlink(qmdRefreshPendingPath(memoryDir)).catch(() => {});
 }
 
 async function buildTierRoutingPolicy(config: PluginConfig): Promise<TierRoutingPolicy> {
@@ -245,6 +269,7 @@ export async function runFirstStartMigration(
           demotedCount += 1;
           continue;
         } catch {
+          await writeQmdRefreshPending(config.memoryDir, now);
           // Fall through to failure accounting below.
         }
       }
@@ -261,9 +286,10 @@ export async function runFirstStartMigration(
   if (signal?.aborted) {
     return abortedResult(candidateCount, demotedCount, failureCount);
   }
-  if (candidateCount === 0 && qmd) {
+  if (candidateCount === 0 && qmd && await qmdRefreshPendingExists(config.memoryDir)) {
     try {
       await qmd.updateCollection(coldCollection);
+      await clearQmdRefreshPending(config.memoryDir);
     } catch {
       failureCount += 1;
     }

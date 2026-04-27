@@ -191,6 +191,34 @@ test("first-start migration: candidateCount=0 when no hot memories qualify", asy
   }
 });
 
+test("first-start migration: empty corpus writes marker even when QMD refresh fails", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-fsm-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    const config = makeConfig(dir);
+
+    const result = await runFirstStartMigration({
+      storage,
+      config,
+      qmd: {
+        updateCollection: async () => {
+          throw new Error("qmd unavailable");
+        },
+        embedCollection: async () => {},
+      } as any,
+    });
+
+    assert.equal(result.candidateCount, 0);
+    assert.equal(result.failureCount, 0);
+
+    const markerPath = path.join(dir, "state", LIFECYCLE_INIT_DONE_MARKER);
+    await access(markerPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("first-start migration: respects demotionCap", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-fsm-"));
   try {

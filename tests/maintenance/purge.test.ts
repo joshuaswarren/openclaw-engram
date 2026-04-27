@@ -97,6 +97,21 @@ test("purgeMemories: dryRun=true returns candidates without deleting", async () 
   assert.equal(result.purgedCount, 0);
 });
 
+test("purgeMemories: rejects non-positive olderThanMs at module boundary", async () => {
+  const { stub } = makeStorageStub();
+
+  await assert.rejects(
+    () =>
+      purgeMemories({
+        storage: stub,
+        olderThanMs: 0,
+        tier: "all",
+        dryRun: false,
+      }),
+    /olderThanMs must be a finite positive number/,
+  );
+});
+
 test("purgeMemories: skips memories newer than olderThanMs", async () => {
   const recent = makeMemory({ id: "recent", updated: "2026-04-01T00:00:00.000Z", filePath: "/tmp/cold/recent.md" });
   const { stub } = makeStorageStub({ cold: [recent] });

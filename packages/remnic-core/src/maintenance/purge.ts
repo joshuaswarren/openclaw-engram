@@ -132,6 +132,10 @@ export async function purgeMemories(
     coldCollection = "openclaw-engram-cold",
   } = options;
 
+  if (!Number.isFinite(olderThanMs) || olderThanMs <= 0) {
+    throw new Error("olderThanMs must be a finite positive number");
+  }
+
   const now = (options.now ?? (() => new Date()))();
   const nowMs = now.getTime();
 

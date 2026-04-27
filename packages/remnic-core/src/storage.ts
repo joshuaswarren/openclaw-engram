@@ -199,26 +199,63 @@ function trimLeadingSpacesAndTabs(value: string): string {
 }
 
 function stripDefaultCitationMarkersWithoutRegex(value: string): string {
-  const marker = "[source:";
+  return stripCitationMarkersForHashRemoval(value, DEFAULT_CITATION_FORMAT);
+}
+
+function citationTemplateLiteralParts(template: string): string[] {
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < template.length) {
+    const open = template.indexOf("{", cursor);
+    if (open === -1) {
+      parts.push(template.slice(cursor));
+      break;
+    }
+    parts.push(template.slice(cursor, open));
+    const close = template.indexOf("}", open + 1);
+    if (close === -1) {
+      cursor = open + 1;
+    } else {
+      cursor = close + 1;
+    }
+  }
+  return parts.filter((part) => part.length > 0);
+}
+
+function stripCitationMarkersForHashRemoval(value: string, template: string): string {
+  const parts = citationTemplateLiteralParts(template);
+  if (parts.length === 0) return value;
+  const first = parts[0]!;
   const lowerValue = value.toLowerCase();
-  if (!lowerValue.includes(marker)) return value;
+  const lowerFirst = first.toLowerCase();
+  const lowerParts = parts.map((part) => part.toLowerCase());
+  if (!lowerValue.includes(lowerFirst)) return value;
 
   let result = "";
   let cursor = 0;
   let removed = false;
   while (cursor < value.length) {
-    const markerStart = lowerValue.indexOf(marker, cursor);
+    const markerStart = lowerValue.indexOf(lowerFirst, cursor);
     if (markerStart === -1) {
       result += value.slice(cursor);
       break;
     }
-    const markerEnd = value.indexOf("]", markerStart + marker.length);
-    if (markerEnd === -1) {
+    let markerEnd = markerStart + first.length;
+    let matched = true;
+    for (let i = 1; i < lowerParts.length; i += 1) {
+      const partIndex = lowerValue.indexOf(lowerParts[i]!, markerEnd);
+      if (partIndex === -1) {
+        matched = false;
+        break;
+      }
+      markerEnd = partIndex + parts[i]!.length;
+    }
+    if (!matched) {
       result += value.slice(cursor);
       break;
     }
     result += trimTrailingSpacesAndTabs(value.slice(cursor, markerStart));
-    cursor = markerEnd + 1;
+    cursor = markerEnd;
     removed = true;
   }
 
@@ -2810,13 +2847,18 @@ export class StorageManager {
   }
 
   async removeFactContentHashesForMemories(memories: MemoryFile[]): Promise<void> {
+    await this.ensureFactHashIndexAuthoritative();
     const factHashIndex = await this.getFactHashIndex();
     for (const memory of memories) {
       if (memory.frontmatter.category !== "fact") continue;
       if (memory.frontmatter.contentHash) {
         factHashIndex.removeByHash(memory.frontmatter.contentHash);
       } else {
-        const hashSource = stripDefaultCitationMarkersWithoutRegex(memory.content);
+        const configuredHashSource = stripCitationMarkersForHashRemoval(memory.content, this.citationTemplate);
+        const hashSource =
+          configuredHashSource !== memory.content
+            ? configuredHashSource
+            : stripDefaultCitationMarkersWithoutRegex(memory.content);
         factHashIndex.remove(sanitizeMemoryContent(hashSource).text);
       }
     }
@@ -3225,7 +3267,7 @@ export class StorageManager {
     for (const tier of tiers) {
       if (tier === "cold") {
         coldChanged = true;
-      } else {
+      } else if (tier === "hot") {
         hotChanged = true;
       }
     }

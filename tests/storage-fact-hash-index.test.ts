@@ -194,6 +194,38 @@ test("removeFactContentHashesForMemories strips citations for legacy facts witho
   }
 });
 
+test("removeFactContentHashesForMemories strips configured legacy citation templates", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-fact-hash-remove-custom-"));
+  try {
+    const rawBody = "Legacy fact with a custom citation marker.";
+    const template = "[src:{agent}/{sessionId}@{date}]";
+    const citedBody = `${rawBody} [src:planner/agent:planner:main@2026-04-11]`;
+    const storage = new StorageManager(dir);
+    storage.citationTemplate = template;
+    const index = new ContentHashIndex(path.join(dir, "state"));
+    index.add(rawBody);
+    await index.save();
+
+    await storage.removeFactContentHashesForMemories([
+      {
+        path: path.join(dir, "facts", "legacy.md"),
+        content: citedBody,
+        frontmatter: {
+          id: "legacy-custom",
+          category: "fact",
+          created: "2026-04-11T00:00:00.000Z",
+          updated: "2026-04-11T00:00:00.000Z",
+          source: "test",
+        } as any,
+      },
+    ]);
+
+    assert.equal(await storage.hasFactContentHash(rawBody), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test(
   "rebuild from disk (Thread 4 fix): legacy fact with unknown custom citation and no contentHash is indexed by its full body",
   async () => {
