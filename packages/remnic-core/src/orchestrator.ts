@@ -6380,9 +6380,23 @@ export class Orchestrator {
     // Issue #679 completion: side-channel annotation for recall X-ray.
     // We capture the peer id and injected-field count separately from
     // the promise result string so the xray snapshot builder can record
-    // them without re-parsing the rendered section text. Null = no
-    // injection happened (feature off, no peer, no profile, error).
-    let peerProfileXrayAnnotation: { peerId: string; fieldsInjected: number } | null = null;
+    // them without re-parsing the rendered section text.
+    //
+    // Three-state semantics (mirrors docs/peers.md X-ray contract):
+    //   undefined — feature off, no peer registered, or maxFields=0 (field
+    //               absent from snapshot — peerProfileInjection not set).
+    //   null      — feature enabled + peer registered, but no profile or no
+    //               fields found (snapshot carries explicit null).
+    //   object    — injection occurred (snapshot carries { peerId, fieldsInjected }).
+    //
+    // Cursor Bugbot (PR #764): must start as `undefined` so early-return
+    // paths that never enter the feature-enabled branch leave the annotation
+    // absent. Starting as `null` incorrectly sets peerProfileInjection:null
+    // on the snapshot even when peerProfileRecallEnabled is false.
+    let peerProfileXrayAnnotation:
+      | { peerId: string; fieldsInjected: number }
+      | null
+      | undefined = undefined;
     const peerProfileRecallPromise = (async (): Promise<string | null> => {
       if (!this.config.peerProfileRecallEnabled) return null;
       if (this.config.peerProfileRecallMaxFields <= 0) return null;

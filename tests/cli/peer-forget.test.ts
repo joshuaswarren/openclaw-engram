@@ -175,6 +175,13 @@ test("peers/storage.ts exports forgetPeer function", () => {
     /opts\.confirm !== ["']yes["']/,
     "forgetPeer must guard against missing confirm",
   );
+  // Cursor finding #2: forgetPeer must call assertPeerDirNotEscaped for
+  // realpath containment, matching the contract of every other I/O entry-point.
+  assert.match(
+    src,
+    /assertPeerDirNotEscaped\(memoryDir, peerId\)/,
+    "forgetPeer must call assertPeerDirNotEscaped for realpath containment",
+  );
 });
 
 test("peers/index.ts re-exports forgetPeer", () => {

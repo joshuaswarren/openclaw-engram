@@ -660,9 +660,12 @@ export async function deletePeer(memoryDir: string, peerId: string): Promise<boo
  *
  * Security contract (mirrors `deletePeer`):
  *   - `peerId` is validated against `PEER_ID_PATTERN`.
- *   - The peer directory is lstat-checked: symlinked directories are
- *     rejected before the recursive removal.
  *   - The peers root is checked for symlink swap (assertPeersRootNotSymlink).
+ *   - `assertPeerDirNotEscaped` performs realpath containment: symlinked
+ *     peer directories are rejected and the resolved path is confirmed to
+ *     stay inside peersRoot (same guard used by every other I/O entry-point).
+ *   - A secondary `lstat` + `isSymbolicLink()` check is kept as defence-in-
+ *     depth before the `fs.rm` call itself.
  *   - `fs.rm` with `{ recursive: true, force: true }` is used for the
  *     actual removal so partially-populated directories are handled
  *     atomically by the OS rather than file-by-file in userland.
@@ -681,6 +684,15 @@ export async function forgetPeer(
   }
   assertValidPeerId(peerId);
   await assertPeersRootNotSymlink(memoryDir);
+  // assertPeerDirNotEscaped performs the realpath-containment check that
+  // the lexical `peerDir()` guard alone cannot provide: it lstat-checks
+  // the candidate, rejects symlinks, and confirms the resolved path stays
+  // inside peersRoot. Mirrors the contract of every other I/O entry-point
+  // in this module (`readPeer`, `writePeer`, `deletePeer`,
+  // `appendInteractionLog`, `readPeerProfile`, `writePeerProfile`).
+  // The function handles ENOENT gracefully (returns without throwing), so
+  // calling it here is safe for the idempotent no-op path as well.
+  await assertPeerDirNotEscaped(memoryDir, peerId);
 
   const dir = peerDir(memoryDir, peerId);
 
