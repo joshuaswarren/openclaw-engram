@@ -83,7 +83,9 @@ Enable the job in plugin config:
 | `patternReinforcementMinCount` | `3` | Minimum cluster size before a canonical is promoted. Clamped to `[2, 1000]`; clusters of 1 are degenerate. |
 | `patternReinforcementCategories` | `["preference", "fact", "decision"]` | Categories the job scans. Empty array means no categories are processed. |
 
-The cadence guard uses an **in-memory timestamp map** (`lastPatternReinforcementAtByNs`, keyed by namespace) that is set when a run completes. If `Date.now() - lastRunAt < patternReinforcementCadenceMs`, the job returns early with `skippedReason: "cadence"`. Because the map is in-memory, it resets on process restart — operators should account for this when scheduling: a freshly restarted process will always run the job on the next maintenance cycle regardless of how recently the previous process ran it. Set `patternReinforcementCadenceMs: 0` to disable the gate entirely and run on every maintenance cycle.
+The cadence guard is **entirely in-memory** and is NOT derived from the `last_reinforced_at` field written to memory frontmatter. The orchestrator keeps a `lastPatternReinforcementAtByNs` Map (keyed by namespace) that records the epoch-ms timestamp when each run completes. If `Date.now() - lastRunAt < patternReinforcementCadenceMs`, the job returns early with `skippedReason: "cadence"`.
+
+Because the map is in-process, it resets on every process restart. A freshly restarted gateway will always run the job on the first maintenance cycle, regardless of when the previous process last ran it. Operators who need cross-restart cadence control should rely on external scheduling (cron, Dreams phase triggers) rather than the in-process gate alone. Set `patternReinforcementCadenceMs: 0` to disable cadence gating entirely and run on every maintenance cycle.
 
 ## Recall boost
 
