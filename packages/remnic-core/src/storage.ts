@@ -182,6 +182,49 @@ function isErrnoCode(error: unknown, code: string): boolean {
   );
 }
 
+function trimTrailingSpacesAndTabs(value: string): string {
+  let end = value.length;
+  while (end > 0 && (value[end - 1] === " " || value[end - 1] === "\t")) {
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
+}
+
+function trimLeadingSpacesAndTabs(value: string): string {
+  let start = 0;
+  while (start < value.length && (value[start] === " " || value[start] === "\t")) {
+    start += 1;
+  }
+  return start === 0 ? value : value.slice(start);
+}
+
+function stripDefaultCitationMarkersWithoutRegex(value: string): string {
+  const marker = "[source:";
+  const lowerValue = value.toLowerCase();
+  if (!lowerValue.includes(marker)) return value;
+
+  let result = "";
+  let cursor = 0;
+  let removed = false;
+  while (cursor < value.length) {
+    const markerStart = lowerValue.indexOf(marker, cursor);
+    if (markerStart === -1) {
+      result += value.slice(cursor);
+      break;
+    }
+    const markerEnd = value.indexOf("]", markerStart + marker.length);
+    if (markerEnd === -1) {
+      result += value.slice(cursor);
+      break;
+    }
+    result += trimTrailingSpacesAndTabs(value.slice(cursor, markerStart));
+    cursor = markerEnd + 1;
+    removed = true;
+  }
+
+  return removed ? trimLeadingSpacesAndTabs(result) : value;
+}
+
 function serializeFrontmatter(fm: MemoryFrontmatter): string {
   const lines = [
     "---",
@@ -2773,8 +2816,7 @@ export class StorageManager {
       if (memory.frontmatter.contentHash) {
         factHashIndex.removeByHash(memory.frontmatter.contentHash);
       } else {
-        const stripped = stripCitationForTemplate(memory.content, this.citationTemplate);
-        const hashSource = stripped !== memory.content ? stripped : memory.content;
+        const hashSource = stripDefaultCitationMarkersWithoutRegex(memory.content);
         factHashIndex.remove(sanitizeMemoryContent(hashSource).text);
       }
     }
