@@ -58,20 +58,18 @@ the destination machine.
 ### `remnic capsule export`
 
 ```
-remnic capsule export <name> [options]
-
-Arguments:
-  name                    Capsule id (alphanumeric + dashes, max 64 chars). Required.
+remnic capsule export [options]
 
 Options:
-  --out <dir>             Output directory. Default: <memoryDir>/.capsules
+  --name <id>             Capsule id (alphanumeric + dashes, max 64 chars). Required.
+  --out-dir <dir>         Output directory. Default: <memoryDir>/.capsules
   --since <iso8601>       Only include files modified on or after this date.
                           Accepts YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ (explicit timezone required).
   --include-kinds <list>  Comma-separated top-level subdirectory allow-list
                           (e.g. facts,entities,corrections). When set, only files
                           whose first path segment is in the list are exported.
-                          Pass "transcripts" here to include transcripts (excluded by default).
-  --peers <list>          Comma-separated peer id allow-list for the peers/ subtree.
+  --include-transcripts   Include transcript files (excluded by default).
+  --peer-ids <list>       Comma-separated peer id allow-list for the peers/ subtree.
   --encrypt               Seal the archive with the secure-store master key.
                           The store must be unlocked before running this command.
 ```

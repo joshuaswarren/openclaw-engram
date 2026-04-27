@@ -4140,6 +4140,22 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             }
           }
 
+          // Reject encrypted archives before attempting gunzip — mergeCapsule
+          // does not support decryption and would throw a confusing "not a
+          // valid gzip" error. Detect by extension and magic header.
+          // (Codex P1 PRRT_kwDORJXyws59so7S / Cursor PRRT_kwDORJXyws59spK7)
+          if (sourceArchive.endsWith(".enc")) {
+            const { isEncryptedCapsuleFile } = await import("./transfer/capsule-crypto.js");
+            const encDetected = await isEncryptedCapsuleFile(sourceArchive).catch(() => true);
+            if (encDetected) {
+              throw new Error(
+                `capsule merge: encrypted archives (.enc) are not supported by merge. ` +
+                  `Decrypt the archive first with "remnic capsule import" ` +
+                  `(requires unlocked secure-store), then use the decrypted .capsule.json.gz.`,
+              );
+            }
+          }
+
           const { mergeCapsule } = await import("./transfer/capsule-merge.js");
           const result = await mergeCapsule({
             sourceArchive,
@@ -4184,6 +4200,10 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
 
           const memoryDir = expandTildePath(orchestrator.config.memoryDir);
           const defaultDir = defaultCapsulesDir(memoryDir);
+          // Track whether --dir was explicitly supplied so we can give a clear
+          // error when it doesn't exist (Cursor PRRT_kwDORJXyws59spK8).
+          const dirWasExplicit =
+            typeof opts.dir === "string" && opts.dir.trim() !== "";
           const parsed = parseCapsuleListOptions(opts, defaultDir);
           // Expand tilde in the resolved capsules dir (covers --dir ~/... inputs).
           const capsulesDir = expandTildePath(parsed.capsulesDir);
@@ -4194,10 +4214,18 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           try {
             dirEntries = await readdir(capsulesDir);
           } catch (err) {
-            // ENOENT means the directory hasn't been created yet — treat as empty.
-            // Any other error (e.g. EACCES, ENOTDIR) is a real problem and must
-            // be surfaced so the user knows why the listing is empty.
             const code = (err as NodeJS.ErrnoException).code;
+            if (dirWasExplicit) {
+              // User explicitly provided --dir <path>: any error (including
+              // ENOENT) must be surfaced — a silent empty list would hide a
+              // typo or missing mount. (Cursor PRRT_kwDORJXyws59spK8)
+              throw new Error(
+                `capsule list: cannot read --dir ${capsulesDir}: ${(err as Error).message}`,
+              );
+            }
+            // Default capsulesDir: ENOENT means the directory hasn't been
+            // created yet — treat as empty. Re-throw other errors (EACCES,
+            // ENOTDIR, …). (Codex P1 PRRT_kwDORJXyws59smmg)
             if (code !== "ENOENT") {
               throw new Error(
                 `capsule list: cannot read capsule store directory ${capsulesDir}: ${(err as Error).message}`,
