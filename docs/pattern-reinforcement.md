@@ -87,7 +87,7 @@ Enable the job in plugin config:
 
 The cadence guard is **entirely in-memory** and is NOT derived from the `last_reinforced_at` field written to memory frontmatter. The orchestrator keeps a `lastPatternReinforcementAtByNs` Map (keyed by namespace) that records the epoch-ms timestamp when each run completes. If `Date.now() - lastRunAt < patternReinforcementCadenceMs`, the job returns early with `skippedReason: "cadence"`.
 
-Because the map is in-process, it resets on every process restart. A freshly restarted gateway will always run the job on the first maintenance cycle, regardless of when the previous process last ran it. Operators who need cross-restart cadence control should rely on external scheduling (cron, Dreams phase triggers) rather than the in-process gate alone. Set `patternReinforcementCadenceMs: 0` to disable cadence gating entirely and run on every maintenance cycle.
+Because the map is in-process, it resets on every process restart. A freshly restarted gateway will always run the job on the first invocation that follows, regardless of when the previous process last ran it. Operators who need cross-restart cadence control should rely on external scheduling — for example a system cron job that calls the `remnic.pattern_reinforcement_run` MCP tool on a fixed interval — rather than the in-process gate alone. Set `patternReinforcementCadenceMs: 0` to disable cadence gating entirely and run on every invocation.
 
 ## Recall boost
 
