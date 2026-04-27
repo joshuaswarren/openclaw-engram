@@ -3340,6 +3340,14 @@ export class EngramAccessService {
     return { found: true, anchor };
   }
 
+  /**
+   * @deprecated since issue #679 PR 5/5 — the identity-anchor model is
+   * superseded by the peer registry. Use `peerSet({ id: "self", ... })` or
+   * `remnic peer set self` to update the self peer's identity kernel, and
+   * `remnic peer migrate` to seed `peers/self/identity.md` from existing
+   * legacy anchor data. This method continues to function for backward
+   * compatibility but will be removed in a future major version.
+   */
   async identityAnchorUpdate(request: {
     namespace?: string;
     principal?: string;

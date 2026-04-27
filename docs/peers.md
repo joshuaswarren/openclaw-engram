@@ -7,8 +7,7 @@ with a Remnic store — the operator themself, other humans, other agents,
 and non-conversational integrations — can be represented as a `Peer` with
 an evolving cognitive profile.
 
-This page describes the **PR 1/5** schema slice. Async profile updates,
-recall integration, and CLI/HTTP/MCP surfaces ship in later PRs.
+All five PRs are now merged. This page covers the complete feature.
 
 ## Concepts
 
@@ -18,16 +17,16 @@ kernel files under `peers/{peer-id}/`:
 | File | Purpose | Update cadence | Owner |
 |------|---------|----------------|-------|
 | `identity.md` | Slow-changing facts: `id`, `kind`, `displayName`, timestamps, free-form notes. | Manual / rare. | Operator. |
-| `profile.md` | Evolving cognitive profile derived from session signals. JSON payload inside a fenced block, with per-field provenance. | Background reasoner (PR 2/5). | Reasoner. |
+| `profile.md` | Evolving cognitive profile derived from session signals. JSON payload inside a fenced block, with per-field provenance. | Background reasoner (async). | Reasoner. |
 | `interactions.log.md` | Append-only signal log the reasoner reads. | Per turn / per signal. | Append-only. |
 
 ### Peer kinds
 
 `Peer.kind` is one of:
 
-- `self` — the current Remnic operator. Replaces the singular
-  identity-anchor; PR 5/5 migrates existing identity-anchor data into
-  `peers/self/identity.md`.
+- `self` — the current Remnic operator. Supersedes the legacy
+  identity-anchor model; `remnic peer migrate` seeds
+  `peers/self/identity.md` from existing legacy data.
 - `human` — another human collaborator distinct from `self`.
 - `agent` — another AI agent (e.g. Claude Code, Codex, Hermes).
 - `integration` — a non-conversational integration that produces signals
@@ -41,67 +40,192 @@ storage layer validates this on every read and write — `..`, paths with
 `/`, and other traversal-ish strings are rejected before any filesystem
 operation.
 
-## Distinguishing peers from `IDENTITY.md`
+## Registry storage layout
 
-The pre-existing `IDENTITY.md` / identity-anchor model represents one
-party — the operator. The peer registry is the multi-party
-generalization:
+All peer files live under `{memoryDir}/peers/`:
 
-- `IDENTITY.md` (today) → `peers/self/identity.md` after PR 5/5 migration.
-- The `engram_identity_anchor_*` MCP tools continue to work unchanged
-  during the migration window (PR 4/5 introduces deprecated aliases).
-- `peers/self/profile.md` is the new home for the kind of evolving
-  per-operator profile that the compounding engine maintains today;
-  the reasoner in PR 2/5 will own writes there.
+```
+{memoryDir}/
+└── peers/
+    ├── self/
+    │   ├── identity.md          # id, kind, displayName, notes
+    │   ├── profile.md           # evolving cognitive profile (reasoner-owned)
+    │   └── interactions.log.md  # append-only signal log
+    ├── alice/
+    │   ├── identity.md
+    │   └── interactions.log.md
+    └── codex-agent/
+        ├── identity.md
+        ├── profile.md
+        └── interactions.log.md
+```
 
-If you are reading this in PR 1/5: nothing has migrated yet. The peer
-registry is purely additive on disk. No code path reads or writes peer
-files outside of explicit calls to the new helpers in
-`packages/remnic-core/src/peers/`.
+The `identity.md` format uses a minimal YAML frontmatter:
+
+```markdown
+---
+id: "self"
+kind: self
+displayName: "Self"
+createdAt: "2026-04-27T00:00:00.000Z"
+updatedAt: "2026-04-27T00:00:00.000Z"
+---
+
+## Migrated from identity-anchor.md
+
+...operator identity notes...
+```
+
+All string values are double-quoted with `\\` and `\"` escapes. Timestamps
+are bare ISO-8601 strings. The body after the closing `---` is free-form
+markdown.
+
+## Profile reasoner
+
+The async profile reasoner (shipped in PR 2/5) runs inside the Dreams REM
+phase. It reads recent `interactions.log.md` entries and derives structured
+`profile.md` fields with provenance. Each field records:
+
+- `observedAt` — ISO-8601 timestamp of the observation.
+- `signal` — the log entry text that drove the inference.
+- `sourceSessionId` — (optional) originating session.
+- `note` — (optional) free-form reasoner annotation.
+
+The reasoner is **disabled by default** and must be opted in via
+`peer.profileReasoner.enabled: true` in the plugin config.
+
+## Recall integration
+
+PR 3/5 wires the peer registry into the recall pipeline. When a
+`peer` field is included in a recall request, Remnic injects a brief
+excerpt from that peer's `profile.md` into the prompt context. Recall
+X-ray output annotates which profile excerpt was injected.
+
+## CLI commands
+
+All peer commands live under `remnic peer`:
+
+```
+remnic peer list [--json]
+remnic peer show <id> [--json]
+remnic peer set <id> [--kind <kind>] [--display-name <name>] [--notes <text>] [--json]
+remnic peer delete <id> [--json]
+remnic peer profile <id> [--json]
+remnic peer migrate [--dry-run] [--display-name <name>] [--json]
+```
+
+### `remnic peer list`
+
+Lists all registered peers. `--json` emits `{ "peers": [...] }`.
+
+### `remnic peer show <id>`
+
+Shows the identity record for a single peer. Exits non-zero when the
+peer is not found.
+
+### `remnic peer set <id>`
+
+Creates or updates a peer. On first write, `--kind` sets the peer kind
+(default `"human"` when omitted at service layer). On subsequent writes,
+`kind` is immutable — pass `--display-name` or `--notes` to update those
+fields instead.
+
+### `remnic peer delete <id>`
+
+Removes `peers/{id}/identity.md`. The peer directory and companion files
+(`profile.md`, `interactions.log.md`) are left in place. Idempotent:
+returns a no-op result when the peer does not exist.
+
+### `remnic peer profile <id>`
+
+Prints the evolving cognitive profile for a peer. The profile is written
+by the async reasoner; exits non-zero when no profile exists yet.
+
+### `remnic peer migrate`
+
+Migrates legacy identity-anchor data into `peers/self/identity.md`.
+
+```
+remnic peer migrate [--dry-run] [--display-name <name>] [--json]
+```
+
+**What it reads:**
+
+- `{memoryDir}/identity/identity-anchor.md` — structured sections
+  (`## Identity Traits`, `## Communication Preferences`, etc.) written by
+  `engram_identity_anchor_update`. Embedded verbatim in `peer.notes` under
+  a `## Migrated from identity-anchor.md` label.
+- `{memoryDir}/IDENTITY.md` — free-form reflection entries appended by the
+  extraction engine. Embedded as a `## Migrated from IDENTITY.md` section.
+
+Both sources are optional. If neither exists, a `self` peer is created
+with no notes. Symlinked source files are silently skipped.
+
+**Properties:**
+
+- **Idempotent** — if `peers/self/identity.md` already exists the command
+  returns immediately without overwriting.
+- **Non-destructive** — legacy files are never deleted. Verify the result
+  with `remnic peer show self` before archiving legacy data.
+- **`--dry-run`** — computes and prints the proposed peer record without
+  writing anything to disk.
+
+**Example output:**
+
+```
+Migrated identity-anchor data to peers/self/identity.md.
+  Read anchor:  /path/to/memory/identity/identity-anchor.md
+
+Legacy identity-anchor files are untouched. Verify the migration result
+with `remnic peer show self` before archiving legacy files.
+```
+
+## HTTP and MCP surfaces
+
+PR 4/5 shipped the following HTTP endpoints and MCP tools:
+
+| Surface | HTTP | MCP tool |
+|---------|------|----------|
+| List peers | `GET /engram/v1/peers` | `engram.peer_list` |
+| Get peer | `GET /engram/v1/peers/:id` | `engram.peer_get` |
+| Set peer | `PUT /engram/v1/peers/:id` | `engram.peer_set` |
+| Delete peer | `DELETE /engram/v1/peers/:id` | `engram.peer_delete` |
+| Get profile | `GET /engram/v1/peers/:id/profile` | `engram.peer_profile` |
+
+## Relationship to the legacy identity-anchor
+
+The legacy `engram_identity_anchor_get` and `engram_identity_anchor_update`
+MCP tools continue to work unchanged. `identityAnchorUpdate` is now
+**deprecated** — the method is preserved for backward compatibility but
+will be removed in a future major version. Use `peerSet({ id: "self", ... })`
+or `remnic peer set self` to update the self peer going forward.
+
+After running `remnic peer migrate` you can verify with:
+
+```
+remnic peer show self
+```
+
+And then optionally archive the legacy files:
+
+```
+mv ~/.remnic/identity/identity-anchor.md ~/.remnic/identity/identity-anchor.md.bak
+```
 
 ## Privacy posture
 
 - **Local-only by default.** Peer kernel files are stored under the
   same `memoryDir` tree as the rest of Remnic. They are not synced or
   exported anywhere automatically.
-- **No personality inference.** The eventual reasoner (PR 2/5) only
-  derives profile fields from observable signals — explicit
-  preferences, communication-style cues, recurring concerns, decision
-  patterns. Sentiment-based or affective inference is a non-goal.
+- **No personality inference.** The reasoner only derives profile fields
+  from observable signals — explicit preferences, communication-style
+  cues, recurring concerns, decision patterns. Sentiment-based or
+  affective inference is a non-goal.
 - **Provenance everywhere.** Every profile field carries a list of
   `PeerProfileFieldProvenance` entries pointing back to the originating
-  session/signal. Users can audit exactly why a profile claim exists.
-- **Forget is destructive.** PR 5/5 will ship `remnic peer forget` —
-  immediate file delete + archive purge + reasoner state cleanup for
-  one peer.
-- **Capsule export gating.** Capsule export (issue #676) controls
-  whether peer data travels off-machine; peer profiles are not
-  included in any capsule unless explicitly opted in.
-
-## What ships in PR 1/5
-
-Schema and storage primitives only:
-
-- `Peer`, `PeerKind`, `PeerProfile`, `PeerProfileFieldProvenance`,
-  `PeerInteractionLogEntry` types.
-- `readPeer`, `writePeer`, `listPeers`, `readPeerProfile`,
-  `writePeerProfile`, `appendInteractionLog`, `readInteractionLogRaw`,
-  `assertValidPeerId` helpers.
-- `PEER_ID_PATTERN`, `PEER_ID_MAX_LENGTH`, `PEERS_DIR_NAME` constants.
-
-Public exports live on `@remnic/core`. Nothing in the orchestrator,
-recall pipeline, extraction pipeline, or any access surface
-(CLI/HTTP/MCP) consumes the peer registry yet — that wiring lands in
-later PRs.
-
-## What is deferred
-
-- **PR 2/5** — async profile reasoner inside the Dreams REM phase.
-  Disabled by default behind `peer.profileReasoner.enabled: false`.
-- **PR 3/5** — recall integration: optional `peer` field on recall
-  requests, profile excerpt injection, X-ray annotation.
-- **PR 4/5** — CLI (`remnic peer list / show / set / forget`), HTTP
-  endpoints under `/peers`, MCP tools `engram.peer_*`. Existing
-  identity-anchor tools become deprecated aliases for `peers/self/`.
-- **PR 5/5** — migration of existing identity-anchor data into
-  `peers/self/`, plus the destructive `remnic peer forget` flow.
+  session/signal. You can audit exactly why a profile claim exists.
+- **Forget is destructive.** Use `remnic peer delete <id>` to remove the
+  identity kernel; peer directories and companion files are left for
+  manual cleanup.
+- **Capsule export gating.** Capsule export (issue #676) does not
+  include peer profiles unless explicitly opted in.
