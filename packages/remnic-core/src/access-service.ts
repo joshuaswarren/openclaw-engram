@@ -4109,6 +4109,155 @@ export class EngramAccessService {
     return { submitted: memoryIds.length, matched: matchedIds.length };
   }
 
+  // ── Peer Registry surfaces (issue #679 PR 4/5) ────────────────────────────
+
+  /**
+   * List all registered peers. Returns the array of `Peer` objects in
+   * deterministic alphabetical order (mirroring `listPeers` storage semantics).
+   */
+  async peerList(): Promise<{ peers: import("./peers/types.js").Peer[] }> {
+    const { listPeers } = await import("./peers/index.js");
+    const peers = await listPeers(this.orchestrator.config.memoryDir);
+    return { peers };
+  }
+
+  /**
+   * Get a single peer by id. Returns `{ found: false }` when the peer does
+   * not exist rather than throwing, matching the `memoryGet` / `entityGet`
+   * pattern used throughout the service.
+   */
+  async peerGet(
+    peerId: string,
+  ): Promise<
+    | { found: true; peer: import("./peers/types.js").Peer }
+    | { found: false }
+  > {
+    const peers = await import("./peers/index.js");
+    const validateId: (id: unknown) => void = peers.assertValidPeerId;
+    try {
+      validateId(peerId);
+    } catch (err) {
+      throw new EngramAccessInputError((err as Error).message);
+    }
+    const peer = await peers.readPeer(this.orchestrator.config.memoryDir, peerId);
+    if (!peer) return { found: false };
+    return { found: true, peer };
+  }
+
+  /**
+   * Upsert a peer. Writes `peers/{id}/identity.md`. On first write the
+   * `createdAt` timestamp is set to now; on subsequent writes only
+   * `displayName` and `notes` are mutated (kind and createdAt are immutable
+   * once set, per the storage contract).
+   *
+   * Returns `{ created: true }` on first write, `{ created: false }` on update.
+   */
+  async peerSet(input: {
+    id: string;
+    kind?: string;
+    displayName?: string;
+    notes?: string;
+  }): Promise<{ ok: true; created: boolean; peer: import("./peers/types.js").Peer }> {
+    const peers = await import("./peers/index.js");
+    const validateId: (id: unknown) => void = peers.assertValidPeerId;
+
+    const { id } = input;
+    try {
+      validateId(id);
+    } catch (err) {
+      throw new EngramAccessInputError((err as Error).message);
+    }
+
+    const memoryDir = this.orchestrator.config.memoryDir;
+    const now = new Date().toISOString();
+    const existing = await peers.readPeer(memoryDir, id);
+
+    const ALLOWED_KINDS = new Set(["self", "human", "agent", "integration"]);
+    if (!existing) {
+      // First write — require kind.
+      const kind = input.kind ?? "human";
+      if (!ALLOWED_KINDS.has(kind)) {
+        throw new EngramAccessInputError(
+          `peer kind must be one of ${[...ALLOWED_KINDS].join(", ")}`,
+        );
+      }
+      const newPeer: import("./peers/types.js").Peer = {
+        id,
+        kind: kind as import("./peers/types.js").PeerKind,
+        displayName: input.displayName ?? id,
+        createdAt: now,
+        updatedAt: now,
+        ...(typeof input.notes === "string" ? { notes: input.notes } : {}),
+      };
+      await peers.writePeer(memoryDir, newPeer);
+      return { ok: true, created: true, peer: newPeer };
+    }
+
+    // Update — kind and createdAt are immutable.
+    const updated: import("./peers/types.js").Peer = {
+      id: existing.id,
+      kind: existing.kind,
+      createdAt: existing.createdAt,
+      updatedAt: now,
+      displayName: input.displayName !== undefined ? input.displayName : existing.displayName,
+      ...(input.notes !== undefined
+        ? { notes: input.notes }
+        : existing.notes !== undefined
+          ? { notes: existing.notes }
+          : {}),
+    };
+    await peers.writePeer(memoryDir, updated);
+    return { ok: true, created: false, peer: updated };
+  }
+
+  /**
+   * Delete a peer by removing `peers/{id}/identity.md`. If the file does not
+   * exist the call is a no-op (idempotent). The peer directory itself
+   * (`peers/{id}/`) is intentionally left in place — profile and interaction
+   * log data are not destroyed.
+   */
+  async peerDelete(peerId: string): Promise<{ ok: true; deleted: boolean }> {
+    const peers = await import("./peers/index.js");
+    const validateId: (id: unknown) => void = peers.assertValidPeerId;
+    try {
+      validateId(peerId);
+    } catch (err) {
+      throw new EngramAccessInputError((err as Error).message);
+    }
+    // Cursor M (PR #756 review): route through `peers.deletePeer` so
+    // the unlink runs `assertPeerDirNotEscaped`, the peers-root
+    // symlink check, and the parent-inode-stable / O_NOFOLLOW guards
+    // shared with `readPeer`/`writePeer`. A manual `path.join` +
+    // raw `fs.unlink` would let a symlinked `peers/<id>/` redirect
+    // the delete to an arbitrary `identity.md` outside `memoryDir`.
+    const deleted = await peers.deletePeer(this.orchestrator.config.memoryDir, peerId);
+    return { ok: true, deleted };
+  }
+
+  /**
+   * Get the evolving cognitive profile for a peer. Returns `{ found: false }`
+   * when no profile file exists yet (profile is written by the async reasoner,
+   * PR 2/5). The peer identity itself need not exist for a profile to exist,
+   * but in practice the reasoner only writes profiles for registered peers.
+   */
+  async peerProfileGet(
+    peerId: string,
+  ): Promise<
+    | { found: true; profile: import("./peers/types.js").PeerProfile }
+    | { found: false }
+  > {
+    const peers = await import("./peers/index.js");
+    const validateId: (id: unknown) => void = peers.assertValidPeerId;
+    try {
+      validateId(peerId);
+    } catch (err) {
+      throw new EngramAccessInputError((err as Error).message);
+    }
+    const profile = await peers.readPeerProfile(this.orchestrator.config.memoryDir, peerId);
+    if (!profile) return { found: false };
+    return { found: true, profile };
+  }
+
   // ── Contradiction Review (issue #520) ──────────────────────────────────────
 
   get memoryDir(): string {

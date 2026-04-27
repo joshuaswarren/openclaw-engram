@@ -65,3 +65,16 @@ export {
   type NotionPage,
   type NotionSyncResult,
 } from "./notion.js";
+
+export {
+  GITHUB_CONNECTOR_ID,
+  GITHUB_CURSOR_KIND,
+  GITHUB_DEFAULT_POLL_INTERVAL_MS,
+  createGitHubConnector,
+  isTransientGitHubError,
+  validateGitHubConfig,
+  type GitHubComment,
+  type GitHubConnectorConfig,
+  type GitHubFetchFn,
+  type GitHubSyncResult,
+} from "./github.js";

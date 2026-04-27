@@ -73,13 +73,14 @@ export function fromPosixRelPath(relPath: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Shared path-safety helpers (used by capsule-import and capsule-merge).
+// Shared path-safety helpers (used by capsule-import, capsule-merge, and
+// capsule-fork).
 //
-// These three helpers were previously duplicated across both modules. They are
-// security-critical (path-traversal and symlink-bypass guards), so any future
-// fix must apply uniformly. The `errorPrefix` argument lets each caller surface
-// a module-specific error message ("importCapsule:" vs "mergeCapsule:") without
-// forking the implementation.
+// These helpers are security-critical (path-traversal and symlink-bypass
+// guards), so any future fix must apply uniformly. The `errorPrefix` and
+// `argName` arguments let each caller surface module-specific error messages
+// ("importCapsule:" vs "mergeCapsule:" vs "forkCapsule:") without forking the
+// implementation.
 // ---------------------------------------------------------------------------
 
 /**

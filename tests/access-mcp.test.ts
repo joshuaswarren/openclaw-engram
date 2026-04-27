@@ -126,6 +126,40 @@ function createFakeService(): EngramAccessService {
       reviewQueue: [{ memoryId: "fact-1", reasonCode: "disputed_memory" }],
     }),
     briefingEnabled: true,
+    peerList: async () => ({
+      peers: [
+        {
+          id: "alice",
+          kind: "human",
+          displayName: "Alice",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          updatedAt: "2026-04-01T00:00:00.000Z",
+        },
+      ],
+    }),
+    peerGet: async (id: string) => ({
+      found: true,
+      peer: {
+        id,
+        kind: "human",
+        displayName: "Alice",
+        createdAt: "2026-04-01T00:00:00.000Z",
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      },
+    }),
+    peerSet: async ({ id }: { id: string }) => ({
+      ok: true,
+      created: true,
+      peer: {
+        id,
+        kind: "human",
+        displayName: id,
+        createdAt: "2026-04-01T00:00:00.000Z",
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      },
+    }),
+    peerDelete: async () => ({ ok: true, deleted: true }),
+    peerProfileGet: async () => ({ found: false }),
   } as unknown as EngramAccessService;
 }
 
@@ -224,6 +258,11 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.review_resolve",
     "engram.contradiction_scan_run",
     "engram.graph_edge_decay_run",
+    "engram.peer_list",
+    "engram.peer_get",
+    "engram.peer_set",
+    "engram.peer_delete",
+    "engram.peer_profile_get",
   ];
   const canonicalListed = legacyListed.map((name) => name.replace(/^engram\./, "remnic."));
   assert.deepEqual(listed, legacyListed.flatMap((name, index) => [canonicalListed[index], name]));
@@ -277,6 +316,81 @@ test("MCP server advertises tools and dispatches recall", async () => {
   });
   const entityResult = entity?.result as { structuredContent: { entity: { name: string } } };
   assert.equal(entityResult.structuredContent.entity.name, "person-alex");
+});
+
+test("engram.peer_set rejects non-string kind/displayName/notes (Codex P2 PR #756 round 2)", async () => {
+  // Surface-symmetry test: HTTP rejects non-string field types with
+  // 400; MCP must reject the same payloads with a tools/call error
+  // rather than silently coercing to `undefined` and letting
+  // peerSet fall back to its "human" default.
+  let lastSetArgs: unknown = null;
+  const baseFake = createFakeService();
+  const fakeService = {
+    ...baseFake,
+    peerSet: async (input: { id: string; kind?: string; displayName?: string; notes?: string }) => {
+      lastSetArgs = input;
+      return {
+        ok: true as const,
+        created: true,
+        peer: {
+          id: input.id,
+          kind: "human" as const,
+          displayName: input.displayName ?? input.id,
+          createdAt: "t",
+          updatedAt: "t",
+        },
+      };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(fakeService);
+
+  // Helper: tools/call surfaces dispatcher errors via { result: { isError: true, content: [{text}] } }.
+  const errMessage = (resp: unknown): string => {
+    const r = resp as { result?: { isError?: boolean; content?: Array<{ text?: string }> } };
+    if (!r?.result?.isError) return "";
+    return r.result.content?.[0]?.text ?? "";
+  };
+
+  // Non-string kind → error.
+  const r1 = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: { name: "engram.peer_set", arguments: { id: "bob", kind: 123 } },
+  });
+  assert.match(errMessage(r1), /kind must be a string/);
+
+  // Non-string displayName → error.
+  const r2 = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/call",
+    params: { name: "engram.peer_set", arguments: { id: "bob", displayName: 42 } },
+  });
+  assert.match(errMessage(r2), /displayName must be a string/);
+
+  // Non-string notes → error.
+  const r3 = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: { name: "engram.peer_set", arguments: { id: "bob", notes: { x: 1 } } },
+  });
+  assert.match(errMessage(r3), /notes must be a string/);
+
+  // Service.peerSet must NOT have been invoked for any of the rejected payloads.
+  assert.equal(lastSetArgs, null);
+
+  // A valid payload still works.
+  const ok = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 4,
+    method: "tools/call",
+    params: { name: "engram.peer_set", arguments: { id: "bob", kind: "human", displayName: "Bob" } },
+  });
+  const okResult = ok as { result?: { isError?: boolean } };
+  assert.equal(okResult?.result?.isError, false, "expected valid payload to succeed");
+  assert.deepEqual(lastSetArgs, { id: "bob", kind: "human", displayName: "Bob", notes: undefined });
 });
 
 test("MCP initialize re-reads the server version for each server instance", async () => {

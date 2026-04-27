@@ -4079,6 +4079,414 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log("OK");
         });
 
+      // ── Capsule merge / list / inspect (issue #676 PR 6/6) ──────────────
+      // Augments the export + import subcommands above with three-way merge,
+      // directory listing, and manifest inspection surfaces. Option parsing
+      // and rendering live in `capsule-cli.ts` for unit-testability.
+
+      capsuleCmd
+        .command("merge")
+        .description(
+          "Three-way merge of a capsule archive into the memory directory. " +
+            "New files are always written; conflicts are resolved by --conflict-mode.",
+        )
+        .argument("<archive>", "Path to a .capsule.json.gz archive")
+        .option(
+          "--conflict-mode <mode>",
+          "Conflict mode: skip-conflicts (default) | prefer-source | prefer-local",
+        )
+        .action(async (...args: unknown[]) => {
+          const archiveArg = args[0];
+          const opts = (args[1] ?? {}) as Record<string, unknown>;
+          const {
+            parseCapsuleMergeOptions,
+            defaultCapsulesDir,
+          } = await import("./capsule-cli.js");
+          const parsed = parseCapsuleMergeOptions(archiveArg, opts);
+
+          const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const capsulesDir = defaultCapsulesDir(memoryDir);
+
+          // Resolve archive path — same 3-step precedence as `capsule inspect`
+          // so that merge also accepts capsule IDs from the store directory.
+          //   1. Explicit path (starts with /, ./, ../, or contains sep) → tilde-expand and use as-is.
+          //   2. Bare name matching an existing cwd file → resolve to absolute.
+          //   3. Otherwise treat as a capsule id and look up in the capsules store.
+          const { stat: statMerge } = await import("node:fs/promises");
+          let sourceArchive = expandTildePath(parsed.archive);
+          const looksLikePath =
+            sourceArchive.startsWith("/") ||
+            sourceArchive.startsWith("./") ||
+            sourceArchive.startsWith("../") ||
+            sourceArchive.includes(path.sep);
+
+          if (!looksLikePath) {
+            const cwdResolved = path.resolve(sourceArchive);
+            const cwdSt = await statMerge(cwdResolved).catch(() => null);
+            if (cwdSt && cwdSt.isFile()) {
+              sourceArchive = cwdResolved;
+            } else {
+              const byId = path.join(capsulesDir, `${sourceArchive}.capsule.json.gz`);
+              const byIdEnc = path.join(capsulesDir, `${sourceArchive}.capsule.json.gz.enc`);
+              const stId = await statMerge(byId).catch(() => null);
+              if (stId && stId.isFile()) {
+                sourceArchive = byId;
+              } else {
+                const stEnc = await statMerge(byIdEnc).catch(() => null);
+                if (stEnc && stEnc.isFile()) {
+                  sourceArchive = byIdEnc;
+                }
+              }
+            }
+          }
+
+          // Reject encrypted archives before attempting gunzip — mergeCapsule
+          // does not support decryption and would throw a confusing "not a
+          // valid gzip" error. Detect by extension and magic header.
+          // (Codex P1 PRRT_kwDORJXyws59so7S / Cursor PRRT_kwDORJXyws59spK7)
+          if (sourceArchive.endsWith(".enc")) {
+            const { isEncryptedCapsuleFile } = await import("./transfer/capsule-crypto.js");
+            const encDetected = await isEncryptedCapsuleFile(sourceArchive).catch(() => true);
+            if (encDetected) {
+              throw new Error(
+                `capsule merge: encrypted archives (.enc) are not supported by merge. ` +
+                  `Decrypt the archive first with "remnic capsule import" ` +
+                  `(requires unlocked secure-store), then use the decrypted .capsule.json.gz.`,
+              );
+            }
+          }
+
+          const { mergeCapsule } = await import("./transfer/capsule-merge.js");
+          const result = await mergeCapsule({
+            sourceArchive,
+            targetRoot: memoryDir,
+            conflictMode: parsed.conflictMode,
+          });
+
+          const mergedCount = result.merged.length;
+          const skippedCount = result.skipped.length;
+          const conflictCount = result.conflicts.length;
+          console.log(
+            `Capsule merged: ${result.manifest.capsule.id}\n` +
+              `  conflict-mode: ${parsed.conflictMode}\n` +
+              `  merged:        ${mergedCount}\n` +
+              `  conflicts:     ${conflictCount}\n` +
+              `  skipped:       ${skippedCount}`,
+          );
+        });
+
+      capsuleCmd
+        .command("list")
+        .description(
+          "List all capsule archives in the capsule store directory " +
+            "(<memoryDir>/.capsules by default). Reads the sidecar manifest.json for metadata.",
+        )
+        .option(
+          "--dir <path>",
+          "Override the capsule store directory to list",
+        )
+        .option(
+          "--format <fmt>",
+          "Output format: text (default) | markdown | json",
+        )
+        .action(async (...args: unknown[]) => {
+          const opts = (args[0] ?? {}) as Record<string, unknown>;
+          const {
+            parseCapsuleListOptions,
+            renderCapsuleList,
+            defaultCapsulesDir,
+          } = await import("./capsule-cli.js");
+          type CapsuleListEntry = import("./capsule-cli.js").CapsuleListEntry;
+
+          const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const defaultDir = defaultCapsulesDir(memoryDir);
+          // Track whether --dir was explicitly supplied so we can give a clear
+          // error when it doesn't exist (Cursor PRRT_kwDORJXyws59spK8).
+          const dirWasExplicit =
+            typeof opts.dir === "string" && opts.dir.trim() !== "";
+          const parsed = parseCapsuleListOptions(opts, defaultDir);
+          // Expand tilde in the resolved capsules dir (covers --dir ~/... inputs).
+          const capsulesDir = expandTildePath(parsed.capsulesDir);
+
+          // Scan the capsule store directory for *.capsule.json.gz archives.
+          const { readdir, readFile, stat } = await import("node:fs/promises");
+          let dirEntries: string[];
+          try {
+            dirEntries = await readdir(capsulesDir);
+          } catch (err) {
+            const code = (err as NodeJS.ErrnoException).code;
+            if (dirWasExplicit) {
+              // User explicitly provided --dir <path>: any error (including
+              // ENOENT) must be surfaced — a silent empty list would hide a
+              // typo or missing mount. (Cursor PRRT_kwDORJXyws59spK8)
+              throw new Error(
+                `capsule list: cannot read --dir ${capsulesDir}: ${(err as Error).message}`,
+              );
+            }
+            // Default capsulesDir: ENOENT means the directory hasn't been
+            // created yet — treat as empty. Re-throw other errors (EACCES,
+            // ENOTDIR, …). (Codex P1 PRRT_kwDORJXyws59smmg)
+            if (code !== "ENOENT") {
+              throw new Error(
+                `capsule list: cannot read capsule store directory ${capsulesDir}: ${(err as Error).message}`,
+              );
+            }
+            dirEntries = [];
+          }
+
+          const archives = dirEntries
+            .filter(
+              (e) =>
+                e.endsWith(".capsule.json.gz") ||
+                e.endsWith(".capsule.json.gz.enc"),
+            )
+            .sort();
+
+          const entries: CapsuleListEntry[] = [];
+          for (const archiveName of archives) {
+            const archivePath = path.join(capsulesDir, archiveName);
+            // Capsule id is the filename stem before ".capsule.json.gz[.enc]".
+            const id = archiveName
+              .replace(/\.capsule\.json\.gz\.enc$/, "")
+              .replace(/\.capsule\.json\.gz$/, "");
+            const manifestName = `${id}.manifest.json`;
+            const manifestPath = path.join(capsulesDir, manifestName);
+
+            let createdAt: string | null = null;
+            let pluginVersion: string | null = null;
+            let fileCount: number | null = null;
+            let description: string | null = null;
+            let hasManifest = false;
+
+            try {
+              await stat(manifestPath);
+              hasManifest = true;
+            } catch {
+              // sidecar missing — leave metadata as null.
+            }
+
+            if (hasManifest) {
+              try {
+                const raw = await readFile(manifestPath, "utf-8");
+                const sidecar = JSON.parse(raw) as Record<string, unknown>;
+                createdAt =
+                  typeof sidecar.createdAt === "string" ? sidecar.createdAt : null;
+                pluginVersion =
+                  typeof sidecar.pluginVersion === "string"
+                    ? sidecar.pluginVersion
+                    : null;
+                fileCount =
+                  Array.isArray(sidecar.files) ? (sidecar.files as unknown[]).length : null;
+                const capsule = sidecar.capsule as Record<string, unknown> | undefined;
+                if (capsule && typeof capsule.description === "string") {
+                  description = capsule.description;
+                }
+              } catch {
+                // malformed sidecar — leave metadata as null.
+              }
+            }
+
+            entries.push({
+              id,
+              archivePath,
+              manifestPath: hasManifest ? manifestPath : null,
+              createdAt,
+              pluginVersion,
+              fileCount,
+              description,
+            });
+          }
+
+          console.log(renderCapsuleList(entries, parsed.format));
+        });
+
+      capsuleCmd
+        .command("inspect")
+        .description(
+          "Show capsule archive manifest without unpacking. " +
+            "Reads the sidecar .manifest.json when present; otherwise decompresses the archive.",
+        )
+        .argument("<archive>", "Path to a .capsule.json.gz archive (or its id in the capsule store)")
+        .option(
+          "--format <fmt>",
+          "Output format: text (default) | markdown | json",
+        )
+        .action(async (...args: unknown[]) => {
+          const archiveArg = args[0];
+          const opts = (args[1] ?? {}) as Record<string, unknown>;
+          const {
+            parseCapsuleInspectOptions,
+            renderCapsuleInspect,
+            defaultCapsulesDir,
+          } = await import("./capsule-cli.js");
+          type CapsuleInspectData = import("./capsule-cli.js").CapsuleInspectData;
+
+          const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const capsulesDir = defaultCapsulesDir(memoryDir);
+          const parsed = parseCapsuleInspectOptions(archiveArg, opts);
+
+          // Resolve archive path.
+          //
+          // Precedence (CLAUDE.md gotcha — bare relative names must not be
+          // misclassified as capsule ids):
+          //   1. If the argument looks like an explicit path (starts with /,
+          //      ./, ../, or contains a path separator) → use as-is after tilde
+          //      expansion.
+          //   2. Otherwise, check whether the argument resolves to an existing
+          //      file relative to cwd.  A bare name like "my-capsule.capsule.json.gz"
+          //      in the working directory must win over a capsule-id lookup.
+          //   3. If the file does not exist at cwd, treat as a capsule id and
+          //      look it up in the capsules store (plain then encrypted variant).
+          const { stat } = await import("node:fs/promises");
+          let archivePath = expandTildePath(parsed.archive);
+          const looksLikePath =
+            archivePath.startsWith("/") ||
+            archivePath.startsWith("./") ||
+            archivePath.startsWith("../") ||
+            archivePath.includes(path.sep);
+
+          if (!looksLikePath) {
+            // Step 2: check for an existing file at cwd before treating as id.
+            const cwdResolved = path.resolve(archivePath);
+            const cwdSt = await stat(cwdResolved).catch(() => null);
+            if (cwdSt && cwdSt.isFile()) {
+              archivePath = cwdResolved;
+            } else {
+              // Step 3: Treat as a capsule id — find it in the capsules dir.
+              // Try plain archive first, then encrypted variant.
+              const byId = path.join(capsulesDir, `${archivePath}.capsule.json.gz`);
+              const byIdEnc = path.join(capsulesDir, `${archivePath}.capsule.json.gz.enc`);
+              const st = await stat(byId).catch(() => null);
+              if (st && st.isFile()) {
+                archivePath = byId;
+              } else {
+                const stEnc = await stat(byIdEnc).catch(() => null);
+                if (stEnc && stEnc.isFile()) {
+                  archivePath = byIdEnc;
+                }
+              }
+            }
+          }
+
+          const isEncrypted = archivePath.endsWith(".capsule.json.gz.enc");
+
+          // Derive sidecar path: strip ".enc" suffix first (if present), then
+          // replace ".capsule.json.gz" with ".manifest.json".
+          const sidecarPath = archivePath
+            .replace(/\.enc$/, "")
+            .replace(/\.capsule\.json\.gz$/, ".manifest.json");
+
+          // Prefer sidecar manifest for cheap inspection.
+          let sidecar: Record<string, unknown> | null = null;
+          try {
+            const { readFile } = await import("node:fs/promises");
+            const raw = await readFile(sidecarPath, "utf-8");
+            sidecar = JSON.parse(raw) as Record<string, unknown>;
+          } catch {
+            // No sidecar — fall back to decompressing the archive (plain only).
+          }
+
+          let manifest: Record<string, unknown>;
+          if (sidecar !== null) {
+            manifest = sidecar;
+          } else if (isEncrypted) {
+            // No sidecar — attempt in-memory decryption if the secure-store is
+            // unlocked.  decryptCapsuleFileInMemory returns the plaintext gzip
+            // bytes; we then gunzip and parse exactly like the plaintext path.
+            const { gunzipSync } = await import("node:zlib");
+            const { parseExportBundle } = await import("./transfer/types.js");
+            let decryptedBuf: Buffer;
+            try {
+              const { decryptCapsuleFileInMemory } = await import(
+                "./transfer/capsule-crypto.js"
+              );
+              decryptedBuf = await decryptCapsuleFileInMemory(archivePath, memoryDir);
+            } catch (decErr) {
+              const msg =
+                decErr instanceof Error ? decErr.message : String(decErr);
+              const isLocked = msg.includes("locked") || msg.includes("no key");
+              process.stderr.write(
+                isLocked
+                  ? `capsule inspect: secure-store is locked — unlock it first ` +
+                      `(remnic secure-store unlock) or provide the sidecar ` +
+                      `.manifest.json to inspect without decrypting.\n`
+                  : `capsule inspect: failed to decrypt archive — ${msg}\n`,
+              );
+              process.exitCode = 1;
+              return;
+            }
+            const json = gunzipSync(decryptedBuf).toString("utf-8");
+            const parsed2 = parseExportBundle(JSON.parse(json));
+            if (parsed2.capsuleVersion !== 2) {
+              process.stderr.write(
+                `capsule inspect: only V2 capsule archives are supported\n`,
+              );
+              process.exitCode = 1;
+              return;
+            }
+            manifest = (parsed2.bundle as { manifest: Record<string, unknown> }).manifest;
+          } else {
+            const { readFile } = await import("node:fs/promises");
+            const { gunzipSync } = await import("node:zlib");
+            const { parseExportBundle } = await import("./transfer/types.js");
+            const buf = await readFile(archivePath);
+            const json = gunzipSync(buf).toString("utf-8");
+            const parsed2 = parseExportBundle(JSON.parse(json));
+            if (parsed2.capsuleVersion !== 2) {
+              process.stderr.write(
+                `capsule inspect: only V2 capsule archives are supported\n`,
+              );
+              process.exitCode = 1;
+              return;
+            }
+            manifest = (parsed2.bundle as { manifest: Record<string, unknown> }).manifest;
+          }
+
+          const capsule = (manifest.capsule ?? {}) as Record<string, unknown>;
+          const files = Array.isArray(manifest.files) ? manifest.files : [];
+          const TOP_N = 20;
+          const topFiles = (files as Array<{ path: string }>)
+            .slice(0, TOP_N)
+            .map((f) => f.path ?? "");
+
+          const retrievalPolicy = (capsule.retrievalPolicy ?? {}) as Record<string, unknown>;
+          const includes = (capsule.includes ?? {}) as Record<string, unknown>;
+
+          const data: CapsuleInspectData = {
+            capsuleId: typeof capsule.id === "string" ? capsule.id : "(unknown)",
+            version: typeof capsule.version === "string" ? capsule.version : "—",
+            schemaVersion:
+              typeof capsule.schemaVersion === "string" ? capsule.schemaVersion : "—",
+            createdAt:
+              typeof manifest.createdAt === "string" ? manifest.createdAt : null,
+            pluginVersion:
+              typeof manifest.pluginVersion === "string" ? manifest.pluginVersion : null,
+            fileCount: files.length,
+            includesTranscripts: manifest.includesTranscripts === true,
+            description:
+              typeof capsule.description === "string" ? capsule.description : "",
+            parentCapsule:
+              typeof capsule.parentCapsule === "string" ? capsule.parentCapsule : null,
+            retrievalPolicy: {
+              tierWeights:
+                retrievalPolicy.tierWeights != null &&
+                typeof retrievalPolicy.tierWeights === "object"
+                  ? (retrievalPolicy.tierWeights as Record<string, number>)
+                  : {},
+              directAnswerEnabled: retrievalPolicy.directAnswerEnabled === true,
+            },
+            includes: {
+              taxonomy: includes.taxonomy === true,
+              identityAnchors: includes.identityAnchors === true,
+              peerProfiles: includes.peerProfiles === true,
+              procedural: includes.procedural === true,
+            },
+            topFiles,
+          };
+
+          console.log(renderCapsuleInspect(data, parsed.format));
+        });
+
       cmd
         .command("compat")
         .description("Run local compatibility diagnostics for Engram plugin wiring")
@@ -7635,6 +8043,188 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             return;
           }
           console.log(renderStatusReport(report));
+        });
+
+      // ── Peer Registry subcommand (issue #679 PR 4/5) ────────────────────
+      const peerCmd = cmd.command("peer").description("Manage the peer registry (issue #679).");
+
+      peerCmd
+        .command("list")
+        .description("List all registered peers")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const { listPeers } = await import("./peers/index.js");
+          const peers = await listPeers(orchestrator.config.memoryDir);
+          if (options.json === true) {
+            console.log(JSON.stringify({ peers }, null, 2));
+            return;
+          }
+          if (peers.length === 0) {
+            console.log("No peers registered.");
+            return;
+          }
+          console.log(`${peers.length} peer(s):\n`);
+          for (const p of peers) {
+            console.log(`  ${p.id} (${p.kind})  ${p.displayName}`);
+            console.log(`    created: ${p.createdAt}  updated: ${p.updatedAt}`);
+          }
+        });
+
+      peerCmd
+        .command("show <id>")
+        .description("Show a peer's identity record")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const id = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!id) {
+            console.error("peer id is required");
+            process.exit(1);
+          }
+          const peersShow = await import("./peers/index.js");
+          const validateIdShow: (id: unknown) => void = peersShow.assertValidPeerId;
+          try {
+            validateIdShow(id);
+          } catch (err) {
+            console.error(`Invalid peer id: ${(err as Error).message}`);
+            process.exit(1);
+          }
+          const peer = await peersShow.readPeer(orchestrator.config.memoryDir, id);
+          if (!peer) {
+            console.error(`Peer "${id}" not found.`);
+            process.exit(1);
+          }
+          if (options.json === true) {
+            console.log(JSON.stringify(peer, null, 2));
+            return;
+          }
+          console.log(`Peer: ${peer.id}`);
+          console.log(`  Kind:         ${peer.kind}`);
+          console.log(`  Display name: ${peer.displayName}`);
+          console.log(`  Created:      ${peer.createdAt}`);
+          console.log(`  Updated:      ${peer.updatedAt}`);
+          if (peer.notes) {
+            console.log(`  Notes:\n${peer.notes.split("\n").map((l) => `    ${l}`).join("\n")}`);
+          }
+        });
+
+      peerCmd
+        .command("set <id>")
+        .description("Create or update a peer identity record")
+        // Cursor H (PR #756 round 2): no Commander default for --kind. A
+        // default would make `options.kind` always present, so the CLI
+        // would forward kind on every call — including updates where
+        // the user only set --display-name. peerSet treats kind as
+        // immutable on update, but forcing the default also overrides
+        // any future change to the service-layer create-time default.
+        // Let the service own the default; the CLI only forwards an
+        // explicit --kind flag.
+        .option("--kind <kind>", "Peer kind: self | human | agent | integration (only on first write)")
+        .option("--display-name <name>", "Human-readable display name")
+        .option("--notes <text>", "Optional free-form markdown notes")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const id = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!id) {
+            console.error("peer id is required");
+            process.exit(1);
+          }
+          // Cursor L (PR #756 review): route through EngramAccessService.peerSet
+          // so the CLI shares the canonical create-or-update flow (existence
+          // check, kind validation, immutable-field preservation, notes/displayName
+          // merge) with HTTP and MCP. Reimplementing here previously risked
+          // silent divergence when the service-layer semantics changed.
+          const peerSetService = new EngramAccessService(orchestrator);
+          try {
+            const result = await peerSetService.peerSet({
+              id,
+              ...(typeof options.kind === "string" ? { kind: options.kind } : {}),
+              ...(typeof options.displayName === "string" ? { displayName: options.displayName } : {}),
+              ...(typeof options.notes === "string" ? { notes: options.notes } : {}),
+            });
+            if (options.json === true) {
+              console.log(JSON.stringify(result, null, 2));
+              return;
+            }
+            console.log(`${result.created ? "Created" : "Updated"} peer "${id}".`);
+          } catch (err) {
+            console.error(`Failed to set peer: ${(err as Error).message}`);
+            process.exit(1);
+          }
+        });
+
+      peerCmd
+        .command("delete <id>")
+        .description("Delete a peer's identity record (idempotent; directory and profile are preserved)")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const id = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!id) {
+            console.error("peer id is required");
+            process.exit(1);
+          }
+          // Cursor M (PR #756 review): route through EngramAccessService.peerDelete
+          // so the CLI gets the same `assertPeerDirNotEscaped` + symlink + parent-
+          // inode-stable guards used by HTTP and MCP. The previous direct
+          // `path.join` + `fs.unlink` bypassed the storage module's protections
+          // and would have followed a symlinked `peers/<id>/` to an arbitrary
+          // `identity.md` outside `memoryDir`.
+          const peerDeleteService = new EngramAccessService(orchestrator);
+          try {
+            const result = await peerDeleteService.peerDelete(id);
+            if (options.json === true) {
+              console.log(JSON.stringify(result, null, 2));
+              return;
+            }
+            console.log(result.deleted ? `Deleted peer "${id}".` : `Peer "${id}" not found (no-op).`);
+          } catch (err) {
+            console.error(`Failed to delete peer: ${(err as Error).message}`);
+            process.exit(1);
+          }
+        });
+
+      peerCmd
+        .command("profile <id>")
+        .description("Show the evolving cognitive profile for a peer")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const id = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!id) {
+            console.error("peer id is required");
+            process.exit(1);
+          }
+          const peersProfile = await import("./peers/index.js");
+          const validateIdProfile: (id: unknown) => void = peersProfile.assertValidPeerId;
+          try {
+            validateIdProfile(id);
+          } catch (err) {
+            console.error(`Invalid peer id: ${(err as Error).message}`);
+            process.exit(1);
+          }
+          const profile = await peersProfile.readPeerProfile(orchestrator.config.memoryDir, id);
+          if (!profile) {
+            console.error(`No profile found for peer "${id}". The profile is written by the async reasoner.`);
+            process.exit(1);
+          }
+          if (options.json === true) {
+            console.log(JSON.stringify(profile, null, 2));
+            return;
+          }
+          console.log(`Profile for peer: ${id}`);
+          console.log(`  Updated: ${profile.updatedAt}`);
+          const fieldKeys = Object.keys(profile.fields);
+          if (fieldKeys.length === 0) {
+            console.log("  No profile fields yet.");
+          } else {
+            for (const k of fieldKeys) {
+              console.log(`  ${k}:`);
+              console.log(`    ${profile.fields[k]}`);
+            }
+          }
         });
 
       // ── Console subcommand (issue #688) ─────────────────────────────────

@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import type {
   BenchMemoryAdapter,
   BenchJudge,
+  BenchResponder,
   Message,
   SearchResult,
 } from "../packages/bench/src/index.js";
@@ -13,10 +14,13 @@ import { runBenchmark } from "../packages/bench/src/index.js";
 
 class FakeMemoryAdapter implements BenchMemoryAdapter {
   readonly sessions = new Map<string, Message[]>();
+  readonly recallCalls: Array<{ sessionId: string; query: string }> = [];
   readonly judge?: BenchJudge;
+  readonly responder?: BenchResponder;
 
-  constructor(judge?: BenchJudge) {
+  constructor(judge?: BenchJudge, responder?: BenchResponder) {
     this.judge = judge;
+    this.responder = responder;
   }
 
   async store(sessionId: string, messages: Message[]): Promise<void> {
@@ -25,6 +29,7 @@ class FakeMemoryAdapter implements BenchMemoryAdapter {
   }
 
   async recall(sessionId: string, _query: string): Promise<string> {
+    this.recallCalls.push({ sessionId, query: _query });
     return (this.sessions.get(sessionId) ?? [])
       .map((message) => message.content)
       .join("\n");
@@ -198,6 +203,68 @@ test("runBenchmark maps current MemoryAgentBench source aliases like ruler_qa1_1
   assert.equal(result.results.tasks[0]?.expected, "the cedar box");
   assert.equal(result.results.tasks[0]?.details.competency, "accurate_retrieval");
   assert.equal(result.results.tasks[0]?.details.source, "ruler_qa1_197K");
+});
+
+test("runBenchmark maps broad MemoryAgentBench InfBench and Recsys source variants to official protocols", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-protocol-variants-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond(question) {
+      return {
+        text: question.includes("movie recommender")
+          ? "The Big Lebowski (1998)"
+          : "brief summary",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({ "/movie/The_Big_Lebowski_(1998)": 7008 }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Long document asks for a short summary.",
+        questions: ["What is the summary?"],
+        answers: [["brief summary"]],
+        metadata: {
+          source: "infbench_qa",
+          qa_pair_ids: ["mab-infbench-variant-q1"],
+        },
+      },
+      {
+        context: "Dialogue history mentions comedy films.",
+        questions: ["System: "],
+        answers: [["7008"]],
+        metadata: {
+          source: "recsys_custom",
+          qa_pair_ids: ["mab-recsys-variant-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.details.officialProtocol, "infbench_sum");
+  assert.equal(result.results.tasks[0]?.actual, "brief summary");
+  assert.equal(result.results.tasks[1]?.details.officialProtocol, "recsys_redial");
+  assert.equal(result.results.tasks[1]?.scores.recsys_recall_at_1, 1);
 });
 
 test("runBenchmark uses the best-matching MemoryAgentBench answer variant for judge scoring", async () => {
@@ -406,4 +473,1565 @@ test("runBenchmark rejects unsupported memoryagentbench metadata sources with a 
       }),
     /does not map to a supported competency/,
   );
+});
+
+test("runBenchmark uses official MemoryAgentBench ICL prompts and label scoring", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-icl-protocol-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const responderQuestions: string[] = [];
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond(question, _recalledText) {
+      responderQuestions.push(question);
+      return {
+        text: "label: 28",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "A disposable card problem maps to label: 28.",
+        questions: ["My disposable card does not work."],
+        answers: [["28"]],
+        metadata: {
+          source: "icl_banking77_5900shot_balance",
+          qa_pair_ids: ["mab-icl-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.match(responderQuestions[0] ?? "", /Only output "label: \{label\}"/);
+  assert.equal(result.results.tasks[0]?.details.officialProtocol, "in_context_learning");
+  assert.equal(result.results.tasks[0]?.details.parsedOfficialAnswer, "28");
+  assert.equal(result.results.tasks[0]?.scores.official_exact_match, 1);
+  assert.equal(result.results.tasks[0]?.scores.official_f1, 1);
+});
+
+test("runBenchmark parses the final explicit ICL label mention for official scoring", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-final-icl-label-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "Earlier example label: 12\nFinal label: 28",
+        tokens: { input: 1, output: 2 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "A disposable card problem maps to label: 28.",
+        questions: ["My disposable card does not work."],
+        answers: [["28"]],
+        metadata: {
+          source: "icl_banking77_5900shot_balance",
+          qa_pair_ids: ["mab-icl-final-label-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.details.parsedOfficialAnswer, "28");
+  assert.equal(result.results.tasks[0]?.scores.official_exact_match, 1);
+});
+
+test("runBenchmark does not coerce trailing ICL reasoning text into a label", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-icl-no-label-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "Earlier example label: 12\nI cannot determine",
+        tokens: { input: 1, output: 2 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "A disposable card problem maps to label: 28.",
+        questions: ["My disposable card does not work."],
+        answers: [["28"]],
+        metadata: {
+          source: "icl_banking77_5900shot_balance",
+          qa_pair_ids: ["mab-icl-no-label-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(
+    result.results.tasks[0]?.details.parsedOfficialAnswer,
+    "Earlier example label: 12\nI cannot determine",
+  );
+  assert.equal(result.results.tasks[0]?.scores.official_exact_match, 0);
+});
+
+test("runBenchmark preserves multiline official answers for MemoryAgentBench scoring", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-multiline-answer-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "Answer: red scarf\nblue hat",
+        tokens: { input: 1, output: 2 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "The detective noted a red scarf and a blue hat.",
+        questions: ["Which two items were noted?"],
+        answers: [["red scarf blue hat"]],
+        metadata: {
+          source: "detective_qa",
+          qa_pair_ids: ["mab-multiline-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(
+    result.results.tasks[0]?.details.parsedOfficialAnswer,
+    "red scarf\nblue hat",
+  );
+  assert.equal(result.results.tasks[0]?.scores.official_exact_match, 1);
+});
+
+test("runBenchmark parses the last Answer block for MemoryAgentBench official scoring", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-last-answer-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "Example Answer: wrong\nReasoning...\nAnswer: final answer",
+        tokens: { input: 1, output: 3 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "The final answer is recorded in the last answer block.",
+        questions: ["What is the final answer?"],
+        answers: [["final answer"]],
+        metadata: {
+          source: "detective_qa",
+          qa_pair_ids: ["mab-last-answer-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.details.parsedOfficialAnswer, "final answer");
+  assert.equal(result.results.tasks[0]?.scores.official_exact_match, 1);
+});
+
+test("runBenchmark scores EventQA recall against any accepted answer variant", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-eventqa-variants-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "The event that happens next is: she went to the riverside market",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Maya visited the museum, then walked to the riverside market.",
+        questions: ["After the museum, what happened next?"],
+        answers: [["the cafe", "riverside market"]],
+        metadata: {
+          source: "eventqa_full",
+          qa_pair_ids: ["mab-eventqa-variant-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.scores.eventqa_recall, 1);
+});
+
+test("runBenchmark strips EventQA prompt prefix before official text scoring", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-eventqa-prefix-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "The event that happens next is: riverside market",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Maya visited the museum, then walked to the riverside market.",
+        questions: ["After the museum, what happened next?"],
+        answers: [["riverside market"]],
+        metadata: {
+          source: "eventqa_full",
+          qa_pair_ids: ["mab-eventqa-prefix-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.details.parsedOfficialAnswer, "riverside market");
+  assert.equal(result.results.tasks[0]?.scores.official_exact_match, 1);
+  assert.equal(result.results.tasks[0]?.scores.official_f1, 1);
+});
+
+test("runBenchmark records official MemoryAgentBench metrics on task errors", async () => {
+  class FailingRecallAdapter extends FakeMemoryAdapter {
+    override async recall(sessionId: string, query: string): Promise<string> {
+      this.recallCalls.push({ sessionId, query });
+      throw new Error("recall unavailable");
+    }
+  }
+
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-error-official-scores-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FailingRecallAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Maya visited the museum, then walked to the riverside market.",
+        questions: ["After the museum, what happened next?"],
+        answers: [["riverside market"]],
+        metadata: {
+          source: "eventqa_full",
+          qa_pair_ids: ["mab-error-official-scores-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.scores.f1, -1);
+  assert.equal(result.results.tasks[0]?.scores.official_exact_match, -1);
+  assert.equal(result.results.tasks[0]?.scores.official_f1, -1);
+  assert.equal(result.results.tasks[0]?.scores.official_rouge_l, -1);
+  assert.equal(result.results.tasks[0]?.scores.official_protocol_ready, 0);
+  assert.equal(result.results.tasks[0]?.scores.eventqa_recall, -1);
+  assert.equal(result.results.aggregates.official_f1?.mean, -1);
+});
+
+test("runBenchmark keeps ReDial error metrics out of official text aggregates", async () => {
+  class FailingRecallAdapter extends FakeMemoryAdapter {
+    override async recall(sessionId: string, query: string): Promise<string> {
+      this.recallCalls.push({ sessionId, query });
+      throw new Error("recall unavailable");
+    }
+  }
+
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-redial-error-scores-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FailingRecallAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy films.",
+        questions: ["System: "],
+        answers: [["7008"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-redial-error-scores-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.scores.official_f1, undefined);
+  assert.equal(result.results.tasks[0]?.scores.official_protocol_ready, 0);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, -1);
+  assert.equal(result.results.aggregates.official_f1, undefined);
+  assert.equal(result.results.aggregates.recsys_recall_at_1?.mean, -1);
+});
+
+test("runBenchmark does not load ReDial mappings for non-ReDial MemoryAgentBench samples", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-non-redial-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(path.join(mappingDir, "entity2id.json"), "[malformed", "utf8");
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Priya checked in at the library and then went to the cafe.",
+        questions: ["Where did Priya go after the library?"],
+        answers: [["cafe"]],
+        metadata: {
+          source: "eventqa_full",
+          qa_pair_ids: ["mab-no-redial-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 1);
+  assert.equal(result.results.tasks[0]?.details.officialProtocol, "eventqa");
+});
+
+test("runBenchmark scores ReDial recommendations with the official entity mapping when present", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-protocol-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: ["1. The Big Lebowski (1998)", "2. Fargo (1996)"].join("\n"),
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({
+      "/movie/The_Big_Lebowski_(1998)": 7008,
+      "/movie/Fargo_(1996)": 22364,
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy and crime films.",
+        questions: ["System: "],
+        answers: [["7008"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.details.officialProtocol, "recsys_redial");
+  assert.equal(result.results.tasks[0]?.details.recsysScoringReady, true);
+  assert.deepEqual(result.results.tasks[0]?.details.recsysGroundTruthMovies, [
+    "The Big Lebowski (1998)",
+  ]);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 1);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_5, 1);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_10, 1);
+});
+
+test("runBenchmark prefers canonical ReDial mappings over loose entity2id fallbacks", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-canonical-map-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "The Big Lebowski (1998)",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "entity2id.json"),
+    JSON.stringify({ "/movie/Stale_Local_Map_(2000)": 7008 }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({ "/movie/The_Big_Lebowski_(1998)": 7008 }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy films.",
+        questions: ["System: "],
+        answers: [["7008"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-canonical-map-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.match(
+    String(result.results.tasks[0]?.details.recsysEntityMappingPath),
+    /processed_data/,
+  );
+  assert.deepEqual(result.results.tasks[0]?.details.recsysGroundTruthMovies, [
+    "The Big Lebowski (1998)",
+  ]);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 1);
+});
+
+test("runBenchmark marks ReDial tasks not leaderboard-scorable when any answer ID is unmapped", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-partial-groundtruth-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "The Big Lebowski (1998)",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({ "/movie/The_Big_Lebowski_(1998)": 7008 }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy films.",
+        questions: ["System: "],
+        answers: [["7008", "9999"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-partial-groundtruth-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.details.recsysScoringReady, false);
+  assert.equal(result.results.tasks[0]?.scores.official_protocol_ready, 0);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, undefined);
+  assert.equal(result.results.tasks[0]?.details.recsysGroundTruthMovies, undefined);
+});
+
+test("runBenchmark uses the raw MemoryAgentBench question for recall and the official prompt for response", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recall-query-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const responderQuestions: string[] = [];
+  const rawQuestion = "System: recommend a comedy movie";
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond(question) {
+      responderQuestions.push(question);
+      return {
+        text: "The Big Lebowski (1998)",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({ "/movie/The_Big_Lebowski_(1998)": 7008 }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy films.",
+        questions: [rawQuestion],
+        answers: [["7008"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recall-query-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(adapter.recallCalls.length, 1);
+  assert.equal(adapter.recallCalls[0]?.query, rawQuestion);
+  assert.equal(responderQuestions.length, 1);
+  assert.match(responderQuestions[0] ?? "", /movie recommender system/);
+  assert.match(responderQuestions[0] ?? "", new RegExp(rawQuestion));
+});
+
+test("runBenchmark preserves comma-containing ReDial movie titles while parsing recommendations", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-comma-title-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "1. O Brother, Where Art Thou? (2000)",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({
+      "/movie/O_Brother,_Where_Art_Thou?_(2000)": 1001,
+      "/movie/O_(2001)": 1002,
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comic odyssey films.",
+        questions: ["System: "],
+        answers: [["1001"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-comma-title-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.deepEqual(result.results.tasks[0]?.details.recsysPredictedMovies, [
+    "O Brother, Where Art Thou? (2000)",
+  ]);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 1);
+});
+
+test("runBenchmark parses comma-separated ReDial recommendations as separate movies", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-comma-list-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "The Big Lebowski (1998), Fargo (1996)",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({
+      "/movie/The_Big_Lebowski_(1998)": 7008,
+      "/movie/Fargo_(1996)": 22364,
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy and crime films.",
+        questions: ["System: "],
+        answers: [["22364"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-comma-list-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.deepEqual(result.results.tasks[0]?.details.recsysPredictedMovies, [
+    "The Big Lebowski (1998)",
+    "Fargo (1996)",
+  ]);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 0);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_5, 1);
+});
+
+test("runBenchmark ignores unmatched ReDial preamble lines instead of nearest-mapping them", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-preamble-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: ["Sure!", "The recommendations are:", "1. The Big Lebowski (1998)"].join("\n"),
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({
+      "/movie/Sabrina_(1995)": 123,
+      "/movie/The_Big_Lebowski_(1998)": 7008,
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy films.",
+        questions: ["System: "],
+        answers: [["7008"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-preamble-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.deepEqual(result.results.tasks[0]?.details.recsysPredictedMovies, [
+    "The Big Lebowski (1998)",
+  ]);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 1);
+});
+
+test("runBenchmark matches yearless ReDial recommendations to year-bearing entity titles", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-yearless-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: ["1. The Big Lebowski", "2. Fargo"].join("\n"),
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({
+      "/movie/The_Big_Lebowski_(1998)": 7008,
+      "/movie/Fargo_(1996)": 22364,
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy and crime films.",
+        questions: ["System: "],
+        answers: [["22364"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-yearless-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.deepEqual(result.results.tasks[0]?.details.recsysPredictedMovies, [
+    "The Big Lebowski (1998)",
+    "Fargo (1996)",
+  ]);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 0);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_5, 1);
+});
+
+test("runBenchmark decodes URL escapes in ReDial entity movie names", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-url-decode-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "1. Ocean's Eleven",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({ "/movie/Ocean%27s_Eleven_(2001)": 9001 }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions heist films.",
+        questions: ["System: "],
+        answers: [["9001"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-url-decode-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.deepEqual(result.results.tasks[0]?.details.recsysPredictedMovies, [
+    "Ocean's Eleven (2001)",
+  ]);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 1);
+});
+
+test("runBenchmark preserves hyphens in ReDial entity movie names", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-hyphen-title-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "1. Spider-Man",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({ "/movie/Spider-Man_(2002)": 2002 }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions superhero films.",
+        questions: ["System: "],
+        answers: [["2002"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-hyphen-title-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.deepEqual(result.results.tasks[0]?.details.recsysPredictedMovies, [
+    "Spider-Man (2002)",
+  ]);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 1);
+});
+
+test("runBenchmark matches short yearless ReDial movie titles", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-short-title-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: '1. "Up."',
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({ "/movie/Up_(2009)": 2009 }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions animated films.",
+        questions: ["System: "],
+        answers: [["2009"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-short-title-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.deepEqual(result.results.tasks[0]?.details.recsysPredictedMovies, [
+    "Up (2009)",
+  ]);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 1);
+});
+
+test("runBenchmark does not match short ReDial titles inside ordinary words", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-short-word-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "I came up with The Big Lebowski (1998), Fargo (1996)",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({
+      "/movie/Up_(2009)": 2009,
+      "/movie/The_Big_Lebowski_(1998)": 7008,
+      "/movie/Fargo_(1996)": 22364,
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy and crime films.",
+        questions: ["System: "],
+        answers: [["7008"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-short-word-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.deepEqual(result.results.tasks[0]?.details.recsysPredictedMovies, [
+    "The Big Lebowski (1998)",
+    "Fargo (1996)",
+  ]);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 1);
+});
+
+test("runBenchmark ignores ambiguous yearless ReDial aliases for duplicate movie titles", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-duplicate-title-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "1. King Kong",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({
+      "/movie/King_Kong_(1933)": 1933,
+      "/movie/King_Kong_(2005)": 2005,
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions monster movies.",
+        questions: ["System: "],
+        answers: [["2005"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-duplicate-title-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.deepEqual(result.results.tasks[0]?.details.recsysPredictedMovies, []);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 0);
+});
+
+test("runBenchmark prefers the most specific overlapping ReDial movie title", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-overlap-title-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "1. The Matrix Revolutions",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({
+      "/movie/The_Matrix_(1999)": 1999,
+      "/movie/The_Matrix_Revolutions_(2003)": 2003,
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions science fiction sequels.",
+        questions: ["System: "],
+        answers: [["2003"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-overlap-title-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.deepEqual(result.results.tasks[0]?.details.recsysPredictedMovies, [
+    "The Matrix Revolutions (2003)",
+  ]);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 1);
+});
+
+test("runBenchmark parses comma-separated short yearless ReDial titles", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-short-comma-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "Up,Her",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({
+      "/movie/Up_(2009)": 2009,
+      "/movie/Her_(2013)": 2013,
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions animated and near-future films.",
+        questions: ["System: "],
+        answers: [["2013"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-short-comma-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.deepEqual(result.results.tasks[0]?.details.recsysPredictedMovies, [
+    "Up (2009)",
+    "Her (2013)",
+  ]);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 0);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_5, 1);
+});
+
+test("runBenchmark scopes ReDial mapping details to ReDial MemoryAgentBench tasks", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-detail-scope-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond(question) {
+      return {
+        text: question.includes("System:")
+          ? "The Big Lebowski (1998)"
+          : "the riverside market",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(
+    path.join(mappingDir, "entity2id.json"),
+    JSON.stringify({ "/movie/The_Big_Lebowski_(1998)": 7008 }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy films.",
+        questions: ["System: "],
+        answers: [["7008"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-detail-scope-redial"],
+        },
+      },
+      {
+        context: "Maya visited the museum, then walked to the riverside market.",
+        questions: ["After the museum, what happened next?"],
+        answers: [["riverside market"]],
+        metadata: {
+          source: "eventqa_full",
+          qa_pair_ids: ["mab-recsys-detail-scope-eventqa"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const redialDetails = result.results.tasks[0]?.details ?? {};
+  const eventQaDetails = result.results.tasks[1]?.details ?? {};
+  assert.equal(redialDetails.recsysScoringReady, true);
+  assert.equal(typeof redialDetails.recsysEntityMappingPath, "string");
+  assert.equal("recsysScoringReady" in eventQaDetails, false);
+  assert.equal("recsysEntityMappingPath" in eventQaDetails, false);
+  assert.equal("recsysGroundTruthMovies" in eventQaDetails, false);
+  assert.equal("recsysPredictedMovies" in eventQaDetails, false);
+});
+
+test("runBenchmark marks ReDial tasks not leaderboard-scorable when entity mapping is malformed", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-bad-map-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const mappingDir = path.join(tmpDir, "datasets", "processed_data", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "1. The Big Lebowski (1998)",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(mappingDir, { recursive: true });
+  await writeFile(path.join(mappingDir, "entity2id.json"), "[malformed", "utf8");
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy films.",
+        questions: ["System: "],
+        answers: [["7008"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-bad-map-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.details.recsysScoringReady, false);
+  assert.equal(result.results.tasks[0]?.scores.official_protocol_ready, 0);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, undefined);
+});
+
+test("runBenchmark keeps searching ReDial mapping candidates after a malformed file", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-map-fallback-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const badMappingDir = path.join(
+    tmpDir,
+    "datasets",
+    "processed_data",
+    "Recsys_Redial",
+  );
+  const goodMappingDir = path.join(tmpDir, "datasets", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "1. The Big Lebowski (1998)",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(badMappingDir, { recursive: true });
+  await mkdir(goodMappingDir, { recursive: true });
+  await writeFile(path.join(badMappingDir, "entity2id.json"), "[malformed", "utf8");
+  await writeFile(
+    path.join(goodMappingDir, "entity2id.json"),
+    JSON.stringify({ "/movie/The_Big_Lebowski_(1998)": 7008 }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy films.",
+        questions: ["System: "],
+        answers: [["7008"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-map-fallback-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.details.recsysScoringReady, true);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 1);
+});
+
+test("runBenchmark skips empty ReDial mapping candidates before accepting a fallback", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-empty-map-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const emptyMappingDir = path.join(
+    tmpDir,
+    "datasets",
+    "processed_data",
+    "Recsys_Redial",
+  );
+  const goodMappingDir = path.join(tmpDir, "datasets", "Recsys_Redial");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "1. The Big Lebowski (1998)",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await mkdir(emptyMappingDir, { recursive: true });
+  await mkdir(goodMappingDir, { recursive: true });
+  await writeFile(path.join(emptyMappingDir, "entity2id.json"), "{}", "utf8");
+  await writeFile(
+    path.join(goodMappingDir, "entity2id.json"),
+    JSON.stringify({ "/movie/The_Big_Lebowski_(1998)": 7008 }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy films.",
+        questions: ["System: "],
+        answers: [["7008"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-empty-map-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.details.recsysScoringReady, true);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, 1);
+});
+
+test("runBenchmark marks ReDial tasks not leaderboard-scorable when entity mapping is missing", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-missing-map-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "1. The Big Lebowski (1998)",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy films.",
+        questions: ["System: "],
+        answers: [["7008"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-no-map-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.details.recsysScoringReady, false);
+  assert.equal(result.results.tasks[0]?.scores.official_protocol_ready, 0);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, undefined);
+});
+
+test("runBenchmark does not use loose ReDial mapping files outside the dataset bundle", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-recsys-ancestor-map-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FakeMemoryAdapter(undefined, {
+    async respond() {
+      return {
+        text: "1. The Big Lebowski (1998)",
+        tokens: { input: 1, output: 1 },
+        latencyMs: 0,
+        model: "fake",
+      };
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(tmpDir, "entity2id.json"),
+    JSON.stringify({ "/movie/The_Big_Lebowski_(1998)": 7008 }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Dialogue history mentions comedy films.",
+        questions: ["System: "],
+        answers: [["7008"]],
+        metadata: {
+          source: "recsys_redial_full",
+          qa_pair_ids: ["mab-recsys-ancestor-map-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.details.recsysScoringReady, false);
+  assert.equal(result.results.tasks[0]?.scores.official_protocol_ready, 0);
+  assert.equal(result.results.tasks[0]?.scores.recsys_recall_at_1, undefined);
 });

@@ -590,6 +590,62 @@ export async function writePeer(memoryDir: string, peer: Peer): Promise<void> {
 }
 
 /**
+ * Delete a peer's `identity.md` if present, applying the same symlink
+ * and path-escape protections as the read/write paths.
+ *
+ * Returns `true` if a regular file was unlinked, `false` if no
+ * `identity.md` existed at the time of the call. The peer directory
+ * itself is left in place so any companion files (`profile.md`,
+ * `interactions/`, etc.) are untouched. Idempotent: missing target
+ * returns `false` rather than throwing.
+ *
+ * Cursor M (PR #756 review): a manual `path.join` + raw `fs.unlink`
+ * bypasses `assertPeerDirNotEscaped`, the peers-root symlink check,
+ * and the parent-inode-stable / lstat guards used by every other
+ * peer I/O entrypoint. A symlinked `peers/<id>/` could redirect the
+ * unlink to an arbitrary `identity.md` outside `memoryDir`. This
+ * function consolidates the safe-delete contract so callers cannot
+ * skip the guards.
+ */
+export async function deletePeer(memoryDir: string, peerId: string): Promise<boolean> {
+  assertValidPeerId(peerId);
+  await assertPeerDirNotEscaped(memoryDir, peerId);
+  const file = identityPath(memoryDir, peerId);
+  // Refuse to follow a symlink at `identity.md` itself: lstat first
+  // and reject if the target is a symlink. Then verify the parent
+  // directory inode is stable across the unlink (mirrors the
+  // assertParentDirInodeStable + O_NOFOLLOW pattern used by
+  // writeFileNoFollow). This narrows the TOCTOU window between the
+  // lstat and the unlink to the same few microseconds the write path
+  // accepts.
+  let lstatBefore: import("node:fs").Stats;
+  try {
+    lstatBefore = await fs.lstat(file);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw err;
+  }
+  if (lstatBefore.isSymbolicLink()) {
+    throw new Error(`refusing to unlink "${file}": target is a symlink`);
+  }
+  if (!lstatBefore.isFile()) {
+    throw new Error(`refusing to unlink "${file}": target is not a regular file`);
+  }
+  await assertParentDirInodeStable(file);
+  try {
+    await fs.unlink(file);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw err;
+  }
+  return true;
+}
+
+/**
  * Enumerate all peers under `memoryDir/peers/`.
  *
  * Returns an empty array if the peers root does not exist. Subdirectories
