@@ -916,11 +916,15 @@ function computeRubricCoverage(actual: string, rubricTargets: string[]): number 
 }
 
 function rubricTargetMatches(actual: string, target: string): boolean {
+  if (mentionsSyntaxHighlightingRequirement(target)) {
+    return syntaxHighlightingRubricMatches(actual, target);
+  }
+
   if (containsAnswer(actual, target) === 1) {
     return true;
   }
 
-  return syntaxHighlightingRubricMatches(actual, target);
+  return false;
 }
 
 function syntaxHighlightingRubricMatches(actual: string, target: string): boolean {

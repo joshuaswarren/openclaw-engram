@@ -112,6 +112,19 @@ test("BEAM rubric coverage does not reward negated syntax highlighting answers",
   );
 });
 
+test("BEAM rubric coverage checks negation before exact syntax containment", async () => {
+  const result = await runBeamWithInstructionAnswer(
+    "Do not use code blocks with syntax highlighting.",
+  );
+
+  assert.equal(
+    result.results.tasks.find((task) =>
+      task.taskId.includes("instruction_following"),
+    )?.scores.rubric_coverage,
+    0,
+  );
+});
+
 test("BEAM rubric coverage does not reward post-mention negation", async () => {
   const result = await runBeamWithInstructionAnswer(
     "Syntax highlighting is not required for implementation help.",
