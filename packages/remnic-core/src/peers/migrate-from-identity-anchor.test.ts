@@ -253,3 +253,23 @@ test("symlinked IDENTITY.md is silently skipped", async () => {
   assert.equal(result.identityMdSource, null);
   assert.equal(result.written, true);
 });
+
+test("symlinked identity parent directory is silently skipped (P1 codex fix)", async () => {
+  // Codex P1: safeReadRegularFile only checked lstat on the final path
+  // component; a symlinked parent like `memoryDir/identity -> /tmp/outside`
+  // could let the migrator read outside memoryDir. safeReadLegacyFile now
+  // rejects symlinked parent directories before opening the file.
+  const dir = await makeTempDir();
+  const externalDir = await makeTempDir();
+  // Write the anchor in the external directory.
+  await fs.writeFile(path.join(externalDir, "identity-anchor.md"), SAMPLE_ANCHOR, "utf8");
+  // Point `memoryDir/identity` at the external directory via a symlink.
+  await fs.symlink(externalDir, path.join(dir, "identity"));
+
+  const result = await migrateFromIdentityAnchor({ memoryDir: dir });
+
+  // The symlinked parent must be silently skipped.
+  assert.equal(result.identityAnchorSource, null, "symlinked parent dir must be rejected");
+  assert.equal(result.written, true, "migration should still succeed with no notes");
+  assert.equal(result.peer.notes, undefined, "no notes from symlinked parent source");
+});

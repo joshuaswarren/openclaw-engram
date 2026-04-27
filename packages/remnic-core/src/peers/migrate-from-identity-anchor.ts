@@ -50,7 +50,7 @@
  * `writePeer` helper which enforces all path-traversal and symlink guards.
  */
 
-import { promises as fs } from "node:fs";
+import { promises as fs, constants as fsConstants } from "node:fs";
 import path from "node:path";
 
 import { readPeer, writePeer } from "./storage.js";
@@ -134,28 +134,65 @@ export interface MigrateFromIdentityAnchorResult {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
- * Read a file only if it exists as a regular file (not a symlink).
- * Returns `{ content, path }` on success or `{ content: null, path: null }`
- * when the file is missing, is a symlink, or is not a regular file.
+ * Read a legacy source file with the same security posture as the peer storage
+ * module:
+ *
+ * 1. **Parent-directory symlink rejection** — lstat the parent directory and
+ *    return null if it is a symlink. This closes the case where e.g.
+ *    `memoryDir/identity/` is itself a symlink pointing outside `memoryDir`.
+ *
+ * 2. **Kernel-level O_NOFOLLOW** — open the file with `O_NOFOLLOW` so the
+ *    kernel atomically rejects a symlink at the final path component. This
+ *    eliminates the TOCTOU race between a separate lstat check and the
+ *    subsequent read that `safeReadLegacyFile` previously had.
+ *
+ * Returns `{ content, filePath }` on success, or `{ content: null, filePath: null }`
+ * when the file is missing, is a symlink, the parent is a symlink, or the
+ * path is not a regular file. Re-throws unexpected I/O errors (EACCES, EIO,
+ * etc.) so the caller can surface real filesystem problems.
  */
-async function safeReadRegularFile(
+async function safeReadLegacyFile(
   filePath: string,
 ): Promise<{ content: string; filePath: string } | { content: null; filePath: null }> {
-  let stat: import("node:fs").Stats;
+  // 1. Reject a symlinked parent directory.
+  const parent = path.dirname(filePath);
   try {
-    stat = await fs.lstat(filePath);
+    const parentStat = await fs.lstat(parent);
+    if (parentStat.isSymbolicLink()) {
+      return { content: null, filePath: null };
+    }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return { content: null, filePath: null };
     }
     throw err;
   }
-  // Reject symlinks and non-regular files (directories, FIFOs, etc.).
-  if (stat.isSymbolicLink() || !stat.isFile()) {
-    return { content: null, filePath: null };
+
+  // 2. Open with O_NOFOLLOW so the kernel refuses a symlink at the target
+  //    path, atomically closing the lstat-then-read TOCTOU window.
+  let fh: import("node:fs/promises").FileHandle;
+  try {
+    fh = await fs.open(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // ENOENT — file does not exist; ELOOP — O_NOFOLLOW detected a symlink.
+    if (code === "ENOENT" || code === "ELOOP" || code === "ENOTDIR") {
+      return { content: null, filePath: null };
+    }
+    throw err;
   }
-  const content = await fs.readFile(filePath, "utf8");
-  return { content, filePath };
+
+  try {
+    // Verify it is a regular file (not a directory, FIFO, device, etc.).
+    const stat = await fh.stat();
+    if (!stat.isFile()) {
+      return { content: null, filePath: null };
+    }
+    const content = await fh.readFile("utf8");
+    return { content, filePath };
+  } finally {
+    await fh.close();
+  }
 }
 
 /**
@@ -229,8 +266,8 @@ export async function migrateFromIdentityAnchor(
   const identityMdPath = path.join(memoryDir, "IDENTITY.md");
 
   const [anchorResult, identityMdResult] = await Promise.all([
-    safeReadRegularFile(anchorPath),
-    safeReadRegularFile(identityMdPath),
+    safeReadLegacyFile(anchorPath),
+    safeReadLegacyFile(identityMdPath),
   ]);
 
   // 3. Compose the self peer record.
