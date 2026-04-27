@@ -19,6 +19,11 @@ test("runLifecyclePolicyPass uses path-based frontmatter writes (no per-item cor
     /await storage\.writeMemoryFrontmatter\(memory,\s*\{/m,
     "lifecycle pass should write by in-memory MemoryFile/path",
   );
+  assert.match(
+    source,
+    /const actionPriors = await this\.buildLifecycleActionPriors\(storage\);/m,
+    "lifecycle action priors should come from the selected storage namespace",
+  );
   assert.doesNotMatch(
     source,
     /updateMemoryFrontmatter\(/,

@@ -13508,8 +13508,10 @@ export class Orchestrator {
     }
   }
 
-  private async buildLifecycleActionPriors(): Promise<Map<string, number>> {
-    const events = await this.storage.readMemoryActionEvents(1200);
+  private async buildLifecycleActionPriors(
+    storage: StorageManager = this.storage,
+  ): Promise<Map<string, number>> {
+    const events = await storage.readMemoryActionEvents(1200);
     if (events.length === 0) return new Map<string, number>();
 
     const nowMs = Date.now();
@@ -13611,7 +13613,7 @@ export class Orchestrator {
       archiveDecayThreshold: thresholds.archiveDecayThreshold,
       protectedCategories: this.config.lifecycleProtectedCategories,
     };
-    const actionPriors = await this.buildLifecycleActionPriors();
+    const actionPriors = await this.buildLifecycleActionPriors(storage);
 
     for (const memory of allMemories) {
       if (

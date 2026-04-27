@@ -663,6 +663,49 @@ test("access HTTP dreams run rejects non-boolean dryRun without invoking service
   }
 });
 
+test("access HTTP dreams run rejects non-string namespace without invoking service", async () => {
+  let calls = 0;
+  const service = {
+    ...createFakeService(),
+    dreamsRun: async () => {
+      calls += 1;
+      return {
+        phase: "deepSleep",
+        dryRun: false,
+        durationMs: 0,
+        itemsProcessed: 0,
+      };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramAccessHttpServer({
+    service,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const response = await fetch(`${base}/engram/v1/dreams/run`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ phase: "deepSleep", namespace: 123 }),
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { error: string };
+    assert.match(payload.error, /namespace must be a string/);
+    assert.equal(calls, 0);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("access HTTP dreams run consumes the write rate limit for live runs", async () => {
   const service = {
     ...createFakeService(),

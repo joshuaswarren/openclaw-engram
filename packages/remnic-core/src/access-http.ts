@@ -1347,14 +1347,26 @@ export class EngramAccessHttpServer {
         });
         return;
       }
+      if (
+        "namespace" in body &&
+        body.namespace !== undefined &&
+        typeof body.namespace !== "string"
+      ) {
+        this.respondJson(res, 400, {
+          error: "namespace must be a string when provided",
+        });
+        return;
+      }
       const dryRun = body.dryRun === true;
+      const namespace =
+        typeof body.namespace === "string" ? body.namespace : undefined;
       if (!dryRun) {
         this.ensureWriteRateLimitAvailable();
       }
       const result = await this.service.dreamsRun({
         phase: phase as import("./types.js").DreamsPhase,
         dryRun,
-        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        namespace,
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
       });
       if (this.shouldCountWriteRateLimit(result as { dryRun?: boolean; idempotencyReplay?: boolean })) {
