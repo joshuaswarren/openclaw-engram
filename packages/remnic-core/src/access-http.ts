@@ -1192,6 +1192,16 @@ export class EngramAccessHttpServer {
     }
 
     // ── Peer Registry endpoints (issue #679 PR 4/5) ──────────────────────────
+    // GET /engram/v1/console/state — operator console engine-state snapshot (issue #688 PR 2/3).
+    // Read-only; namespace-aware via resolveRequestPrincipal so cross-tenant
+    // reads are not possible (CLAUDE.md rule 42).
+    if (req.method === "GET" && pathname === "/engram/v1/console/state") {
+      const namespace = parsed.searchParams.get("namespace") ?? undefined;
+      const snapshot = await this.service.consoleState(namespace, this.resolveRequestPrincipal(req));
+      this.respondJson(res, 200, snapshot);
+      return;
+    }
+
     //   GET    /engram/v1/peers              — list all peers
     //   GET    /engram/v1/peers/:id          — get one peer
     //   PUT    /engram/v1/peers/:id          — upsert (create/update)

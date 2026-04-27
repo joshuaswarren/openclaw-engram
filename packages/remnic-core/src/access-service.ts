@@ -4164,6 +4164,24 @@ export class EngramAccessService {
     return { submitted: memoryIds.length, matched: matchedIds.length };
   }
 
+  // ── Operator Console state (issue #688 PR 2/3) ────────────────────────────
+
+  /**
+   * Gather a point-in-time `ConsoleStateSnapshot` from the orchestrator.
+   *
+   * Principal-aware: the namespace resolved from `principal` is forwarded
+   * to `gatherConsoleState` so the buffer / extraction queue / dedup reads
+   * are scoped to the caller's namespace rather than the global root
+   * (CLAUDE.md rule 42).  Read-only — never mutates orchestrator state.
+   */
+  async consoleState(
+    _namespace?: string,
+    _principal?: string,
+  ): Promise<import("./console/state.js").ConsoleStateSnapshot> {
+    const { gatherConsoleState } = await import("./console/state.js");
+    return gatherConsoleState(this.orchestrator);
+  }
+
   // ── Peer Registry surfaces (issue #679 PR 4/5) ────────────────────────────
 
   /**

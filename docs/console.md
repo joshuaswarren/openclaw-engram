@@ -97,6 +97,43 @@ The schema is intentionally identical to the `--state-only` and
 `/console/state` HTTP responses, so the same trace file can be
 post-processed with the same tooling.
 
+## HTTP API
+
+`GET /engram/v1/console/state`
+
+Returns a single `ConsoleStateSnapshot` as JSON. Same schema as
+`--state-only` and the MCP tool below. Requires a valid bearer token.
+
+```bash
+curl -H "Authorization: Bearer $REMNIC_TOKEN" \
+  http://localhost:4000/engram/v1/console/state | jq .
+```
+
+Query parameters:
+
+| Parameter | Description |
+|-----------|-------------|
+| `namespace` | Optional namespace scope. Defaults to the authenticated principal's namespace. |
+
+Response shape is identical to the snapshot format shown in
+[On-disk trace format](#on-disk-trace-format) above.
+
+## MCP tool
+
+`engram.console_state` (also aliased as `remnic.console_state`)
+
+```json
+{
+  "name": "engram.console_state",
+  "arguments": {
+    "namespace": "optional-namespace"
+  }
+}
+```
+
+Returns the same `ConsoleStateSnapshot` JSON. Useful for operator agents
+that want to query engine health without shelling out to the CLI.
+
 ## Source
 
 | File | Role |
