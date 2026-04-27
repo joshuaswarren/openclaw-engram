@@ -94,6 +94,7 @@ interface ConversationIndexLike {
 
 export interface OperatorToolkitOrchestrator extends ConversationIndexLike {
   config: PluginConfig;
+  storage: StorageManager;
   qmd: QmdRuntimeLike;
 }
 
@@ -1221,6 +1222,11 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // counts. Disabled is "ok" with a note; enabled-but-never-run is "warn".
   checks.push(await summarizeGraphEdgeDecayStatus(config));
 
+  // Tier distribution (issue #686 retention-completion).
+  // Shows hot/cold counts, per-status breakdown, and forgotten-memory count.
+  // Informational only — never errors, never blocks doctor from returning ok.
+  checks.push(await summarizeTierDistribution(options.orchestrator.storage));
+
   // Security mitigation status (issue #565).
   // Reports whether the cross-namespace budget and anomaly detection
   // mitigations are enabled and surfaces config values for operator review.
@@ -1466,6 +1472,110 @@ async function summarizeGraphEdgeDecayStatus(
       cadenceMs: config.graphEdgeDecayCadenceMs,
     },
   };
+}
+
+/**
+ * Summarize hot/cold tier distribution for the Doctor report
+ * (issue #686 retention-completion).
+ *
+ * Shows:
+ *   - hot vs cold memory counts
+ *   - forgotten-memory count
+ *   - top per-status breakdown
+ *   - recent migrations in the last 7 days (from the tier-migration journal)
+ *   - top demotion reasons from the journal
+ *
+ * Always returns an `ok` check — this section is informational, never
+ * a gate. A missing journal or unreadable corpus is surfaced as a note,
+ * not an error.
+ *
+ * Exported so tests can exercise the summarizer without a full orchestrator.
+ */
+export async function summarizeTierDistribution(
+  storage: StorageManager,
+): Promise<OperatorDoctorCheck> {
+  try {
+    const { summarizeTiers } = await import("./maintenance/tier-stats.js");
+    const summary = await summarizeTiers(storage);
+
+    // Read recent migration journal entries (last 7 days)
+    const storageDir = (storage as unknown as { dir?: string }).dir ?? "";
+    const journalPath = storageDir.length > 0
+      ? path.join(storageDir, "state", "tier-migration-journal.jsonl")
+      : null;
+    let recentMigrations = 0;
+    const demotionReasons: Record<string, number> = {};
+    const sevenDaysAgoMs = Date.now() - 7 * 86_400_000;
+
+    if (journalPath) {
+      try {
+        const { readFile } = await import("node:fs/promises");
+        const raw = await readFile(journalPath, "utf-8");
+        for (const line of raw.split("\n")) {
+          const trimmed = line.trim();
+          if (trimmed.length === 0) continue;
+          try {
+            const entry = JSON.parse(trimmed) as {
+              ts?: string;
+              changed?: boolean;
+              fromTier?: string;
+              toTier?: string;
+              reason?: string;
+            };
+            const tsMs = entry.ts ? Date.parse(entry.ts) : NaN;
+            if (Number.isFinite(tsMs) && tsMs >= sevenDaysAgoMs && entry.changed) {
+              recentMigrations += 1;
+              if (entry.fromTier === "hot" && entry.toTier === "cold" && typeof entry.reason === "string") {
+                const reason = entry.reason;
+                demotionReasons[reason] = (demotionReasons[reason] ?? 0) + 1;
+              }
+            }
+          } catch {
+            // Malformed line — skip
+          }
+        }
+      } catch {
+        // Journal not present yet — expected on fresh installs
+      }
+    }
+
+    const topDemotionReasons = Object.entries(demotionReasons)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 5)
+      .map(([reason, count]) => ({ reason, count }));
+
+    const statusParts = Object.entries(summary.byStatus)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 6)
+      .map(([s, n]) => `${s}: ${n}`)
+      .join(", ");
+
+    return {
+      key: "tier_distribution",
+      status: "ok",
+      summary:
+        `Tier distribution: hot=${summary.byTier.hot}, cold=${summary.byTier.cold}` +
+        (summary.forgottenCount > 0 ? `, forgotten=${summary.forgottenCount}` : "") +
+        `. Total: ${summary.total}.` +
+        (recentMigrations > 0 ? ` Recent migrations (7d): ${recentMigrations}.` : ""),
+      details: {
+        total: summary.total,
+        byTier: summary.byTier,
+        byStatus: summary.byStatus,
+        forgottenCount: summary.forgottenCount,
+        statusSummary: statusParts,
+        recentMigrations,
+        topDemotionReasons,
+      },
+    };
+  } catch (err) {
+    return {
+      key: "tier_distribution",
+      status: "ok",
+      summary: "Tier distribution unavailable — could not enumerate memories.",
+      details: { error: String(err) },
+    };
+  }
 }
 
 function summarizeSecurityMitigations(

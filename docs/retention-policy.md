@@ -127,12 +127,11 @@ to confirm availability. The bench produces a structured report including
 
 ## The forgotten tier (#686 PR 4/6)
 
-The planned forgotten tier is a soft-delete state that excludes a memory from
-recall, browse, and entity attribution while keeping the file on disk for the
-retention window so the act is reversible. A dedicated forget command is not
-present on this branch yet.
-
-The follow-up implementation should define frontmatter equivalent to:
+`remnic forget <id> [--reason <text>]` soft-deletes a memory: it sets
+`status: "forgotten"`, stamps `forgottenAt`, and writes an optional
+`forgottenReason` into the YAML frontmatter. The file stays on disk so the act
+is reversible. Forgotten memories are excluded from recall, browse, and entity
+attribution by the status-allow-list filters that serve active context.
 
 ```yaml
 status: forgotten
@@ -140,11 +139,8 @@ forgottenAt: 2026-04-25T18:30:00.000Z
 forgottenReason: stale preference, user retracted
 ```
 
-Once the soft-delete surface lands, forgotten memories should flow through the
-existing status-allow-list filters (memory-cache, access-service browse,
-retrieval) so they don't appear in any default surface. A future maintenance
-cron will hard-delete forgotten memories after a configurable retention window
-(default 90 days).
+Shipped in `packages/remnic-core/src/maintenance/forget.ts`; wired as
+`remnic forget` in `cli.ts`.
 
 ## Operator visibility (#686 PR 5/6)
 
@@ -160,6 +156,12 @@ openclaw engram tier-migrate --dry-run --limit 50
 
 # Explain the most recent recall snapshot
 openclaw engram recall-explain --format json
+
+# Tier distribution summary (hot/cold counts, status breakdown, recent migrations)
+remnic tier list
+
+# Per-memory tier explain
+remnic tier explain <id>
 ```
 
 `tier-status` reports cumulative migration counters plus the latest cycle
@@ -170,6 +172,74 @@ summary (`cycles`, `scanned`, `migrated`, `promoted`, `demoted`, `errors`).
 
 `recall-explain` reports the most recent recall snapshot (or a session selected
 with `--session`) and can emit either text or JSON.
+
+`remnic doctor` now includes a `tier_distribution` check that shows hot/cold
+counts, forgotten-memory count, top status breakdown, recent migrations (last
+7 days from the migration journal), and top demotion reasons — all without any
+mutations.
+
+## Purge command
+
+`remnic purge` is the operator-facing hard-delete surface for Year-2 retention:
+
+```bash
+# Preview what would be deleted (dry-run; no --confirm needed)
+remnic purge --older-than P1Y --tier cold --dry-run
+
+# Execute: hard-delete cold memories older than 1 year
+remnic purge --older-than P1Y --tier cold --confirm yes
+
+# Hard-delete only forgotten memories across all tiers older than 90 days
+remnic purge --older-than P90D --tier all --forgotten-only --confirm yes
+```
+
+`--older-than` accepts ISO 8601 durations (`P1Y`, `P90D`, `P6M`) or plain
+days (`365`, `90`).
+
+`--tier` defaults to `cold`. Use `--tier all` to target hot, cold, and
+archived memories.
+
+`--confirm yes` is required to execute mutations; any other value (or omitting
+the flag) forces dry-run. The literal string `"yes"` is the only accepted
+value — no substitutes.
+
+All purges are logged to `<memoryDir>/state/observation-ledger/purge-audit.jsonl`
+before the function returns. The QMD index is updated after each deletion so
+the search index stays consistent.
+
+Implemented in `packages/remnic-core/src/maintenance/purge.ts`.
+
+## Doctor tier section
+
+`remnic doctor` includes a `tier_distribution` section that calls
+`summarizeTiers()` from `maintenance/tier-stats.ts`. It shows:
+
+- Hot and cold memory counts
+- Forgotten memory count
+- Per-status breakdown (active, archived, superseded, forgotten, …)
+- Recent migrations in the last 7 days (from the tier-migration journal)
+- Top demotion reasons from the journal
+
+The check is always `ok` — it is informational, never a gate.
+
+## First-start migration
+
+When `lifecyclePolicyEnabled: true` and `qmdTierMigrationEnabled: true` are
+set for the first time on a memoryDir that has never been touched by the
+lifecycle policy, a one-time rate-limited demotion sweep runs automatically
+during orchestrator deferred initialization.
+
+The sweep is capped at 50 demotions per run (`FIRST_START_DEMOTION_CAP = 50`)
+so a large pre-existing corpus does not stall startup. It is resumable: a
+state marker file `<memoryDir>/state/.lifecycle-init-done` is written after
+all mutations succeed. Subsequent starts see the marker and skip the sweep.
+
+The sweep is idempotent and safe to run multiple times (as long as the marker
+is absent): it only demotes hot memories that already score below the
+configured demotion threshold and meet the minimum age requirement.
+
+Implemented in `packages/remnic-core/src/maintenance/first-start-migration.ts`;
+hooked into `orchestrator.ts:deferredInitialize()`.
 
 ## Cold QMD opt-in
 
@@ -230,12 +300,13 @@ Issue #686's six PRs:
 | 3/6 | Lifecycle policy default and migration gate follow-up          | [#707](https://github.com/joshuaswarren/remnic/pull/707) |
 | 4/6 | Forgotten-tier soft-delete surface                             | [#708](https://github.com/joshuaswarren/remnic/pull/708) |
 | 5/6 | Operator visibility CLI follow-up                              | [#709](https://github.com/joshuaswarren/remnic/pull/709) |
-| 6/6 | This document                                                  | This PR             |
+| 6/6 | This document                                                  | Merged              |
+| +   | Purge CLI, doctor tier section, first-start migration          | This PR             |
 
 ## What's next
 
 | Future PR | Scope |
 |-----------|-------|
-| Forget / restore / purge surfaces | Operator-managed soft-delete plus maintenance hard-delete after the configurable window. |
 | HTTP / MCP surfaces for tier telemetry and migration control | Recall explanation already has HTTP endpoints; tier telemetry remains CLI-only. |
 | Default-tuning study | Ship a tunable threshold profile based on aged-dataset bench results across multiple corpus shapes. |
+| Soft-delete restore surface | `remnic restore <id>` to reverse a `remnic forget` while still within the retention window. |

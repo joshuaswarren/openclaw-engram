@@ -1718,6 +1718,10 @@ export class Orchestrator {
     return this.qmd.isAvailable();
   }
 
+  invalidateLiveContentHashIndex(): void {
+    this.contentHashIndex = null;
+  }
+
   constructor(config: PluginConfig) {
     this.config = config;
     this.profiler = new ProfilingCollector({
@@ -2515,6 +2519,37 @@ export class Orchestrator {
         await this.autoRegisterGraphEdgeDecayCron();
       } catch (err) {
         log.debug(`graph edge decay cron auto-register failed (non-fatal): ${err}`);
+      }
+    }
+
+    // First-start lifecycle migration (issue #686 retention-completion).
+    // When lifecyclePolicyEnabled is true and the memoryDir has never been
+    // touched by the lifecycle policy, run a one-time rate-limited demotion
+    // sweep (capped at 50 demotions) so the hot tier isn't flooded on the
+    // first real cron pass. Non-fatal — a failure here must not break init.
+    if (signal.aborted) return;
+    if (this.config.lifecyclePolicyEnabled && this.config.qmdTierMigrationEnabled) {
+      try {
+        const { runFirstStartMigration } = await import(
+          "./maintenance/first-start-migration.js"
+        );
+        const result = await runFirstStartMigration({
+          storage: this.storage,
+          config: this.config,
+          qmd: this.qmd,
+          hotCollection: this.config.qmdCollection,
+          coldCollection: this.config.qmdColdCollection,
+          signal,
+        });
+        if (!result.skipped) {
+          log.info(
+            `first-start lifecycle migration: demoted ${result.demotedCount} of ${result.candidateCount} candidates (cap=${result.cappedAt})`,
+          );
+        } else {
+          log.debug(`first-start lifecycle migration skipped: ${result.skipReason}`);
+        }
+      } catch (err) {
+        log.warn(`first-start lifecycle migration failed (non-fatal): ${err}`);
       }
     }
 
