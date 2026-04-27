@@ -141,11 +141,17 @@ remnic patterns list [--limit N] [--category cat1,cat2] [--since ISO] [--format 
 Example output (`--format text`):
 
 ```
-reinforcement_count  category    id          last_reinforced_at   content (truncated)
-─────────────────────────────────────────────────────────────────────────────────────
-12                   preference  mem_jkl012  2026-04-27T08:00Z    prefer short inline comments over...
-8                    fact        mem_abc456  2026-04-20T10:00Z    the project uses pnpm workspaces...
-5                    decision    mem_def789  2026-04-15T14:30Z    decided to use the port/adapter pa...
+Pattern memories (3):
+
+  [12x] mem_jkl012  (preference, last_reinforced=2026-04-27T08:00:00.000Z, status=active)
+        prefer short inline comments over block comments for single-line notes...
+        path: memories/preferences/mem_jkl012.md
+  [8x] mem_abc456  (fact, last_reinforced=2026-04-20T10:00:00.000Z, status=active)
+        the project uses pnpm workspaces...
+        path: memories/facts/mem_abc456.md
+  [5x] mem_def789  (decision, last_reinforced=2026-04-15T14:30:00.000Z, status=active)
+        decided to use the port/adapter pattern...
+        path: memories/decisions/mem_def789.md
 ```
 
 ### `remnic patterns explain <memoryId>`
@@ -169,16 +175,26 @@ Example:
 
 ```bash
 $ remnic patterns explain mem_jkl012
-Canonical: mem_jkl012
-  category:             preference
-  reinforcement_count:  12
-  last_reinforced_at:   2026-04-27T08:00:00.000Z
-  content:              "prefer short inline comments over block comments for single-line..."
+Pattern: mem_jkl012
+  reinforcement_count: 12
+  last_reinforced_at: 2026-04-27T08:00:00.000Z
+  category:           preference
+  status:             active
+  derived_via:        pattern_reinforcement
+  path:               memories/preferences/mem_jkl012.md
 
-Provenance (derived_from):
-  mem_abc123  2026-01-10T09:00Z  [superseded]
-  mem_def456  2026-02-18T14:00Z  [superseded]
-  ...10 more...
+Canonical content:
+  prefer short inline comments over block comments for single-line notes.
+
+Derived from (2):
+  - memories/preferences/mem_abc123.md v1
+  - memories/preferences/mem_def456.md v1
+
+Cluster members (2):
+  - mem_abc123 (status=superseded, supersededAt=2026-04-27T08:00:00.000Z)
+      prefer terse implementation comments.
+  - mem_def456 (status=superseded, supersededAt=2026-04-27T08:00:00.000Z)
+      avoid block comments unless they explain a larger invariant.
 
 Run `remnic patterns explain mem_jkl012 --format json` for machine-readable output.
 ```
