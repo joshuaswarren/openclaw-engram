@@ -147,6 +147,17 @@ export interface RecallXrayResult {
    * went.
    */
   estimatedTokens?: number;
+  /**
+   * Free-form tags from the memory's YAML frontmatter (issue #689 PR 3/3).
+   * Populated by the X-ray capture path when the caller passes a `tags`
+   * filter so per-result tags are available alongside the filter trace
+   * in `snapshot.filters`.  Also populated without a filter when the
+   * orchestrator decorates results via `xrayCapture: true` so all X-ray
+   * consumers can inspect memory labels without a separate storage read.
+   * Absent (not `[]`) when the frontmatter has no tags or the memory
+   * could not be read.
+   */
+  tags?: string[];
 }
 
 /**
@@ -481,6 +492,18 @@ function cloneResult(result: RecallXrayResult): RecallXrayResult {
     result.estimatedTokens >= 0
   ) {
     out.estimatedTokens = Math.floor(result.estimatedTokens);
+  }
+  // Tags from frontmatter (issue #689 PR 3/3).  Normalize identically to
+  // the recall-surface path: trim and drop empty strings so consumers can
+  // compare tags directly without a secondary normalization step.
+  if (Array.isArray(result.tags)) {
+    const cleanedTags = result.tags
+      .filter((t): t is string => typeof t === "string")
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+    if (cleanedTags.length > 0) {
+      out.tags = cleanedTags;
+    }
   }
   return out;
 }
