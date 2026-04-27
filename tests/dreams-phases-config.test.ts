@@ -79,7 +79,11 @@ test("dreamsPhases: legacy top-level key changes are reflected when phases block
 // ── New keys WIN when set ─────────────────────────────────────────────────────
 
 test("dreamsPhases: dreams.phases.lightSleep.enabled wins over lifecyclePolicyEnabled when both set", () => {
-  // Legacy says enabled=true (default); new key says false → new key wins.
+  // Codex P1 on PR 763: the new key must propagate to the legacy runtime
+  // fields the orchestrator actually reads, otherwise "new key wins" is a
+  // documentation lie. Legacy says enabled=true (default); new key says false.
+  // Both `dreamsPhases.lightSleep.enabled` AND the legacy runtime field
+  // `lifecyclePolicyEnabled` must reflect the override.
   const cfg = parseConfig({
     openaiApiKey: "sk-test",
     lifecyclePolicyEnabled: true,
@@ -90,11 +94,12 @@ test("dreamsPhases: dreams.phases.lightSleep.enabled wins over lifecyclePolicyEn
     },
   });
   assert.equal(cfg.dreamsPhases.lightSleep.enabled, false, "dreams.phases.lightSleep.enabled=false wins over lifecycle default");
-  // Legacy top-level key is unchanged.
-  assert.equal(cfg.lifecyclePolicyEnabled, true, "legacy lifecyclePolicyEnabled still parses correctly");
+  // Legacy runtime field reflects the override (P1 fix).
+  assert.equal(cfg.lifecyclePolicyEnabled, false, "legacy lifecyclePolicyEnabled is overridden by dreams.phases (P1 wiring)");
 });
 
-test("dreamsPhases: dreams.phases.lightSleep thresholds win over legacy keys", () => {
+test("dreamsPhases: dreams.phases.lightSleep thresholds win over legacy keys (including legacy runtime fields)", () => {
+  // P1: legacy runtime fields used by the orchestrator must reflect the override.
   const cfg = parseConfig({
     openaiApiKey: "sk-test",
     lifecyclePromoteHeatThreshold: 0.5,
@@ -116,27 +121,46 @@ test("dreamsPhases: dreams.phases.lightSleep thresholds win over legacy keys", (
   assert.equal(cfg.dreamsPhases.lightSleep.staleDecayThreshold, 0.78);
   assert.equal(cfg.dreamsPhases.lightSleep.archiveDecayThreshold, 0.91);
   assert.equal(cfg.dreamsPhases.lightSleep.filterStaleEnabled, true);
-  // Legacy keys unaffected.
-  assert.equal(cfg.lifecyclePromoteHeatThreshold, 0.5);
+  // Legacy runtime fields reflect the override (P1 fix).
+  assert.equal(cfg.lifecyclePromoteHeatThreshold, 0.72);
+  assert.equal(cfg.lifecycleStaleDecayThreshold, 0.78);
+  assert.equal(cfg.lifecycleArchiveDecayThreshold, 0.91);
+  assert.equal(cfg.lifecycleFilterStaleEnabled, true);
 });
 
-test("dreamsPhases: dreams.phases.rem.enabled wins over semanticConsolidationEnabled", () => {
+test("dreamsPhases: dreams.phases.rem.enabled wins over semanticConsolidationEnabled (legacy runtime field too)", () => {
+  // P1: legacy `semanticConsolidationEnabled` must reflect the override since
+  // `runSemanticConsolidation` reads that field, not `dreamsPhases.rem.enabled`.
   const cfg = parseConfig({
     openaiApiKey: "sk-test",
     semanticConsolidationEnabled: false,
     dreams: { phases: { rem: { enabled: true } } },
   });
   assert.equal(cfg.dreamsPhases.rem.enabled, true, "dreams.phases.rem.enabled=true wins");
-  assert.equal(cfg.semanticConsolidationEnabled, false, "legacy key unaffected");
+  assert.equal(cfg.semanticConsolidationEnabled, true, "legacy semanticConsolidationEnabled reflects override (P1)");
 });
 
-test("dreamsPhases: dreams.phases.rem cadence wins over semanticConsolidationIntervalHours", () => {
+test("dreamsPhases: dreams.phases.rem cadence wins over semanticConsolidationIntervalHours (legacy runtime field too)", () => {
+  // P1: legacy `semanticConsolidationIntervalHours` must be derived from the
+  // override (rounded up to nearest hour, min 1) so legacy schedulers honour the new key.
   const cfg = parseConfig({
     openaiApiKey: "sk-test",
     semanticConsolidationIntervalHours: 168,
     dreams: { phases: { rem: { cadenceMs: 3_600_000 } } },
   });
   assert.equal(cfg.dreamsPhases.rem.cadenceMs, 3_600_000, "explicit cadenceMs wins");
+  assert.equal(cfg.semanticConsolidationIntervalHours, 1, "legacy IntervalHours derived from cadenceMs (P1)");
+});
+
+test("dreamsPhases: dreams.phases.rem.minIntervalMs wins over consolidationMinIntervalMs (legacy runtime field too)", () => {
+  // P1: legacy `consolidationMinIntervalMs` must reflect the override.
+  const cfg = parseConfig({
+    openaiApiKey: "sk-test",
+    consolidationMinIntervalMs: 10 * 60_000,
+    dreams: { phases: { rem: { minIntervalMs: 60_000 } } },
+  });
+  assert.equal(cfg.dreamsPhases.rem.minIntervalMs, 60_000);
+  assert.equal(cfg.consolidationMinIntervalMs, 60_000, "legacy minIntervalMs reflects override (P1)");
 });
 
 test("dreamsPhases: dreams.phases.deepSleep.enabled false disables phase", () => {
@@ -147,7 +171,9 @@ test("dreamsPhases: dreams.phases.deepSleep.enabled false disables phase", () =>
   assert.equal(cfg.dreamsPhases.deepSleep.enabled, false);
 });
 
-test("dreamsPhases: dreams.phases.deepSleep versioning wins over versioningEnabled", () => {
+test("dreamsPhases: dreams.phases.deepSleep versioning wins over versioningEnabled (legacy runtime field too)", () => {
+  // P1: legacy `versioningEnabled` and `versioningMaxPerPage` must reflect the
+  // override since `StorageManager.snapshotBeforeWrite` reads those fields.
   const cfg = parseConfig({
     openaiApiKey: "sk-test",
     versioningEnabled: false,
@@ -163,9 +189,9 @@ test("dreamsPhases: dreams.phases.deepSleep versioning wins over versioningEnabl
   });
   assert.equal(cfg.dreamsPhases.deepSleep.versioningEnabled, true, "dreams.phases wins");
   assert.equal(cfg.dreamsPhases.deepSleep.versioningMaxPerPage, 20, "dreams.phases wins");
-  // Legacy keys unaffected.
-  assert.equal(cfg.versioningEnabled, false);
-  assert.equal(cfg.versioningMaxPerPage, 50);
+  // Legacy runtime fields reflect the override (P1 fix).
+  assert.equal(cfg.versioningEnabled, true, "legacy versioningEnabled reflects override (P1)");
+  assert.equal(cfg.versioningMaxPerPage, 20, "legacy versioningMaxPerPage reflects override (P1)");
 });
 
 // ── Boolean coercion (CLAUDE.md gotcha #36) ───────────────────────────────────

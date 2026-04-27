@@ -1684,30 +1684,31 @@ export function parseConfig(raw: unknown): PluginConfig {
     verifiedRecallEnabled: cfg.verifiedRecallEnabled === true,
     semanticRulePromotionEnabled: cfg.semanticRulePromotionEnabled === true,
     semanticRuleVerificationEnabled: cfg.semanticRuleVerificationEnabled === true,
-    semanticConsolidationEnabled: cfg.semanticConsolidationEnabled === true,
+    // Issue #678 PR 2/4: when `dreams.phases.rem.*` is set, the resolved
+    // dreamsPhases value WINS over the legacy top-level key. The runtime
+    // gates (orchestrator's `runSemanticConsolidation`) read these legacy
+    // fields, so we must propagate the precedence here, not just in the
+    // `dreamsPhases` object.
+    semanticConsolidationEnabled: dreamsRem.enabled,
     semanticConsolidationModel:
       typeof cfg.semanticConsolidationModel === "string" && cfg.semanticConsolidationModel.length > 0
         ? cfg.semanticConsolidationModel
         : "auto",
-    semanticConsolidationThreshold:
-      typeof cfg.semanticConsolidationThreshold === "number" ? cfg.semanticConsolidationThreshold : 0.8,
-    semanticConsolidationMinClusterSize:
-      typeof cfg.semanticConsolidationMinClusterSize === "number"
-        ? Math.max(2, Math.floor(cfg.semanticConsolidationMinClusterSize))
-        : 3,
+    semanticConsolidationThreshold: dreamsRem.similarityThreshold,
+    semanticConsolidationMinClusterSize: dreamsRem.minClusterSize,
     semanticConsolidationExcludeCategories: Array.isArray(cfg.semanticConsolidationExcludeCategories)
       ? (cfg.semanticConsolidationExcludeCategories as unknown[]).filter(
           (c): c is string => typeof c === "string" && c.length > 0,
         )
       : ["correction", "commitment", "procedure"],
+    // semanticConsolidationIntervalHours is derived from dreamsRem.cadenceMs
+    // when an override is set (rounded up to the nearest hour, min 1) so
+    // legacy schedulers honour the new key. Otherwise legacy default applies.
     semanticConsolidationIntervalHours:
-      typeof cfg.semanticConsolidationIntervalHours === "number"
-        ? Math.max(1, Math.floor(cfg.semanticConsolidationIntervalHours))
-        : 168,
-    semanticConsolidationMaxPerRun:
-      typeof cfg.semanticConsolidationMaxPerRun === "number"
-        ? Math.max(0, Math.floor(cfg.semanticConsolidationMaxPerRun))
-        : 100,
+      rawDreamsRem.cadenceMs !== undefined
+        ? Math.max(1, Math.ceil(dreamsRem.cadenceMs / 3_600_000))
+        : legacySemanticConsolidationIntervalHours,
+    semanticConsolidationMaxPerRun: dreamsRem.maxPerRun,
     // Operator-aware consolidation prompt (issue #561 PR 3).  Defaults
     // to `false` to match sibling `*Enabled` flags' least-privileged
     // convention.  Operators opt in by setting `true` (or truthy
@@ -2001,8 +2002,8 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? cfg.inlineSourceAttributionFormat
         : "[Source: agent={agent}, session={sessionId}, ts={ts}]",
     consolidationRequireNonZeroExtraction: cfg.consolidationRequireNonZeroExtraction !== false,
-    consolidationMinIntervalMs:
-      typeof cfg.consolidationMinIntervalMs === "number" ? cfg.consolidationMinIntervalMs : 10 * 60_000,
+    // Issue #678 PR 2/4: dreams.phases.rem.minIntervalMs WINS when set.
+    consolidationMinIntervalMs: dreamsRem.minIntervalMs,
     // QMD maintenance (debounced singleflight)
     qmdMaintenanceEnabled: cfg.qmdMaintenanceEnabled !== false,
     qmdMaintenanceDebounceMs:
@@ -2330,20 +2331,14 @@ export function parseConfig(raw: unknown): PluginConfig {
     // boolean-likes (e.g. CLI `--config lifecyclePolicyEnabled=false`)
     // before applying the default — otherwise an explicit false-ish
     // input falls through and silently re-enables the policy.
-    lifecyclePolicyEnabled: coerceBooleanLike(cfg.lifecyclePolicyEnabled) ?? true,
-    lifecycleFilterStaleEnabled: cfg.lifecycleFilterStaleEnabled === true,
-    lifecyclePromoteHeatThreshold:
-      typeof cfg.lifecyclePromoteHeatThreshold === "number"
-        ? Math.min(1, Math.max(0, cfg.lifecyclePromoteHeatThreshold))
-        : 0.55,
-    lifecycleStaleDecayThreshold:
-      typeof cfg.lifecycleStaleDecayThreshold === "number"
-        ? Math.min(1, Math.max(0, cfg.lifecycleStaleDecayThreshold))
-        : 0.65,
-    lifecycleArchiveDecayThreshold:
-      typeof cfg.lifecycleArchiveDecayThreshold === "number"
-        ? Math.min(1, Math.max(0, cfg.lifecycleArchiveDecayThreshold))
-        : 0.85,
+    // Issue #678 PR 2/4: dreams.phases.lightSleep.* WINS over legacy keys.
+    // The runtime gate (orchestrator's `runLifecyclePolicyPass`) reads
+    // these legacy fields, so propagate the precedence here.
+    lifecyclePolicyEnabled: dreamsLightSleep.enabled,
+    lifecycleFilterStaleEnabled: dreamsLightSleep.filterStaleEnabled,
+    lifecyclePromoteHeatThreshold: dreamsLightSleep.promoteHeatThreshold,
+    lifecycleStaleDecayThreshold: dreamsLightSleep.staleDecayThreshold,
+    lifecycleArchiveDecayThreshold: dreamsLightSleep.archiveDecayThreshold,
     lifecycleProtectedCategories: Array.isArray(cfg.lifecycleProtectedCategories)
       ? (cfg.lifecycleProtectedCategories as any[]).filter(
           (c): c is PluginConfig["lifecycleProtectedCategories"][number] =>
@@ -2354,10 +2349,10 @@ export function parseConfig(raw: unknown): PluginConfig {
     // raw input) — otherwise omitting both flags returns `false` for
     // metrics even though the policy is enabled by default since
     // #686 PR 3/6.
+    // Issue #678 PR 2/4: mirror the resolved dreams light-sleep enabled flag
+    // (which already incorporates dreams.phases precedence + legacy fallback).
     lifecycleMetricsEnabled:
-      coerceBooleanLike(cfg.lifecycleMetricsEnabled) ??
-      coerceBooleanLike(cfg.lifecyclePolicyEnabled) ??
-      true,
+      coerceBooleanLike(cfg.lifecycleMetricsEnabled) ?? dreamsLightSleep.enabled,
     // v8.3 proactive + policy learning (default off)
     proactiveExtractionEnabled: cfg.proactiveExtractionEnabled === true,
     contextCompressionActionsEnabled: cfg.contextCompressionActionsEnabled === true,
@@ -3023,12 +3018,10 @@ export function parseConfig(raw: unknown): PluginConfig {
     // Codex CLI — marketplace integration (#418)
     codexMarketplaceEnabled: cfg.codexMarketplaceEnabled !== false, // default: true
 
-    // Page-level versioning (issue #371)
-    versioningEnabled: cfg.versioningEnabled === true,
-    versioningMaxPerPage:
-      typeof cfg.versioningMaxPerPage === "number"
-        ? Math.max(0, Math.floor(cfg.versioningMaxPerPage))
-        : 50,
+    // Page-level versioning (issue #371). Issue #678 PR 2/4:
+    // dreams.phases.deepSleep.* WINS over legacy keys.
+    versioningEnabled: dreamsDeepSleep.versioningEnabled,
+    versioningMaxPerPage: dreamsDeepSleep.versioningMaxPerPage,
     versioningSidecarDir:
       typeof cfg.versioningSidecarDir === "string" && cfg.versioningSidecarDir.trim().length > 0
         ? cfg.versioningSidecarDir.trim()

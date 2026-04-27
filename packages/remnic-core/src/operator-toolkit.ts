@@ -1475,22 +1475,33 @@ export async function summarizeDreamsPhases(
   // Load meta.json for best-available last-run timestamps.
   const meta = await storage.loadMeta();
 
-  // Attempt to read the governance-status file (written by memory-governance-cron
-  // after a deep-sleep pass; may not exist on fresh installs).
+  // Codex P2 on PR 763: read the latest governance run's `manifest.json`
+  // (the real on-disk format the maintenance pipeline emits) rather than a
+  // hypothetical status file. Governance runs land under
+  // `state/memory-governance/runs/<runId>/manifest.json` with a `createdAt`
+  // timestamp. `listMemoryGovernanceRuns` returns runIds sorted newest-first,
+  // so the head of the list is the most recent run.
   let deepSleepLastRun: string | null = null;
   try {
-    const governanceStatusPath = path.join(
-      config.memoryDir,
-      "state",
-      "memory-governance-last-run.json",
-    );
-    const raw = await readFile(governanceStatusPath, "utf-8");
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (typeof parsed.ranAt === "string" && parsed.ranAt.length > 0) {
-      deepSleepLastRun = parsed.ranAt;
+    const runIds = await listMemoryGovernanceRuns(config.memoryDir);
+    if (runIds.length > 0) {
+      const latestRunId = runIds[0];
+      const manifestPath = path.join(
+        config.memoryDir,
+        "state",
+        "memory-governance",
+        "runs",
+        latestRunId,
+        "manifest.json",
+      );
+      const raw = await readFile(manifestPath, "utf-8");
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof parsed.createdAt === "string" && parsed.createdAt.length > 0) {
+        deepSleepLastRun = parsed.createdAt;
+      }
     }
   } catch {
-    // File absent on fresh installs — not an error.
+    // No governance runs yet on fresh installs — not an error.
   }
 
   // Build per-phase summary lines for the human-readable `summary` field.

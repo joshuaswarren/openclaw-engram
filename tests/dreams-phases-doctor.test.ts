@@ -172,19 +172,31 @@ test("summarizeDreamsPhases: lastRun reflects meta.json when extraction has run"
   assert.equal(details["rem"].lastRun, fakeConsolidation);
 });
 
-test("summarizeDreamsPhases: deepSleep lastRun reflects governance-status file when present", async () => {
+test("summarizeDreamsPhases: deepSleep lastRun reflects latest governance run manifest when present", async () => {
   const fixture = await makeFixture();
-  const stateDir = path.join(fixture.memoryDir, "state");
-  await mkdir(stateDir, { recursive: true });
-  const fakeRanAt = "2026-04-03T03:00:00.000Z";
+  // Codex P2 on PR 763: the doctor reads the latest governance run manifest
+  // under state/memory-governance/runs/<runId>/manifest.json, picking the
+  // newest by sorted runId (listMemoryGovernanceRuns returns newest-first).
+  const runsDir = path.join(fixture.memoryDir, "state", "memory-governance", "runs");
+  const olderRunId = "20260401T100000Z-abc123";
+  const newerRunId = "20260403T030000Z-def456";
+  const olderCreatedAt = "2026-04-01T10:00:00.000Z";
+  const newerCreatedAt = "2026-04-03T03:00:00.000Z";
+  await mkdir(path.join(runsDir, olderRunId), { recursive: true });
+  await mkdir(path.join(runsDir, newerRunId), { recursive: true });
   await writeFile(
-    path.join(stateDir, "memory-governance-last-run.json"),
-    JSON.stringify({ ranAt: fakeRanAt, durationMs: 1234 }),
+    path.join(runsDir, olderRunId, "manifest.json"),
+    JSON.stringify({ schemaVersion: 1, runId: olderRunId, createdAt: olderCreatedAt }),
+    "utf-8",
+  );
+  await writeFile(
+    path.join(runsDir, newerRunId, "manifest.json"),
+    JSON.stringify({ schemaVersion: 1, runId: newerRunId, createdAt: newerCreatedAt }),
     "utf-8",
   );
   const check = await summarizeDreamsPhases(fixture.config);
   const details = check.details as Record<string, Record<string, unknown>>;
-  assert.equal(details["deepSleep"].lastRun, fakeRanAt);
+  assert.equal(details["deepSleep"].lastRun, newerCreatedAt, "should pick newest by sorted runId");
 });
 
 test("summarizeDreamsPhases: new phase keys override legacy thresholds in details", async () => {
