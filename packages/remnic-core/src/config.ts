@@ -641,6 +641,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       dreamsDeepSleepEnabledRaw !== undefined
         ? dreamsDeepSleepEnabledRaw
         : legacyDeepSleepEnabled,
+    enabledExplicitlySet: dreamsDeepSleepEnabledRaw !== undefined,
     cadenceMs:
       typeof rawDreamsDeepSleep.cadenceMs === "number"
         ? Math.max(0, Math.floor(rawDreamsDeepSleep.cadenceMs))
@@ -1748,7 +1749,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     // gates (orchestrator's `runSemanticConsolidation`) read these legacy
     // fields, so we must propagate the precedence here, not just in the
     // `dreamsPhases` object.
-    semanticConsolidationEnabled: dreamsRem.enabled,
+    semanticConsolidationEnabled: dreamsRem.enabled && dreamsRem.cadenceMs > 0,
     semanticConsolidationModel:
       typeof cfg.semanticConsolidationModel === "string" && cfg.semanticConsolidationModel.length > 0
         ? cfg.semanticConsolidationModel
@@ -1763,7 +1764,8 @@ export function parseConfig(raw: unknown): PluginConfig {
     // semanticConsolidationIntervalHours is derived from dreamsRem.cadenceMs
     // when an override is set (rounded up to the nearest hour). Preserve
     // explicit zero so legacy schedulers see the same disable-by-zero signal
-    // as the dreams.phases.rem config.
+    // as the dreams.phases.rem config; the runtime enabled flag is also
+    // disabled above so zero does not mean "run every maintenance cycle".
     semanticConsolidationIntervalHours:
       rawDreamsRem.cadenceMs !== undefined
         ? Math.max(0, Math.ceil(dreamsRem.cadenceMs / 3_600_000))

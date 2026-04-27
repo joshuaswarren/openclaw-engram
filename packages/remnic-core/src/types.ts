@@ -339,6 +339,8 @@ export interface DreamsDeepSleepConfig {
    * to disable those surfaces without removing legacy config keys.
    */
   enabled: boolean;
+  /** True only when dreams.phases.deepSleep.enabled was explicitly configured. */
+  enabledExplicitlySet?: boolean;
   /**
    * Minimum interval between deep-sleep passes in milliseconds.
    * Informational only in PR 2; PR 4 will wire this into the cron scheduler.

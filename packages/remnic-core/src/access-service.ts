@@ -2671,7 +2671,8 @@ export class EngramAccessService {
     summaryPath: string;
     reportPath: string;
   }> {
-    if (!this.orchestrator.config.dreamsPhases.deepSleep.enabled) {
+    const deepSleep = this.orchestrator.config.dreamsPhases.deepSleep;
+    if (deepSleep.enabled === false && deepSleep.enabledExplicitlySet === true) {
       throw new Error("memory governance is disabled by dreams.phases.deepSleep.enabled=false");
     }
     const resolvedNamespace = this.resolveWritableNamespace(

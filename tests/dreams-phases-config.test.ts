@@ -37,6 +37,7 @@ test("dreamsPhases: defaults mirror legacy top-level key defaults when block is 
   // Deep sleep defaults to least-privileged unless an explicit legacy
   // deep-sleep surface is enabled.
   assert.equal(cfg.dreamsPhases.deepSleep.enabled, false);
+  assert.equal(cfg.dreamsPhases.deepSleep.enabledExplicitlySet, false);
   assert.equal(cfg.dreamsPhases.deepSleep.cadenceMs, 24 * 3_600_000);
   assert.equal(cfg.dreamsPhases.deepSleep.versioningEnabled, false, "versioningEnabled mirrors legacy default (false)");
   assert.equal(cfg.dreamsPhases.deepSleep.versioningMaxPerPage, 50);
@@ -157,11 +158,13 @@ test("dreamsPhases: dreams.phases.rem cadence wins over semanticConsolidationInt
 test("dreamsPhases: dreams.phases.rem cadenceMs=0 preserves legacy zero interval", () => {
   const cfg = parseConfig({
     openaiApiKey: "sk-test",
+    semanticConsolidationEnabled: true,
     semanticConsolidationIntervalHours: 168,
-    dreams: { phases: { rem: { cadenceMs: 0 } } },
+    dreams: { phases: { rem: { enabled: true, cadenceMs: 0 } } },
   });
   assert.equal(cfg.dreamsPhases.rem.cadenceMs, 0, "explicit zero cadence wins");
   assert.equal(cfg.semanticConsolidationIntervalHours, 0, "legacy IntervalHours preserves zero cadence");
+  assert.equal(cfg.semanticConsolidationEnabled, false, "zero cadence disables legacy scheduler to avoid running every maintenance cycle");
 });
 
 test("dreamsPhases: dreams.phases.rem.minIntervalMs wins over consolidationMinIntervalMs (legacy runtime field too)", () => {
@@ -184,6 +187,7 @@ test("dreamsPhases: dreams.phases.deepSleep.enabled false disables phase", () =>
     dreams: { phases: { deepSleep: { enabled: false } } },
   });
   assert.equal(cfg.dreamsPhases.deepSleep.enabled, false);
+  assert.equal(cfg.dreamsPhases.deepSleep.enabledExplicitlySet, true);
   assert.equal(cfg.nightlyGovernanceCronAutoRegister, false);
   assert.equal(cfg.qmdTierMigrationEnabled, false);
   assert.equal(cfg.versioningEnabled, false);

@@ -10,7 +10,7 @@ import { getMemoryProjectionPath } from "../src/memory-projection-store.js";
 import { StorageManager } from "../src/storage.js";
 import { recordTrustZoneRecord } from "../src/trust-zones.ts";
 
-function dreamsPhasesConfig(deepSleepEnabled = true) {
+function dreamsPhasesConfig(deepSleepEnabled = true, deepSleepEnabledExplicitlySet = false) {
   return {
     lightSleep: {
       enabled: true,
@@ -30,6 +30,7 @@ function dreamsPhasesConfig(deepSleepEnabled = true) {
     },
     deepSleep: {
       enabled: deepSleepEnabled,
+      enabledExplicitlySet: deepSleepEnabledExplicitlySet,
       cadenceMs: 24 * 3_600_000,
       versioningEnabled: false,
       versioningMaxPerPage: 50,
@@ -2270,7 +2271,7 @@ test("access service governanceRun rejects when deep sleep is disabled", async (
         principalFromSessionKeyMode: "prefix",
         principalFromSessionKeyRules: [],
         namespacePolicies: [],
-        dreamsPhases: dreamsPhasesConfig(false),
+        dreamsPhases: dreamsPhasesConfig(false, true),
       },
       recall: async () => "ctx",
       lastRecall: { get: () => null, getMostRecent: () => null },
@@ -2281,6 +2282,37 @@ test("access service governanceRun rejects when deep sleep is disabled", async (
       () => service.governanceRun({ mode: "shadow" }),
       /memory governance is disabled by dreams\.phases\.deepSleep\.enabled=false/,
     );
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service governanceRun allows defaulted deep sleep false for manual runs", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-governance-defaulted-"));
+  try {
+    const storage = new StorageManager(memoryDir);
+    await storage.ensureDirectories();
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "default",
+        searchBackend: "qmd",
+        qmdEnabled: false,
+        nativeKnowledge: undefined,
+        sharedNamespace: "shared",
+        principalFromSessionKeyMode: "prefix",
+        principalFromSessionKeyRules: [],
+        namespacePolicies: [],
+        dreamsPhases: dreamsPhasesConfig(false),
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => storage,
+    } as any);
+
+    const result = await service.governanceRun({ mode: "shadow" });
+    assert.equal(result.mode, "shadow");
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }

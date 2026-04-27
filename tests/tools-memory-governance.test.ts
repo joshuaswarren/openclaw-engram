@@ -14,7 +14,7 @@ function toolText(result: { content: Array<{ type: string; text: string }> }): s
   return result.content.map((item) => item.text).join("\n");
 }
 
-function dreamsPhasesConfig(deepSleepEnabled: boolean) {
+function dreamsPhasesConfig(deepSleepEnabled: boolean, deepSleepEnabledExplicitlySet = false) {
   return {
     lightSleep: {
       enabled: true,
@@ -34,6 +34,7 @@ function dreamsPhasesConfig(deepSleepEnabled: boolean) {
     },
     deepSleep: {
       enabled: deepSleepEnabled,
+      enabledExplicitlySet: deepSleepEnabledExplicitlySet,
       cadenceMs: 24 * 3_600_000,
       versioningEnabled: false,
       versioningMaxPerPage: 50,
@@ -52,7 +53,7 @@ test("memory_governance_run tool is gated by dreams.phases.deepSleep.enabled", a
   const orchestrator = {
     config: {
       defaultNamespace: "default",
-      dreamsPhases: dreamsPhasesConfig(false),
+      dreamsPhases: dreamsPhasesConfig(false, true),
       openclawToolsEnabled: true,
       feedbackEnabled: false,
       negativeExamplesEnabled: false,

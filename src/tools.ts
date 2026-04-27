@@ -2382,7 +2382,8 @@ Best for:
         ),
       }),
       async execute(_toolCallId, params) {
-        if (!orchestrator.config.dreamsPhases.deepSleep.enabled) {
+        const deepSleep = orchestrator.config.dreamsPhases.deepSleep;
+        if (deepSleep.enabled === false && deepSleep.enabledExplicitlySet === true) {
           return toolResult(
             "Memory governance is disabled by `dreams.phases.deepSleep.enabled=false`.",
           );
