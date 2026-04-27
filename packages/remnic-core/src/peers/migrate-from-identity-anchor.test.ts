@@ -200,6 +200,22 @@ test("idempotent: second run returns skipped=true without overwriting", async ()
   assert.equal(afterSecond.createdAt, createdAt, "createdAt must not change on second run");
 });
 
+test("dryRun flag is preserved on skip path (P2 codex fix)", async () => {
+  // Codex P2: the early-return for an existing self peer previously hard-coded
+  // dryRun: false, contradicting the MigrateFromIdentityAnchorResult contract.
+  const dir = await makeTempDir();
+  // First: real write to seed the self peer.
+  const first = await migrateFromIdentityAnchor({ memoryDir: dir });
+  assert.equal(first.written, true);
+
+  // Second: dry-run on top of an existing peer — dryRun must reflect the
+  // caller's request, not be hard-coded to false.
+  const second = await migrateFromIdentityAnchor({ memoryDir: dir, dryRun: true });
+  assert.equal(second.skipped, true);
+  assert.equal(second.dryRun, true, "dryRun must be true when caller passed dryRun: true");
+  assert.equal(second.written, false);
+});
+
 test("idempotent: running dry-run twice does not write on either run", async () => {
   const dir = await makeTempDir();
 
