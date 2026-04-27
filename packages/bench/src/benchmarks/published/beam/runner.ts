@@ -96,6 +96,11 @@ interface BeamDatasetSource {
   entries(): AsyncIterable<BeamDatasetEntry>;
 }
 
+interface SyntaxExtraTargetDetails {
+  normalized: string;
+  punctuatedTokens: string[];
+}
+
 export async function runBeamBenchmark(
   options: ResolvedRunBenchmarkOptions,
 ): Promise<BenchmarkResult> {
@@ -936,8 +941,11 @@ function syntaxHighlightingRubricMatches(actual: string, target: string): boolea
     mentionsSyntaxHighlightingRequirement(target) &&
     mentionsSyntaxHighlightingRequirement(actual) &&
     !negatesSyntaxHighlighting(actual) &&
-    (extraTargetDetails.length === 0 ||
-      rubricPhraseContains(actual, extraTargetDetails))
+    (extraTargetDetails.normalized.length === 0 ||
+      rubricPhraseContains(actual, extraTargetDetails.normalized)) &&
+    extraTargetDetails.punctuatedTokens.every(
+      (token) => containsAnswer(actual, token) === 1,
+    )
   );
 }
 
@@ -961,12 +969,22 @@ function splitRubricClauses(value: string): string[] {
     .filter((clause) => clause.length > 0);
 }
 
-function syntaxHighlightingExtraTargetDetails(target: string): string {
-  return normalizeRubricPhrase(target)
-    .replace(SYNTAX_HIGHLIGHTING_RUBRIC, " ")
-    .replace(/\b(?:and|with|the|a|an)\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+function syntaxHighlightingExtraTargetDetails(target: string): SyntaxExtraTargetDetails {
+  return {
+    normalized: normalizeRubricPhrase(target)
+      .replace(SYNTAX_HIGHLIGHTING_RUBRIC, " ")
+      .replace(/\b(?:and|with|the|a|an)\b/g, " ")
+      .replace(/\s+/g, " ")
+      .trim(),
+    punctuatedTokens: extractPunctuatedDetailTokens(target),
+  };
+}
+
+function extractPunctuatedDetailTokens(target: string): string[] {
+  const matches = target.match(
+    /(?:\.[a-z0-9]+|[a-z0-9]+(?:[+#]+|(?:\.[a-z0-9]+)+))/gi,
+  );
+  return [...new Set(matches ?? [])];
 }
 
 function rubricPhraseContains(actual: string, expected: string): boolean {

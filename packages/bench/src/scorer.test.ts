@@ -70,4 +70,8 @@ test("containsAnswer does not match short labels inside unrelated words", () => 
   assert.equal(containsAnswer("March 29", "A."), 0);
   assert.equal(containsAnswer("The answer is A.", "A."), 1);
   assert.equal(containsAnswer("Option B is selected.", "B."), 1);
+  assert.equal(containsAnswer("nobody knows", "No."), 0);
+  assert.equal(containsAnswer("yesterday", "Yes."), 0);
+  assert.equal(containsAnswer("No, that was not discussed.", "No."), 1);
+  assert.equal(containsAnswer("The answer is yes.", "Yes."), 1);
 });

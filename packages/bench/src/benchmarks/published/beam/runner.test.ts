@@ -355,6 +355,103 @@ test("BEAM rubric coverage matches hyphenated extra syntax target details", asyn
   assert.equal(result.results.tasks[0]?.scores.rubric_coverage, 1);
 });
 
+test("BEAM rubric coverage requires punctuated extra syntax target details", async () => {
+  const datasetDir = await mkdtemp(path.join(tmpdir(), "remnic-beam-punctuated-"));
+  await writeFile(
+    path.join(datasetDir, "100k.json"),
+    JSON.stringify([
+      {
+        conversation_id: "punctuated-target",
+        chat: [
+          [
+            {
+              role: "user",
+              content:
+                "Please remember implementation help should use syntax-highlighted code blocks with C++ examples.",
+            },
+          ],
+        ],
+        probing_questions: {
+          instruction_following: [
+            {
+              question: "Could you show me how to implement a login feature?",
+              rubric: [
+                "LLM response should contain: code blocks with syntax highlighting and C++ examples",
+              ],
+            },
+          ],
+        },
+      },
+    ]),
+  );
+
+  const systemBase = {
+    async reset() {},
+    async store() {},
+    async recall() {
+      return "Implementation help should use syntax-highlighted code blocks with C++ examples.";
+    },
+    async search() {
+      return [{ id: "hit", text: "hit" }];
+    },
+    async destroy() {},
+    async getStats() {
+      return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: 0 };
+    },
+    judge: {
+      async score() {
+        return 0;
+      },
+    },
+  };
+
+  const missingPunctuationResult = await runBeamBenchmark({
+    benchmark: beamDefinition,
+    mode: "quick",
+    datasetDir,
+    system: {
+      ...systemBase,
+      responder: {
+        async respond() {
+          return {
+            text: "Always use code blocks with syntax highlighting and C examples.",
+            tokens: { input: 1, output: 1 },
+            latencyMs: 1,
+            model: "beam-test-responder",
+          };
+        },
+      },
+    },
+  });
+  const matchingPunctuationResult = await runBeamBenchmark({
+    benchmark: beamDefinition,
+    mode: "quick",
+    datasetDir,
+    system: {
+      ...systemBase,
+      responder: {
+        async respond() {
+          return {
+            text: "Always use code blocks with syntax highlighting and C++ examples.",
+            tokens: { input: 1, output: 1 },
+            latencyMs: 1,
+            model: "beam-test-responder",
+          };
+        },
+      },
+    },
+  });
+
+  assert.equal(
+    missingPunctuationResult.results.tasks[0]?.scores.rubric_coverage,
+    0,
+  );
+  assert.equal(
+    matchingPunctuationResult.results.tasks[0]?.scores.rubric_coverage,
+    1,
+  );
+});
+
 async function runBeamWithInstructionAnswer(instructionAnswer: string) {
   return runBeamBenchmark({
     benchmark: beamDefinition,

@@ -98,8 +98,8 @@ export function containsAnswer(
   if (normalizedExpected.length === 0) return 0;
 
   const normalizedPredicted = normalizeTextForContainment(predicted);
-  if (isShortContainmentLabel(normalizedExpected)) {
-    return containsShortContainmentLabel(normalizedPredicted, normalizedExpected)
+  if (isShortLexicalAnswer(normalizedExpected)) {
+    return containsShortLexicalAnswer(normalizedPredicted, normalizedExpected)
       ? 1
       : 0;
   }
@@ -266,14 +266,17 @@ function normalizeTextForContainment(value: string | number | unknown): string {
   return trimTrailingSentencePunctuation(normalizeText(value).replace(/\s+/g, " "));
 }
 
-function isShortContainmentLabel(value: string): boolean {
-  return value.length === 1 && isAsciiAlphaNumeric(value);
+function isShortLexicalAnswer(value: string): boolean {
+  return (
+    value.length <= 3 &&
+    [...value].every((character) => isAsciiAlphaNumeric(character))
+  );
 }
 
-function containsShortContainmentLabel(value: string, label: string): boolean {
+function containsShortLexicalAnswer(value: string, expected: string): boolean {
   return value
     .split(/[^a-z0-9]+/)
-    .some((token) => token === label);
+    .some((token) => token === expected);
 }
 
 function isAsciiAlphaNumeric(value: string): boolean {
