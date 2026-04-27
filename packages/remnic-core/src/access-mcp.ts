@@ -1072,6 +1072,43 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
+      // ── Dreams telemetry (issue #678 PR 3+4) ─────────────────────────────
+      {
+        name: "engram.dreams_status",
+        description:
+          "Return per-phase Dreams pipeline telemetry for the last N hours (default 24). Reports run count, total duration, and items processed for each phase: lightSleep, rem, deepSleep.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            windowHours: {
+              type: "number",
+              description: "How many hours to look back (default 24, minimum 1).",
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.dreams_run",
+        description:
+          "Manually invoke a single Dreams pipeline phase (lightSleep, rem, or deepSleep). Returns the same telemetry shape as a scheduled run. Pass dryRun: true to preview without committing writes.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            phase: {
+              type: "string",
+              enum: ["lightSleep", "rem", "deepSleep"],
+              description: "Which phase to run.",
+            },
+            dryRun: {
+              type: "boolean",
+              description: "When true, report what would change without committing writes (default false).",
+            },
+          },
+          required: ["phase"],
+          additionalProperties: false,
+        },
+      },
     ].flatMap((tool) => withToolAliases(tool));
   }
 
@@ -2109,6 +2146,30 @@ export class EngramMcpServer {
         const id = typeof args.id === "string" ? args.id : "";
         if (!id) throw new Error("engram.peer_profile_get: id is required");
         return this.service.peerProfileGet(id);
+      }
+      // ── Dreams telemetry (issue #678 PR 3+4) ──────────────────────────────
+      case "engram.dreams_status":
+      case "remnic.dreams_status": {
+        const windowHours =
+          typeof args.windowHours === "number" && Number.isFinite(args.windowHours)
+            ? Math.max(1, Math.floor(args.windowHours))
+            : 24;
+        return this.service.dreamsStatus({ windowHours });
+      }
+      case "engram.dreams_run":
+      case "remnic.dreams_run": {
+        const VALID_PHASES = ["lightSleep", "rem", "deepSleep"];
+        const phase = typeof args.phase === "string" ? args.phase : "";
+        if (!phase || !VALID_PHASES.includes(phase)) {
+          throw new Error(
+            `engram.dreams_run: phase is required and must be one of: ${VALID_PHASES.join(", ")}`,
+          );
+        }
+        const dryRun = args.dryRun === true;
+        return this.service.dreamsRun({
+          phase: phase as import("./types.js").DreamsPhase,
+          dryRun,
+        });
       }
       default:
         throw new Error(`unknown tool: ${name}`);

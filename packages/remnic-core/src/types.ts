@@ -2797,3 +2797,46 @@ export interface HourlySummary {
   turnCount: number;
   generatedAt: string;
 }
+
+// ============================================================================
+// Dreams Pipeline Telemetry (issue #678 PR 3/4)
+// ============================================================================
+
+/**
+ * The three named phases of the Dreams consolidation pipeline.
+ * - lightSleep: recent activity scoring + clustering
+ * - rem:        cross-session synthesis, supersession, semantic consolidation
+ * - deepSleep:  tier migration, page-version snapshots, archive
+ */
+export type DreamsPhase = "lightSleep" | "rem" | "deepSleep";
+
+/** Aggregated per-phase telemetry for a given time window. */
+export interface DreamsPhaseStatus {
+  phase: DreamsPhase;
+  runCount: number;
+  totalDurationMs: number;
+  totalItemsProcessed: number;
+  /** ISO-8601 timestamp of the most recent completed run, or null if none. */
+  lastRunAt: string | null;
+  lastDurationMs: number | null;
+}
+
+/** Shape returned by the dreams/status endpoint and MCP tool. */
+export interface DreamsStatusResult {
+  windowStart: string;
+  windowEnd: string;
+  phases: {
+    lightSleep: DreamsPhaseStatus;
+    rem: DreamsPhaseStatus;
+    deepSleep: DreamsPhaseStatus;
+  };
+}
+
+/** Result of a manual `remnic dreams run` invocation. */
+export interface DreamsRunResult {
+  phase: DreamsPhase;
+  dryRun: boolean;
+  durationMs: number;
+  itemsProcessed: number;
+  notes?: string;
+}

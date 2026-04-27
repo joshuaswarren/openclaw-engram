@@ -4391,4 +4391,66 @@ export class EngramAccessService {
     };
     return importCapsuleFn({ ...opts, root, versioning });
   }
+
+  // ── Dreams pipeline telemetry surfaces (issue #678 PR 3+4) ──────────────
+
+  /**
+   * Return per-phase Dreams telemetry for the last N hours (default 24).
+   */
+  async dreamsStatus(options?: {
+    windowHours?: number;
+  }): Promise<import("./types.js").DreamsStatusResult> {
+    const { getDreamsStatus } = await import("./maintenance/dreams-ledger.js");
+    const windowHours =
+      typeof options?.windowHours === "number" && Number.isFinite(options.windowHours)
+        ? Math.max(1, Math.floor(options.windowHours))
+        : 24;
+    return getDreamsStatus(this.orchestrator.config.memoryDir, windowHours);
+  }
+
+  /**
+   * Manually invoke a single Dreams phase pass (PR 4/4).
+   *
+   * Deep-sleep delegates to memory governance (shadow → dry-run, apply → live).
+   * Light-sleep and REM scan the observation ledger and memory corpus
+   * respectively, returning the same telemetry shape as a scheduled run.
+   */
+  async dreamsRun(options: {
+    phase: import("./types.js").DreamsPhase;
+    dryRun?: boolean;
+  }): Promise<import("./types.js").DreamsRunResult> {
+    const { runDreamsPhase } = await import("./maintenance/dreams-ledger.js");
+    const validPhases = ["lightSleep", "rem", "deepSleep"];
+    if (!validPhases.includes(options.phase)) {
+      throw new EngramAccessInputError(
+        `Invalid phase: ${String(options.phase)}. Must be one of: ${validPhases.join(", ")}`,
+      );
+    }
+    const dryRun = options.dryRun === true;
+    const memoryDir = this.orchestrator.config.memoryDir;
+    const result = await runDreamsPhase(
+      { memoryDir, phase: options.phase, dryRun },
+      options.phase === "deepSleep"
+        ? async ({ memoryDir: md, dryRun: dr }) => {
+            const { runMemoryGovernance } = await import("./maintenance/memory-governance.js");
+            const govResult = await runMemoryGovernance({
+              memoryDir: md,
+              mode: dr ? "shadow" : "apply",
+            });
+            return {
+              scannedMemories: govResult.summary.scannedMemories,
+              appliedActionCount: govResult.summary.appliedActionCount,
+              notes: dr ? `shadow mode: ${govResult.summary.proposedActionCount} actions proposed` : `applied ${govResult.summary.appliedActionCount} actions`,
+            };
+          }
+        : undefined,
+    );
+    return {
+      phase: result.phase,
+      dryRun: result.dryRun,
+      durationMs: result.durationMs,
+      itemsProcessed: result.itemsProcessed,
+      notes: result.notes,
+    };
+  }
 }

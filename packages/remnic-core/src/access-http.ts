@@ -1271,6 +1271,40 @@ export class EngramAccessHttpServer {
       return;
     }
 
+    // ── Dreams telemetry (issue #678 PR 3+4) ──────────────────────────────────
+
+    if (req.method === "GET" && pathname === "/engram/v1/dreams/status") {
+      const windowHoursRaw = parsed.searchParams.get("windowHours");
+      const windowHours =
+        windowHoursRaw !== null ? parseInt(windowHoursRaw, 10) : 24;
+      if (!Number.isFinite(windowHours) || windowHours < 1) {
+        this.respondJson(res, 400, { error: "windowHours must be a positive integer" });
+        return;
+      }
+      const result = await this.service.dreamsStatus({ windowHours });
+      this.respondJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/engram/v1/dreams/run") {
+      const body = await this.readJsonBody(req) as Record<string, unknown>;
+      const VALID_PHASES = ["lightSleep", "rem", "deepSleep"] as const;
+      const phase = typeof body.phase === "string" ? body.phase : undefined;
+      if (!phase || !(VALID_PHASES as readonly string[]).includes(phase)) {
+        this.respondJson(res, 400, {
+          error: `phase is required and must be one of: ${VALID_PHASES.join(", ")}`,
+        });
+        return;
+      }
+      const dryRun = body.dryRun === true;
+      const result = await this.service.dreamsRun({
+        phase: phase as import("./types.js").DreamsPhase,
+        dryRun,
+      });
+      this.respondJson(res, 200, result);
+      return;
+    }
+
     this.respondJson(res, 404, { error: "not_found", code: "not_found" });
   }
 
