@@ -4264,6 +4264,26 @@ export class EngramAccessService {
     return this.orchestrator.config.memoryDir;
   }
 
+  /**
+   * Resolve the storage directory for a given namespace.  Used by the SSE
+   * graph-event handler to subscribe to the correct per-namespace bus rather
+   * than the global root (CLAUDE.md rule 42 — read/write paths must resolve
+   * through the same namespace layer).
+   *
+   * `principal` must be the transport-bound request principal (from
+   * `resolveRequestPrincipal`).  When namespaces are enabled, an absent
+   * principal causes `resolveReadableNamespace` to throw an auth error,
+   * matching the behaviour of every other authenticated read path.
+   *
+   * Falls back to `this.memoryDir` when namespaces are disabled or the
+   * namespace is absent, matching the behaviour of every other read path.
+   */
+  async getMemoryDirForNamespace(namespace?: string, principal?: string): Promise<string> {
+    const resolved = this.resolveReadableNamespace(namespace, principal);
+    const storage = await this.orchestrator.getStorage(resolved);
+    return storage.dir;
+  }
+
   get storageRef(): StorageManager {
     return this.orchestrator.storage;
   }

@@ -1278,11 +1278,257 @@ async function loadMemoryGraph() {
   attachGraphInteractions(canvas);
   renderGraphLegend();
 
+  // Open (or re-open) the SSE stream so new edges appear in real time
+  // without a full re-fetch (issue #691 PR 5/5).
+  mountGraphEventSource();
+
   setStatus(
     "graphStatus",
     `Loaded ${nodes.length} nodes, ${edges.length} edges. Generated ${snapshot.generatedAt}.`,
     "ok",
   );
+}
+
+// ─── Real-time graph SSE updates (issue #691 PR 5/5) ────────────────────────
+
+/**
+ * Pending edge-added payloads whose source or target node had not yet arrived
+ * when the event was first processed.  Retried on every subsequent node-added
+ * event (Codex review thread PRRT_kwDORJXyws59soGK).
+ *
+ * Entries are removed once both endpoint nodes exist in graphData.nodes.
+ * The queue is bounded to 200 entries to prevent unbounded growth from a
+ * disconnected or very busy stream.
+ */
+const _orphanEdgeQueue = [];
+const _ORPHAN_EDGE_QUEUE_MAX = 200;
+
+/**
+ * Active EventSource connection for /engram/v1/graph/events.
+ * Only one connection is maintained at a time; `mountGraphEventSource` closes
+ * the previous one before opening a new one.
+ */
+let graphEventSource = null;
+
+/**
+ * Apply a single graph mutation event to the in-memory graphData and
+ * re-render without a full re-fetch.
+ *
+ * Supported mutation types:
+ *   node-added    — add a node if not already present
+ *   node-updated  — update label/kind on an existing node
+ *   edge-added    — add an edge if the source/target nodes exist
+ *   edge-updated  — update weight/confidence on a matching edge
+ *   edge-removed  — remove matching edges from the simulation
+ */
+function applyGraphEvent(event) {
+  if (!graphData) return; // graph not loaded yet; skip
+  const p = event.payload;
+
+  if (event.type === "node-added") {
+    const existing = graphData.nodes.find((n) => n.id === p.nodeId);
+    if (!existing) {
+      const node = {
+        id: p.nodeId,
+        label: p.label || p.nodeId,
+        kind: p.kind || "unknown",
+        score: 1,
+        lastUpdated: p.lastUpdated || event.ts,
+        // Place new nodes at a random position near the canvas centre.
+        x: (Math.random() - 0.5) * 200,
+        y: (Math.random() - 0.5) * 200,
+        vx: 0,
+        vy: 0,
+        _memoryId: null,
+      };
+      graphData.nodes.push(node);
+      graphColorForCategory(node.kind);
+      // Drain any queued orphan edges now that a new node has arrived.
+      // Iterate backwards so splicing by index is safe.
+      let drainedAny = false;
+      for (let i = _orphanEdgeQueue.length - 1; i >= 0; i--) {
+        const op = _orphanEdgeQueue[i];
+        const s = graphData.nodes.find((n) => n.id === op.source);
+        const t = graphData.nodes.find((n) => n.id === op.target);
+        if (s && t) {
+          _orphanEdgeQueue.splice(i, 1);
+          const alreadyExists = graphData.edges.some(
+            (e) => e.source === op.source && e.target === op.target && e.kind === op.kind,
+          );
+          if (!alreadyExists) {
+            graphData.edges.push({
+              source: op.source,
+              target: op.target,
+              kind: op.kind,
+              weight: typeof op.weight === "number" ? op.weight : 1.0,
+              label: op.label || "",
+              confidence: typeof op.confidence === "number" ? op.confidence : 1.0,
+              _srcNode: s,
+              _tgtNode: t,
+            });
+            drainedAny = true;
+          }
+        }
+      }
+      if (graphSim) graphSim.reheat();
+      drawGraph();
+      if (drainedAny && graphSim) graphSim.reheat();
+    }
+    return;
+  }
+
+  if (event.type === "node-updated") {
+    const node = graphData.nodes.find((n) => n.id === p.nodeId);
+    if (node) {
+      node.label = p.label || node.label;
+      node.kind = p.kind || node.kind;
+      if (p.lastUpdated) node.lastUpdated = p.lastUpdated;
+      drawGraph();
+    }
+    return;
+  }
+
+  if (event.type === "edge-added") {
+    const srcNode = graphData.nodes.find((n) => n.id === p.source);
+    const tgtNode = graphData.nodes.find((n) => n.id === p.target);
+    if (srcNode && tgtNode) {
+      const alreadyExists = graphData.edges.some(
+        (e) => e.source === p.source && e.target === p.target && e.kind === p.kind,
+      );
+      if (!alreadyExists) {
+        const edge = {
+          source: p.source,
+          target: p.target,
+          kind: p.kind,
+          weight: typeof p.weight === "number" ? p.weight : 1.0,
+          label: p.label || "",
+          confidence: typeof p.confidence === "number" ? p.confidence : 1.0,
+          _srcNode: srcNode,
+          _tgtNode: tgtNode,
+        };
+        graphData.edges.push(edge);
+        if (graphSim) graphSim.reheat();
+        drawGraph();
+      }
+    } else {
+      // One or both endpoint nodes haven't arrived yet — queue the edge payload
+      // so it can be applied once the missing nodes appear (Codex review thread
+      // PRRT_kwDORJXyws59soGK).  Enforce a cap to prevent unbounded growth.
+      const alreadyQueued = _orphanEdgeQueue.some(
+        (e) => e.source === p.source && e.target === p.target && e.kind === p.kind,
+      );
+      if (!alreadyQueued) {
+        if (_orphanEdgeQueue.length >= _ORPHAN_EDGE_QUEUE_MAX) {
+          _orphanEdgeQueue.shift(); // drop the oldest orphan
+        }
+        _orphanEdgeQueue.push({
+          source: p.source,
+          target: p.target,
+          kind: p.kind,
+          weight: p.weight,
+          label: p.label,
+          confidence: p.confidence,
+        });
+      }
+    }
+    return;
+  }
+
+  if (event.type === "edge-updated") {
+    for (const edge of graphData.edges) {
+      if (edge.source === p.source && edge.target === p.target && edge.kind === p.kind) {
+        if (typeof p.weight === "number") edge.weight = p.weight;
+        if (typeof p.confidence === "number") edge.confidence = p.confidence;
+      }
+    }
+    drawGraph();
+    return;
+  }
+
+  if (event.type === "edge-removed") {
+    // Track which nodes had at least one edge BEFORE this removal so we
+    // only prune nodes that lost their last edge.  Nodes that were already
+    // isolated (no edges at all) are intentional standalone nodes and must
+    // not be removed (Cursor review thread `app.js:1398`).
+    const hadEdges = new Set();
+    for (const e of graphData.edges) {
+      hadEdges.add(e.source);
+      hadEdges.add(e.target);
+    }
+    graphData.edges = graphData.edges.filter(
+      (e) => !(e.source === p.source && e.target === p.target && e.kind === p.kind),
+    );
+    // Build the still-connected set after removal.
+    const stillConnected = new Set();
+    for (const e of graphData.edges) {
+      stillConnected.add(e.source);
+      stillConnected.add(e.target);
+    }
+    // Only prune a node when it was connected before AND is now orphaned.
+    graphData.nodes = graphData.nodes.filter(
+      (n) => !hadEdges.has(n.id) || stillConnected.has(n.id),
+    );
+    if (graphSim) graphSim.reheat();
+    drawGraph();
+  }
+}
+
+/**
+ * Open a Server-Sent Events connection to /engram/v1/graph/events and
+ * patch graphData in-place as events arrive.
+ *
+ * Called once during graph pane initialisation (inside loadMemoryGraph).
+ * Re-opening is handled via the EventSource's built-in reconnect logic.
+ *
+ * The EventSource spec requires the URL to carry auth, because the
+ * EventSource constructor does not support headers.  We pass the bearer
+ * token as `?token=...` — the server checks both the Authorization header
+ * and this query parameter so curl/browser callers both work.
+ */
+function mountGraphEventSource() {
+  // Close any previous connection first (e.g. after a graph refresh).
+  if (graphEventSource) {
+    try { graphEventSource.close(); } catch { /* ignore */ }
+    graphEventSource = null;
+  }
+
+  const token = readToken();
+  if (!token) return; // no token → no stream; user can still use manual refresh
+
+  const url = `/engram/v1/graph/events?token=${encodeURIComponent(token)}`;
+  let es;
+  try {
+    es = new EventSource(url);
+  } catch {
+    // EventSource not supported (e.g. test environment); silently skip.
+    return;
+  }
+  graphEventSource = es;
+
+  es.onmessage = (e) => {
+    let parsed;
+    try { parsed = JSON.parse(e.data); } catch { return; }
+    if (!parsed || typeof parsed !== "object") return;
+
+    if (parsed.type === "connected" || parsed.type === "heartbeat") {
+      // Control frames — no graphData mutation needed.
+      return;
+    }
+
+    if (parsed.type === "batch" && Array.isArray(parsed.events)) {
+      for (const ev of parsed.events) {
+        applyGraphEvent(ev);
+      }
+      return;
+    }
+
+    // Fallback: treat as a single event (forward compatibility).
+    if (parsed.type) applyGraphEvent(parsed);
+  };
+
+  es.onerror = () => {
+    // EventSource reconnects automatically; nothing to do here.
+  };
 }
 
 // ─── Graph search + drill-through (issue #691 PR 4/5) ───────────────────────

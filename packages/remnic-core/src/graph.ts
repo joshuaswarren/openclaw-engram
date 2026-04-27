@@ -14,6 +14,7 @@ import { mkdir, appendFile, readFile } from "node:fs/promises";
 import * as path from "path";
 
 import { readEdgeConfidence } from "./graph-edge-reinforcement.js";
+import { emitGraphEvent } from "./graph-events.js";
 
 export type GraphType = "entity" | "time" | "causal";
 
@@ -125,6 +126,17 @@ export async function appendEdge(memoryDir: string, edge: GraphEdge): Promise<vo
   const line = JSON.stringify(edge) + "\n";
   await withGraphWriteLock(filePath, async () => {
     await appendFile(filePath, line, "utf8");
+  });
+  // Emit edge-added event for SSE subscribers (issue #691 PR 5/5).
+  // Fail-open: emitGraphEvent catches listener errors so a bad SSE client
+  // can never surface into the extraction pipeline.
+  emitGraphEvent(memoryDir, "edge-added", {
+    source: edge.from,
+    target: edge.to,
+    kind: edge.type,
+    weight: edge.weight,
+    label: edge.label,
+    confidence: typeof edge.confidence === "number" ? edge.confidence : 1.0,
   });
 }
 

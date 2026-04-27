@@ -14,6 +14,10 @@ import { isRecallDisclosure } from "./types.js";
 import { isTrustZoneName, type TrustZoneName, type TrustZoneRecordKind, type TrustZoneSourceClass } from "./trust-zones.js";
 import { AdapterRegistry, type ResolvedIdentity } from "./adapters/index.js";
 import type { CitationEntry } from "./citations.js";
+import {
+  subscribeGraphEvents,
+  type GraphEvent,
+} from "./graph-events.js";
 
 export interface EngramAccessHttpServerOptions {
   service: EngramAccessService;
@@ -138,6 +142,18 @@ export class EngramAccessHttpServer {
   private readonly mcpServer: EngramMcpServer;
   private server: Server | null = null;
   private boundPort = 0;
+  /** Active SSE response objects for /engram/v1/graph/events. */
+  private readonly sseClients = new Set<ServerResponse>();
+  /** Throttle batch: pending SSE event batches per client. */
+  private readonly sseBatchTimers = new Map<ServerResponse, ReturnType<typeof setTimeout>>();
+  private readonly ssePendingBatches = new Map<ServerResponse, GraphEvent[]>();
+  /**
+   * Per-client cleanup callbacks: clear heartbeat interval, flush timer,
+   * unsubscribe from bus, and end the response.  Stored here so `stop()`
+   * can invoke them even when the client hasn't disconnected yet
+   * (Cursor review thread `access-http.ts:232`).
+   */
+  private readonly sseCleanupFns = new Set<() => void>();
 
   constructor(options: EngramAccessHttpServerOptions) {
     this.service = options.service;
@@ -223,6 +239,25 @@ export class EngramAccessHttpServer {
     const server = this.server;
     this.server = null;
     this.boundPort = 0;
+    // Invoke each SSE client's cleanup callback so heartbeat intervals,
+    // batch timers, and graph-bus subscriptions are all released before the
+    // HTTP server closes.  Without this, long-running SSE connections leak
+    // setInterval handles and EventEmitter listeners (Cursor review thread
+    // `access-http.ts:232`).
+    for (const cleanup of this.sseCleanupFns) {
+      try { cleanup(); } catch { /* ignore */ }
+    }
+    this.sseCleanupFns.clear();
+    // Belt-and-suspenders: clear any state not yet reached by cleanup fns.
+    for (const [res, timer] of this.sseBatchTimers.entries()) {
+      clearTimeout(timer);
+      this.sseBatchTimers.delete(res);
+    }
+    this.ssePendingBatches.clear();
+    for (const res of this.sseClients) {
+      try { res.end(); } catch { /* ignore */ }
+    }
+    this.sseClients.clear();
     await new Promise<void>((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });
@@ -344,7 +379,7 @@ export class EngramAccessHttpServer {
       return;
     }
 
-    if (!this.isAuthorized(req)) {
+    if (!this.isAuthorized(req, pathname)) {
       const body = JSON.stringify({ error: "unauthorized", code: "unauthorized" });
       res.writeHead(401, {
         "content-type": "application/json; charset=utf-8",
@@ -1132,6 +1167,30 @@ export class EngramAccessHttpServer {
       return;
     }
 
+    // ── Graph mutation event stream (issue #691 PR 5/5) ──────────────────────
+    //
+    // GET /engram/v1/graph/events
+    //
+    // Server-Sent Events stream that emits graph mutation events in real time.
+    // Event types: node-added, node-updated, edge-added, edge-updated, edge-removed.
+    //
+    // Auth: same Bearer token scheme as every other endpoint (checked above).
+    //
+    // The SSE handler subscribes to the in-process graph event bus for the
+    // resolved memory dir.  Events are batched within a 200 ms window so a
+    // burst of writes (e.g. extraction of a large turn) doesn't overwhelm
+    // the admin UI canvas with individual re-renders.
+    //
+    // The client receives a `data: <json>\n\n` line per batch.  Each batch
+    // payload is { events: GraphEvent[] }.
+    //
+    // The stream sends a heartbeat `data: {"type":"heartbeat"}\n\n` every
+    // 25 s so load balancers and proxies don't time out idle connections.
+    if (req.method === "GET" && pathname === "/engram/v1/graph/events") {
+      await this.handleGraphEventsSSE(req, res);
+      return;
+    }
+
     // ── Peer Registry endpoints (issue #679 PR 4/5) ──────────────────────────
     //   GET    /engram/v1/peers              — list all peers
     //   GET    /engram/v1/peers/:id          — get one peer
@@ -1213,6 +1272,109 @@ export class EngramAccessHttpServer {
     }
 
     this.respondJson(res, 404, { error: "not_found", code: "not_found" });
+  }
+
+  /**
+   * SSE handler for /engram/v1/graph/events.
+   *
+   * Lifecycle:
+   *  1. Write SSE headers (Content-Type: text/event-stream).
+   *  2. Register this response in `sseClients`.
+   *  3. Resolve the namespace from the request and subscribe to THAT
+   *     namespace's graph event bus (Codex P1: in multi-namespace
+   *     deployments each namespace has its own bus keyed by its storage
+   *     dir — subscribing to the global root leaks events across tenants).
+   *  4. On each event, add to a 200 ms batch; flush batch as a single SSE frame.
+   *  5. Send heartbeat every 25 s.
+   *  6. On client disconnect (req "close"), clean up timers and unsubscribe.
+   *  7. Register the cleanup callback in `sseCleanupFns` so `stop()` can
+   *     release the heartbeat interval and bus subscription even when the
+   *     client never disconnects (Cursor review thread `access-http.ts:232`).
+   */
+  private async handleGraphEventsSSE(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // Resolve namespace from the ?namespace= query parameter (same pattern
+    // as graphSnapshot and other read endpoints).  Falls back to the
+    // default namespace when absent.
+    const parsed = new URL(req.url ?? "/", `http://${hostToUrlAuthority(this.host)}`);
+    const namespaceParam = parsed.searchParams.get("namespace");
+    const namespace = namespaceParam && namespaceParam.length > 0 ? namespaceParam : undefined;
+    // Resolve to the per-namespace storage directory so the bus subscription
+    // is scoped to the correct tenant (CLAUDE.md rule 42).
+    // Pass the request principal so namespace ACL is enforced — without it,
+    // resolveReadableNamespace throws when namespacesEnabled=true (Cursor
+    // thread PRRT_kwDORJXyws59snoR / Codex thread PRRT_kwDORJXyws59soGJ).
+    const principal = this.resolveRequestPrincipal(req);
+    const memoryDir = await this.service.getMemoryDirForNamespace(namespace, principal);
+
+    res.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-store, must-revalidate",
+      "connection": "keep-alive",
+      "x-accel-buffering": "no",     // prevent nginx buffering
+      "transfer-encoding": "chunked",
+    });
+
+    // Send initial "connected" frame so the client knows the stream is live.
+    const writeSSE = (payload: unknown): void => {
+      try {
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      } catch {
+        // client already gone — cleanup will fire via "close"
+      }
+    };
+
+    writeSSE({ type: "connected" });
+
+    this.sseClients.add(res);
+
+    // --- 200 ms batch throttle -----------------------------------------------
+    const flushBatch = (): void => {
+      const batch = this.ssePendingBatches.get(res);
+      if (!batch || batch.length === 0) return;
+      this.ssePendingBatches.delete(res);
+      this.sseBatchTimers.delete(res);
+      writeSSE({ type: "batch", events: batch });
+    };
+
+    const unsubscribe = subscribeGraphEvents(memoryDir, (event: GraphEvent) => {
+      let batch = this.ssePendingBatches.get(res);
+      if (!batch) {
+        batch = [];
+        this.ssePendingBatches.set(res, batch);
+      }
+      batch.push(event);
+      if (!this.sseBatchTimers.has(res)) {
+        this.sseBatchTimers.set(res, setTimeout(flushBatch, 200));
+      }
+    });
+
+    // --- 25 s heartbeat -------------------------------------------------------
+    const heartbeatInterval = setInterval(() => {
+      writeSSE({ type: "heartbeat" });
+    }, 25_000);
+
+    // --- Cleanup on client disconnect -----------------------------------------
+    const cleanup = (): void => {
+      clearInterval(heartbeatInterval);
+      const timer = this.sseBatchTimers.get(res);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        this.sseBatchTimers.delete(res);
+      }
+      this.ssePendingBatches.delete(res);
+      unsubscribe();
+      this.sseClients.delete(res);
+      this.sseCleanupFns.delete(cleanup);
+      try { res.end(); } catch { /* ignore */ }
+    };
+
+    // Register so stop() can invoke cleanup even when the client is still
+    // connected (releases the heartbeat interval and bus subscription
+    // before the HTTP server is torn down).
+    this.sseCleanupFns.add(cleanup);
+
+    req.once("close", cleanup);
+    req.once("error", cleanup);
   }
 
   private async handleMcpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1351,15 +1513,41 @@ export class EngramAccessHttpServer {
     return result.data as SchemaTypeFor<S>;
   }
 
-  private isAuthorized(req: IncomingMessage): boolean {
+  private isAuthorized(req: IncomingMessage, pathname?: string): boolean {
     if (!this.authToken && this.authTokens.length === 0 && !this.authTokensGetter) return false;
+    // Primary path: Authorization: Bearer <token> header.
     const raw = req.headers.authorization;
-    if (!raw) return false;
-    const separator = raw.indexOf(" ");
-    if (separator <= 0) return false;
-    const scheme = raw.slice(0, separator).toLowerCase();
-    if (scheme !== "bearer") return false;
-    const token = raw.slice(separator + 1).trim();
+    let candidate: string | null = null;
+    if (raw) {
+      const separator = raw.indexOf(" ");
+      if (separator > 0) {
+        const scheme = raw.slice(0, separator).toLowerCase();
+        if (scheme === "bearer") {
+          candidate = raw.slice(separator + 1).trim();
+        }
+      }
+    }
+    // Fallback: ?token= query parameter — ONLY accepted for the SSE
+    // endpoint (/engram/v1/graph/events).  EventSource cannot set request
+    // headers, so SSE clients must pass the token via the query string.
+    // Allowing this fallback on every endpoint would let a CSRF attacker
+    // embed a credentialed URL anywhere — restricting it to SSE limits the
+    // attack surface (Codex P2 review thread `access-http.ts:1406`; Cursor
+    // review thread `access-http.ts:1412`).  Authorization header always
+    // wins; timing-safe compare used below.
+    if (!candidate && pathname === "/engram/v1/graph/events") {
+      try {
+        const parsed = new URL(req.url ?? "/", `http://${hostToUrlAuthority(this.host)}`);
+        const queryToken = parsed.searchParams.get("token");
+        if (queryToken && queryToken.length > 0) {
+          candidate = queryToken;
+        }
+      } catch {
+        // Malformed URL — don't authenticate
+      }
+    }
+    if (!candidate) return false;
+    const token = candidate;
     // Check primary token
     if (this.authToken && this.timingSafeStringEqual(token, this.authToken)) return true;
     // Check static multi-connector tokens
