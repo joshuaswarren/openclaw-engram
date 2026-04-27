@@ -504,6 +504,15 @@ test("BEAM rubric coverage requires punctuated extra syntax target details", asy
   );
 });
 
+test("BEAM rubric coverage ignores editorial abbreviations in syntax details", async () => {
+  const result = await runBeamWithCustomRubricAnswer(
+    "LLM response should contain: code blocks with syntax highlighting and examples (e.g., C++ snippets)",
+    "Always use code blocks with syntax highlighting and examples C++ snippets.",
+  );
+
+  assert.equal(result.results.tasks[0]?.scores.rubric_coverage, 1);
+});
+
 test("BEAM rubric coverage uses token boundaries for extra syntax details", async () => {
   const missingDetailResult = await runBeamWithCustomRubricAnswer(
     "LLM response should contain: code blocks with syntax highlighting and C examples",

@@ -973,6 +973,7 @@ function syntaxHighlightingExtraTargetDetails(target: string): SyntaxExtraTarget
   return {
     normalized: normalizeRubricPhrase(target)
       .replace(SYNTAX_HIGHLIGHTING_RUBRIC, " ")
+      .replace(/\b(?:e g|i e)\b/g, " ")
       .replace(/\b(?:and|with|the|a|an)\b/g, " ")
       .replace(/\s+/g, " ")
       .trim(),
@@ -984,7 +985,15 @@ function extractPunctuatedDetailTokens(target: string): string[] {
   const matches = target.match(
     /(?:\.[a-z0-9]+|[a-z0-9]+(?:[+#]+|(?:\.[a-z0-9]+)+))/gi,
   );
-  return [...new Set(matches ?? [])];
+  return [
+    ...new Set(
+      (matches ?? []).filter((token) => !isEditorialAbbreviationToken(token)),
+    ),
+  ];
+}
+
+function isEditorialAbbreviationToken(token: string): boolean {
+  return token.toLowerCase() === "e.g" || token.toLowerCase() === "i.e";
 }
 
 function rubricPhraseContains(actual: string, expected: string): boolean {
