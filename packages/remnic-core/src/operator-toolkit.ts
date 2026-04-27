@@ -94,6 +94,7 @@ interface ConversationIndexLike {
 
 export interface OperatorToolkitOrchestrator extends ConversationIndexLike {
   config: PluginConfig;
+  storage: StorageManager;
   qmd: QmdRuntimeLike;
 }
 
@@ -1224,7 +1225,7 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // Tier distribution (issue #686 retention-completion).
   // Shows hot/cold counts, per-status breakdown, and forgotten-memory count.
   // Informational only — never errors, never blocks doctor from returning ok.
-  checks.push(await summarizeTierDistribution(new StorageManager(config.memoryDir)));
+  checks.push(await summarizeTierDistribution(options.orchestrator.storage));
 
   // Security mitigation status (issue #565).
   // Reports whether the cross-namespace budget and anomaly detection

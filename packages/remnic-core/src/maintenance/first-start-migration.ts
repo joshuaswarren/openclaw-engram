@@ -270,7 +270,8 @@ export async function runFirstStartMigration(
           continue;
         } catch {
           await writeQmdRefreshPending(config.memoryDir, now);
-          // Fall through to failure accounting below.
+          demotedCount += 1;
+          continue;
         }
       }
       // Non-fatal — individual migration failures are counted but do not abort
