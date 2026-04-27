@@ -509,6 +509,15 @@ export class GraphIndex {
   async spreadingActivation(
     seeds: string[],
     maxSteps?: number,
+    opts?: {
+      /**
+       * Issue #681 — when `true`, bypasses the configured
+       * `graphTraversalConfidenceFloor` and includes low-confidence
+       * edges in traversal.  Equivalent to forcing the floor to `0`.
+       * Default `false` (floor from config is applied).
+       */
+      includeLowConfidence?: boolean;
+    },
   ): Promise<Array<{
     path: string;
     score: number;
@@ -526,9 +535,14 @@ export class GraphIndex {
     if (!this.cfg.multiGraphMemoryEnabled) return [];
     const steps = maxSteps ?? this.cfg.maxGraphTraversalSteps;
     const decay = this.cfg.graphActivationDecay;
-    // Clamp the configured floor into [0, 1] so misconfiguration cannot
-    // (a) admit edges with negative confidence or (b) reject every edge.
-    const floor = clampConfidenceFloor(this.cfg.graphTraversalConfidenceFloor);
+    // When `includeLowConfidence` is set, use floor=0 so all edges
+    // participate in traversal regardless of their decay state.
+    // Otherwise clamp the configured floor into [0, 1] so misconfiguration
+    // cannot (a) admit edges with negative confidence or (b) reject every
+    // edge.
+    const floor = opts?.includeLowConfidence === true
+      ? 0
+      : clampConfidenceFloor(this.cfg.graphTraversalConfidenceFloor);
     const iterations = clampPageRankIterations(
       this.cfg.graphTraversalPageRankIterations,
     );

@@ -481,6 +481,26 @@ export class EngramAccessHttpServer {
           tagMatch = queryTagMatch;
         }
       }
+      // Issue #681 — `?include_low_confidence=true|false` mirrors the CLI
+      // `--include-low-confidence` flag. Body field wins so a JSON payload can
+      // explicitly clear a stale query parameter.
+      const bodyIncludeLowConfidence =
+        (body as { includeLowConfidence?: unknown }).includeLowConfidence;
+      const queryIncludeLowConfidence = parsed.searchParams.get("include_low_confidence");
+      if (
+        bodyIncludeLowConfidence === undefined &&
+        queryIncludeLowConfidence !== null &&
+        queryIncludeLowConfidence !== "true" &&
+        queryIncludeLowConfidence !== "false"
+      ) {
+        throw new EngramAccessInputError(
+          `include_low_confidence must be one of: true, false (got: ${queryIncludeLowConfidence})`,
+        );
+      }
+      const includeLowConfidence =
+        bodyIncludeLowConfidence === true ||
+        (bodyIncludeLowConfidence === undefined &&
+          queryIncludeLowConfidence === "true");
       const response = await this.service.recall({
         query: body.query ?? "",
         sessionKey: body.sessionKey,
@@ -499,6 +519,7 @@ export class EngramAccessHttpServer {
         ...(asOf !== undefined ? { asOf } : {}),
         ...(tags !== undefined ? { tags } : {}),
         ...(tagMatch !== undefined ? { tagMatch } : {}),
+        ...(includeLowConfidence ? { includeLowConfidence: true } : {}),
       });
       this.respondJson(res, 200, response);
       return;

@@ -5044,6 +5044,10 @@ export function registerCli(
           "--tag-match <mode>",
           "Tag-filter match mode: any (default) or all. Ignored when --tag is absent.",
         )
+        .option(
+          "--include-low-confidence",
+          "Include graph edges below the configured graphTraversalConfidenceFloor in traversal (issue #681). Default off.",
+        )
         .action(async (...args: unknown[]) => {
           const query = typeof args[0] === "string" ? args[0] : String(args[0] ?? "");
           if (!query || query.trim().length === 0) {
@@ -5156,6 +5160,11 @@ export function registerCli(
             tagMatch = raw;
           }
 
+          // Issue #681 — `--include-low-confidence` is a boolean flag; no
+          // value coercion needed beyond checking presence (Commander sets
+          // it to `true` when the flag is present, undefined otherwise).
+          const includeLowConfidence = options.includeLowConfidence === true;
+
           const accessService = new EngramAccessService(orchestrator);
           const response = await accessService.recall({
             query,
@@ -5166,6 +5175,7 @@ export function registerCli(
             ...(asOf !== undefined ? { asOf } : {}),
             ...(tags !== undefined ? { tags } : {}),
             ...(tagMatch !== undefined ? { tagMatch } : {}),
+            ...(includeLowConfidence ? { includeLowConfidence: true } : {}),
           });
 
           if (format === "json") {

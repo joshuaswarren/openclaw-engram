@@ -106,6 +106,11 @@ export const recallRequestSchema = z.object({
    * provided and `tagMatch` is omitted. Ignored when `tags` is absent.
    */
   tagMatch: tagMatchSchema.optional(),
+  /**
+   * Include graph edges below `graphTraversalConfidenceFloor` for diagnostic
+   * recall traversal (issue #681). Defaults to false.
+   */
+  includeLowConfidence: z.boolean().optional(),
 });
 
 export const recallExplainRequestSchema = z.object({

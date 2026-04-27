@@ -217,6 +217,13 @@ export interface EngramAccessRecallRequest {
    * every filter tag to be present. Ignored when `tags` is absent or empty.
    */
   tagMatch?: "any" | "all";
+  /**
+   * Issue #681 — when `true`, bypasses the configured
+   * `graphTraversalConfidenceFloor` for this recall and includes graph edges
+   * below the floor in traversal.  Useful for diagnostic queries that need to
+   * surface results pruned by confidence decay.  Default `false`.
+   */
+  includeLowConfidence?: boolean;
 }
 
 /**
@@ -1532,6 +1539,7 @@ export class EngramAccessService {
       topK,
       mode,
       ...(asOf !== undefined ? { asOf } : {}),
+      ...(request.includeLowConfidence === true ? { includeLowConfidence: true } : {}),
     };
     const startedAt = Date.now();
     const context = await this.orchestrator.recall(query, request.sessionKey, recallOptions);
