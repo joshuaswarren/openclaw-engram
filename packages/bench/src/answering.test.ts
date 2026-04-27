@@ -109,3 +109,28 @@ test("strict question builder preserves free-form summarization prompts", () => 
     /shortest complete answer/,
   );
 });
+
+test("strict question builder supports concise answers with required specifics", () => {
+  const question = "How many columns did I add?";
+  const prompt = buildStrictBenchmarkQuestion(question, "short-with-specifics");
+
+  assert.match(prompt, /shortest complete answer/);
+  assert.match(prompt, /concrete named items/);
+  assert.match(prompt, /Two columns: category and notes/);
+  assert.match(prompt, /without hedge words/);
+  assert.match(prompt, /Prefer exact values/);
+});
+
+test("strict question builder can answer remembered instructions", () => {
+  const prompt = buildStrictBenchmarkQuestion(
+    "Could you show me how to implement a login feature?",
+    "instruction",
+  );
+
+  assert.match(prompt, /answer with that remembered instruction/);
+  assert.match(prompt, /instead of performing the requested task/);
+  assert.match(prompt, /Always format implementation help/);
+  assert.match(prompt, /Do not quote a "please remember" request verbatim/);
+  assert.match(prompt, /code blocks with syntax highlighting/);
+  assert.match(prompt, /do not answer "unknown"/);
+});

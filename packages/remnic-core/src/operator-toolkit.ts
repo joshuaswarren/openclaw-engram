@@ -41,6 +41,7 @@ import {
 } from "./consolidation-provenance-check.js";
 import type {
   BufferSurpriseEvent,
+  DreamsPhasesConfig,
   FileHygieneConfig,
   MemoryFile,
   PluginConfig,
@@ -53,6 +54,17 @@ interface QmdRuntimeLike {
   isAvailable(): boolean;
   ensureCollection(memoryDir: string): Promise<"present" | "missing" | "unknown" | "skipped">;
   debugStatus(): string;
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error as { code?: unknown }).code === "ENOENT";
+}
+
+function formatUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 interface ConversationIndexLike {
@@ -1227,6 +1239,11 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // Informational only — never errors, never blocks doctor from returning ok.
   checks.push(await summarizeTierDistribution(options.orchestrator.storage));
 
+  // Dreams phases thresholds and last-run timestamps (issue #678 PR 2/4).
+  // Surfaces per-phase: enabled status, cadence, threshold values, and the
+  // best-available last-run timestamp for each of the three pipeline phases.
+  checks.push(await summarizeDreamsPhases(config));
+
   // Security mitigation status (issue #565).
   // Reports whether the cross-namespace budget and anomaly detection
   // mitigations are enabled and surfaces config values for operator review.
@@ -1576,6 +1593,97 @@ export async function summarizeTierDistribution(
       details: { error: String(err) },
     };
   }
+}
+
+/**
+ * Dreams phases doctor check (issue #678 PR 2/4).
+ *
+ * Reports per-phase: enabled status, cadence, threshold values, and last-run
+ * timestamp sourced from `meta.json` (the existing maintenance ledger).
+ *
+ * Last-run mapping (best available in PR 2; PR 3/4 will emit per-phase events):
+ *   light sleep → `meta.lastExtractionAt`   (lifecycle pass runs with extraction)
+ *   REM         → `meta.lastConsolidationAt` (semantic consolidation)
+ *   deep sleep  → latest governance run manifest when present, otherwise null
+ */
+export async function summarizeDreamsPhases(
+  config: Pick<PluginConfig, "memoryDir" | "dreamsPhases">,
+): Promise<OperatorDoctorCheck> {
+  const phases: DreamsPhasesConfig = config.dreamsPhases;
+  const storage = new StorageManager(config.memoryDir);
+
+  // Load meta.json for best-available last-run timestamps.
+  const meta = await storage.loadMeta();
+
+  let deepSleepLastRun: string | null = null;
+  let deepSleepLastRunWarning: string | null = null;
+  try {
+    // Read the latest governance run's manifest from the real on-disk format
+    // rather than treating every failure as "no runs yet".
+    const runsDir = path.join(config.memoryDir, "state", "memory-governance", "runs");
+    const runIds = (await readdir(runsDir)).sort().reverse();
+    if (runIds.length > 0) {
+      const latestRunId = runIds[0];
+      const manifestPath = path.join(
+        runsDir,
+        latestRunId,
+        "manifest.json",
+      );
+      const raw = await readFile(manifestPath, "utf-8");
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof parsed.createdAt === "string" && parsed.createdAt.length > 0) {
+        deepSleepLastRun = parsed.createdAt;
+      }
+    }
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      deepSleepLastRunWarning = `Could not read latest governance run manifest: ${formatUnknownError(error)}`;
+    }
+  }
+
+  // Build per-phase summary lines for the human-readable `summary` field.
+  const phaseLines: string[] = [
+    `lightSleep: enabled=${phases.lightSleep.enabled}, cadenceMs=${phases.lightSleep.cadenceMs}, promoteHeat=${phases.lightSleep.promoteHeatThreshold}, staleDecay=${phases.lightSleep.staleDecayThreshold}, archiveDecay=${phases.lightSleep.archiveDecayThreshold}, filterStale=${phases.lightSleep.filterStaleEnabled}, lastRun=${meta.lastExtractionAt ?? "never"}`,
+    `rem: enabled=${phases.rem.enabled}, cadenceMs=${phases.rem.cadenceMs}, similarity=${phases.rem.similarityThreshold}, minCluster=${phases.rem.minClusterSize}, maxPerRun=${phases.rem.maxPerRun}, minIntervalMs=${phases.rem.minIntervalMs}, lastRun=${meta.lastConsolidationAt ?? "never"}`,
+    `deepSleep: enabled=${phases.deepSleep.enabled}, cadenceMs=${phases.deepSleep.cadenceMs}, versioning=${phases.deepSleep.versioningEnabled}, versioningMaxPerPage=${phases.deepSleep.versioningMaxPerPage}, lastRun=${deepSleepLastRun ?? "never"}`,
+  ];
+
+  return {
+    key: "dreams_phases",
+    status: deepSleepLastRunWarning ? "warn" : "ok",
+    summary: `Dreams pipeline phases: ${phaseLines.join("; ")}${deepSleepLastRunWarning ? `; ${deepSleepLastRunWarning}` : ""}`,
+    remediation: deepSleepLastRunWarning
+      ? "Inspect state/memory-governance/runs and repair or remove unreadable governance run artifacts."
+      : undefined,
+    details: {
+      lightSleep: {
+        enabled: phases.lightSleep.enabled,
+        cadenceMs: phases.lightSleep.cadenceMs,
+        promoteHeatThreshold: phases.lightSleep.promoteHeatThreshold,
+        staleDecayThreshold: phases.lightSleep.staleDecayThreshold,
+        archiveDecayThreshold: phases.lightSleep.archiveDecayThreshold,
+        filterStaleEnabled: phases.lightSleep.filterStaleEnabled,
+        lastRun: meta.lastExtractionAt ?? null,
+      },
+      rem: {
+        enabled: phases.rem.enabled,
+        cadenceMs: phases.rem.cadenceMs,
+        similarityThreshold: phases.rem.similarityThreshold,
+        minClusterSize: phases.rem.minClusterSize,
+        maxPerRun: phases.rem.maxPerRun,
+        minIntervalMs: phases.rem.minIntervalMs,
+        lastRun: meta.lastConsolidationAt ?? null,
+      },
+      deepSleep: {
+        enabled: phases.deepSleep.enabled,
+        cadenceMs: phases.deepSleep.cadenceMs,
+        versioningEnabled: phases.deepSleep.versioningEnabled,
+        versioningMaxPerPage: phases.deepSleep.versioningMaxPerPage,
+        lastRun: deepSleepLastRun,
+        warning: deepSleepLastRunWarning,
+      },
+    },
+  };
 }
 
 function summarizeSecurityMitigations(

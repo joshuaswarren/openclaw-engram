@@ -60,6 +60,8 @@ export interface PurgeMemoriesOptions {
   coldCollection?: string;
   /** Optional hook for long-lived hosts to clear their live dedupe mirror after purge hash cleanup. */
   afterFactHashRemoval?: () => void | Promise<void>;
+  /** Optional shutdown signal forwarded to QMD collection refreshes. */
+  signal?: AbortSignal;
   /** Override clock for tests. */
   now?: () => Date;
 }
@@ -101,6 +103,7 @@ async function logPurgeAudit(
   now: Date,
   event: "PURGE_DELETE_INTENT" | "PURGE_HARD_DELETE" | "PURGE_ALREADY_ABSENT" = "PURGE_HARD_DELETE",
 ): Promise<void> {
+  if (candidates.length === 0) return;
   const ledgerDir = path.join(storage.dir, "state", "observation-ledger");
   await mkdir(ledgerDir, { recursive: true });
   const ledgerPath = path.join(ledgerDir, "purge-audit.jsonl");
@@ -205,10 +208,18 @@ export async function purgeMemories(
     };
   }
 
-  await logPurgeAudit(storage, candidates, now, "PURGE_DELETE_INTENT");
-
   // Hard-delete phase
   const errors: Array<{ id: string; path: string; error: string }> = [];
+  try {
+    await logPurgeAudit(storage, candidates, now, "PURGE_DELETE_INTENT");
+  } catch (auditErr) {
+    errors.push({
+      id: "(purge-audit)",
+      path: path.join(storage.dir, "state", "observation-ledger", "purge-audit.jsonl"),
+      error: auditErr instanceof Error ? auditErr.message : String(auditErr),
+    });
+  }
+
   const actuallyPurged: PurgeCandidate[] = [];
   const alreadyAbsent: PurgeCandidate[] = [];
   const collectionsToUpdate = new Set<string>();
@@ -217,6 +228,9 @@ export async function purgeMemories(
       collectionsToUpdate.add(coldCollection);
     } else if (candidate.tier === "hot") {
       collectionsToUpdate.add(hotCollection);
+    } else {
+      collectionsToUpdate.add(hotCollection);
+      collectionsToUpdate.add(coldCollection);
     }
   };
 
@@ -271,7 +285,11 @@ export async function purgeMemories(
   if (qmd) {
     for (const collection of collectionsToUpdate) {
       try {
-        await qmd.updateCollection(collection);
+        if (typeof qmd.updateCollectionStrict === "function") {
+          await qmd.updateCollectionStrict(collection, { signal: options.signal });
+        } else {
+          await qmd.updateCollection(collection, { signal: options.signal });
+        }
       } catch (indexErr) {
         // Non-fatal — operator can re-index manually
         errors.push({

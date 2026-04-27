@@ -51,11 +51,21 @@ function makeStorageStub(
   return { stub, unlinked };
 }
 
-function makeQmdStub(): { stub: StubQmd & { updateCollection: (c: string) => Promise<void> }; updatedCollections: string[] } {
+function makeQmdStub(): {
+  stub: StubQmd & {
+    updateCollection: (c: string) => Promise<void>;
+    updateCollectionStrict: (c: string, execution?: { signal?: AbortSignal }) => Promise<void>;
+    signals: Array<AbortSignal | undefined>;
+  };
+  updatedCollections: string[];
+  signals: Array<AbortSignal | undefined>;
+} {
   const updatedCollections: string[] = [];
+  const signals: Array<AbortSignal | undefined> = [];
   return {
     stub: {
       updatedCollections,
+      signals,
       probe: async () => true,
       isAvailable: () => true,
       debugStatus: () => "",
@@ -68,12 +78,18 @@ function makeQmdStub(): { stub: StubQmd & { updateCollection: (c: string) => Pro
       updateCollection: async (c: string) => {
         updatedCollections.push(c);
       },
+      updateCollectionStrict: async (c: string, execution?: { signal?: AbortSignal }) => {
+        updatedCollections.push(c);
+        signals.push(execution?.signal);
+      },
       embed: async () => {},
       embedCollection: async () => {},
       ensureCollection: async () => "present" as const,
       updatedCollections,
+      signals,
     },
     updatedCollections,
+    signals,
   };
 }
 
@@ -291,7 +307,7 @@ test("purgeMemories: missing file records already-absent outcome and refreshes Q
   }
 });
 
-test("purgeMemories: audit ledger failure aborts before deleting files", async () => {
+test("purgeMemories: audit ledger failure is reported without blocking hard-delete", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-purge-audit-first-"));
   try {
     const { StorageManager } = await import("../../packages/remnic-core/src/storage.js");
@@ -311,21 +327,66 @@ test("purgeMemories: audit ledger failure aborts before deleting files", async (
     await mkdir(path.dirname(ledgerDir), { recursive: true });
     await writeFile(ledgerDir, "not a directory", "utf-8");
 
-    await assert.rejects(
-      () =>
-        purgeMemories({
-          storage,
-          olderThanMs: 365 * 86_400_000,
-          tier: "all",
-          dryRun: false,
-          now: () => new Date("2026-04-27T00:00:00.000Z"),
-        }),
-      /ENOTDIR|EEXIST/,
-    );
+    const result = await purgeMemories({
+      storage,
+      olderThanMs: 365 * 86_400_000,
+      tier: "all",
+      dryRun: false,
+      now: () => new Date("2026-04-27T00:00:00.000Z"),
+    });
 
     const stillThere = await storage.getMemoryById(id);
-    assert.ok(stillThere, "memory must remain when audit ledger cannot be written");
-    await access(memory.path);
+    assert.equal(stillThere, null, "memory should still be purged when audit logging fails");
+    await assert.rejects(() => access(memory.path), "memory file should be deleted");
+    assert.equal(result.purgedCount, 1);
+    assert.equal(result.errorCount, 2);
+    assert.ok(result.errors.some((error) => error.id === "(purge-audit)"), "audit failure should be visible");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("purgeMemories: archive purges invalidate archive tier and strictly refresh affected QMD collections with signal", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-purge-archive-"));
+  try {
+    const archivedPath = path.join(dir, "archive", "2024-01-01", "arch-1.md");
+    await mkdir(path.dirname(archivedPath), { recursive: true });
+    await writeFile(archivedPath, "archived memory", "utf-8");
+    const archived = makeMemory({
+      id: "arch-1",
+      updated: "2020-01-01T00:00:00.000Z",
+      status: "archived" as any,
+      filePath: archivedPath,
+    });
+    const invalidatedTiers: string[] = [];
+    const storage = {
+      dir,
+      readAllMemories: async () => [],
+      readAllColdMemories: async () => [],
+      readArchivedMemories: async () => [archived],
+      invalidateMemoryCachesForTiers: (tiers: Iterable<"hot" | "cold" | "archive">) => {
+        invalidatedTiers.push(...tiers);
+      },
+    } as unknown as StorageManager;
+    const controller = new AbortController();
+    const { updatedCollections, signals, stub: qmd } = makeQmdStub();
+
+    const result = await purgeMemories({
+      storage,
+      olderThanMs: 365 * 86_400_000,
+      tier: "all",
+      dryRun: false,
+      qmd: qmd as any,
+      hotCollection: "hot-test",
+      coldCollection: "cold-test",
+      signal: controller.signal,
+      now: () => new Date("2026-04-27T00:00:00.000Z"),
+    });
+
+    assert.equal(result.purgedCount, 1);
+    assert.deepEqual(invalidatedTiers, ["archive"]);
+    assert.deepEqual(updatedCollections.sort(), ["cold-test", "hot-test"]);
+    assert.deepEqual(signals, [controller.signal, controller.signal]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -2238,27 +2238,37 @@ export function parseDurationToMs(raw: string): number | null {
     return Number.isFinite(days) && days > 0 ? days * 86_400_000 : null;
   }
 
-  // ISO 8601 duration — simplified subset: P[nY][nM][nD]
+  // ISO 8601 duration: P[nY][nM][nW][nD][T[nH][nM][nS]]
+  // Calendar units are normalized for retention policy use: 1Y=365D, 1M=30D.
   // Must be fully consumed by recognised components; partial matches like
   // "P90DX" or "P1Yjunk" are rejected rather than silently truncated.
   const iso = trimmed.toUpperCase();
   if (!iso.startsWith("P")) return null;
-  const rest = iso.slice(1);
 
-  // Reject time part (T...) for simplicity
-  if (rest.includes("T")) return null;
-
-  const match = /^P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)D)?$/.exec(iso);
-  if (!match || (match[1] === undefined && match[2] === undefined && match[3] === undefined)) {
+  const match = /^P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(iso);
+  if (
+    !match ||
+    (match[1] === undefined &&
+      match[2] === undefined &&
+      match[3] === undefined &&
+      match[4] === undefined &&
+      match[5] === undefined &&
+      match[6] === undefined &&
+      match[7] === undefined)
+  ) {
     return null;
   }
 
   let totalMs = 0;
   if (match[1]) totalMs += Number.parseInt(match[1], 10) * 365 * 86_400_000;
   if (match[2]) totalMs += Number.parseInt(match[2], 10) * 30 * 86_400_000;
-  if (match[3]) totalMs += Number.parseInt(match[3], 10) * 86_400_000;
+  if (match[3]) totalMs += Number.parseInt(match[3], 10) * 7 * 86_400_000;
+  if (match[4]) totalMs += Number.parseInt(match[4], 10) * 86_400_000;
+  if (match[5]) totalMs += Number.parseInt(match[5], 10) * 60 * 60 * 1000;
+  if (match[6]) totalMs += Number.parseInt(match[6], 10) * 60 * 1000;
+  if (match[7]) totalMs += Number.parseInt(match[7], 10) * 1000;
 
-  return totalMs > 0 ? totalMs : null;
+  return Number.isFinite(totalMs) && totalMs > 0 ? totalMs : null;
 }
 
 function resolvePolicySignalNamespaces(orchestrator: PolicyTuningCliOrchestrator): string[] {
@@ -7208,6 +7218,10 @@ export function registerCli(
           const memoryDir = await resolveMemoryDirForNamespace(orchestrator, namespace, {
             rejectUnsupportedOverride: true,
           });
+          const deepSleep = orchestrator.config.dreamsPhases.deepSleep;
+          if (deepSleep.enabled === false && deepSleep.enabledExplicitlySet === true) {
+            throw new Error("memory governance is disabled by dreams.phases.deepSleep.enabled=false");
+          }
           const result = await runMemoryGovernanceCliCommand({
             memoryDir,
             mode,
@@ -8478,6 +8492,159 @@ export function registerCli(
           console.log(`  Judged: ${result.judged}`);
           console.log(`  Queued: ${result.queued}`);
           console.log(`  Cooled down: ${result.cooledDown}`);
+        });
+
+      // ── Dreams subcommand (issue #678 PR 3+4) ───────────────────────────
+      // `remnic dreams status` — per-phase telemetry for the last N hours.
+      // `remnic dreams run`    — manually invoke a single phase pass.
+      const dreamsCmd = cmd.command("dreams").description("Inspect and manually trigger Dreams consolidation pipeline phases");
+
+      dreamsCmd
+        .command("status")
+        .description("Show per-phase Dreams telemetry for the last N hours")
+        .option("--window-hours <n>", "Look-back window in hours (default 24)", "24")
+        .option("--format <fmt>", "Output format: text, json, markdown (default text)", "text")
+        .option("--namespace <ns>", "Namespace to inspect (default: current default namespace)")
+        .option("--principal <principal>", "Trusted principal for namespace ACLs (defaults to config/env)")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, string>;
+          const fmt = options.format ?? "text";
+          if (fmt !== "text" && fmt !== "json" && fmt !== "markdown") {
+            console.error(`Invalid --format '${fmt}'. Must be one of: text, json, markdown`);
+            process.exit(1);
+          }
+          const { normalizeDreamsStatusWindowHours } = await import("./maintenance/dreams-ledger.js");
+          let windowHours: number;
+          const rawWindowHours = options.windowHours;
+          try {
+            if (typeof rawWindowHours !== "string" || rawWindowHours.trim() === "") {
+              throw new Error("missing window");
+            }
+            windowHours = normalizeDreamsStatusWindowHours(Number(rawWindowHours));
+          } catch {
+            console.error("--window-hours must be a positive integer");
+            process.exit(1);
+          }
+          const accessService = new EngramAccessService(orchestrator);
+          const result = await accessService.dreamsStatus({
+            windowHours,
+            namespace: typeof options.namespace === "string" ? options.namespace : undefined,
+            principal: resolveAccessPrincipalOverride(
+              options.principal,
+              orchestrator.config.agentAccessHttp.principal,
+            ),
+          });
+
+          if (fmt === "json") {
+            console.log(JSON.stringify(result, null, 2));
+            return;
+          }
+
+          const phaseLabels: Record<string, string> = {
+            lightSleep: "Light Sleep",
+            rem: "REM",
+            deepSleep: "Deep Sleep",
+          };
+
+          if (fmt === "markdown") {
+            console.log(`## Dreams Status (last ${windowHours}h)\n`);
+            console.log(`Window: ${result.windowStart} → ${result.windowEnd}\n`);
+            console.log("| Phase | Runs | Total Duration | Items Processed | Last Run |");
+            console.log("|-------|------|----------------|-----------------|----------|");
+            for (const phase of ["lightSleep", "rem", "deepSleep"] as const) {
+              const p = result.phases[phase];
+              const lastRun = p.lastRunAt ? p.lastRunAt.slice(0, 19).replace("T", " ") : "—";
+              console.log(
+                `| ${phaseLabels[phase]} | ${p.runCount} | ${p.totalDurationMs}ms | ${p.totalItemsProcessed} | ${lastRun} |`,
+              );
+            }
+            return;
+          }
+
+          // text format
+          console.log(`Dreams status (last ${windowHours}h):`);
+          console.log(`  Window: ${result.windowStart} → ${result.windowEnd}\n`);
+          for (const phase of ["lightSleep", "rem", "deepSleep"] as const) {
+            const p = result.phases[phase];
+            const label = phaseLabels[phase];
+            console.log(`  ${label}:`);
+            console.log(`    Runs:            ${p.runCount}`);
+            console.log(`    Total duration:  ${p.totalDurationMs}ms`);
+            console.log(`    Items processed: ${p.totalItemsProcessed}`);
+            console.log(`    Last run:        ${p.lastRunAt ?? "—"}`);
+            console.log();
+          }
+        });
+
+      dreamsCmd
+        .command("run")
+        .description("Manually invoke a single Dreams phase pass")
+        .requiredOption("--phase <phase>", "Phase to run: light-sleep, rem, deep-sleep")
+        .option("--dry-run", "Preview without committing writes")
+        .option("--format <fmt>", "Output format: text, json (default text)", "text")
+        .option("--namespace <ns>", "Namespace to run in (default: current default namespace)")
+        .option("--principal <principal>", "Trusted principal for namespace ACLs (defaults to config/env)")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, string | boolean>;
+          const phaseInput = typeof options.phase === "string" ? options.phase : "";
+          if (
+            "dryRun" in options &&
+            options.dryRun !== undefined &&
+            typeof options.dryRun !== "boolean"
+          ) {
+            console.error("--dry-run must be a boolean flag");
+            process.exit(1);
+          }
+          const dryRun = options.dryRun === true;
+          const fmt = typeof options.format === "string" ? options.format : "text";
+
+          if (fmt !== "text" && fmt !== "json") {
+            console.error(`Invalid --format '${fmt}'. Must be one of: text, json`);
+            process.exit(1);
+          }
+
+          // Accept both kebab-case (light-sleep) and camelCase (lightSleep).
+          const phaseMap: Record<string, string> = {
+            "light-sleep": "lightSleep",
+            lightsleep: "lightSleep",
+            lightSleep: "lightSleep",
+            rem: "rem",
+            REM: "rem",
+            "deep-sleep": "deepSleep",
+            deepsleep: "deepSleep",
+            deepSleep: "deepSleep",
+          };
+          const phase = phaseMap[phaseInput] as import("./maintenance/dreams-ledger.js").DreamsPhase | undefined;
+          if (!phase) {
+            console.error(
+              `Invalid --phase '${phaseInput}'. Must be one of: light-sleep, rem, deep-sleep`,
+            );
+            process.exit(1);
+          }
+
+          const accessService = new EngramAccessService(orchestrator);
+          const result = await accessService.dreamsRun({
+            phase,
+            dryRun,
+            namespace: typeof options.namespace === "string" ? options.namespace : undefined,
+            authenticatedPrincipal: resolveAccessPrincipalOverride(
+              options.principal,
+              orchestrator.config.agentAccessHttp.principal,
+            ),
+          });
+
+          if (fmt === "json") {
+            console.log(JSON.stringify(result, null, 2));
+            return;
+          }
+
+          const phaseLabel = { lightSleep: "Light Sleep", rem: "REM", deepSleep: "Deep Sleep" }[phase];
+          console.log(`Dreams run: ${phaseLabel}${dryRun ? " (dry-run)" : ""}`);
+          console.log(`  Duration:   ${result.durationMs}ms`);
+          console.log(`  Items:      ${result.itemsProcessed}`);
+          if (result.notes) {
+            console.log(`  Notes:      ${result.notes}`);
+          }
         });
 
       // ── Secure-store subcommand (issue #690 PR 2/4) ─────────────────────

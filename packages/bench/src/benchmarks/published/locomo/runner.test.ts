@@ -11,6 +11,7 @@ test("LoCoMo normalizes numeric answers and adversarial-answer fallbacks from th
   const tempDir = await mkdtemp(path.join(tmpdir(), "remnic-locomo-"));
   const datasetPath = path.join(tempDir, "locomo10.json");
   const storedMessages: Message[] = [];
+  const respondentQuestions: string[] = [];
 
   try {
     await writeFile(
@@ -71,6 +72,17 @@ test("LoCoMo normalizes numeric answers and adversarial-answer fallbacks from th
         async getStats() {
           return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: 0 };
         },
+        responder: {
+          async respond(question) {
+            respondentQuestions.push(question);
+            return {
+              text: question.includes("jacket") ? "blue" : "2022",
+              tokens: { input: 1, output: 1 },
+              latencyMs: 1,
+              model: "locomo-test-responder",
+            };
+          },
+        },
         judge: {
           async score() {
             return 1;
@@ -90,6 +102,14 @@ test("LoCoMo normalizes numeric answers and adversarial-answer fallbacks from th
     assert.equal(result.results.tasks.length, 2);
     assert.equal(result.results.tasks[0]?.expected, "2022");
     assert.equal(result.results.tasks[1]?.expected, "blue");
+    assert.equal(result.results.tasks[0]?.actual, "2022");
+    assert.equal(result.results.tasks[1]?.actual, "blue");
+    assert.equal(result.results.tasks[0]?.details.answerFormat, "short");
+    assert.ok(
+      respondentQuestions.every((question) =>
+        /shortest complete answer/.test(question),
+      ),
+    );
     assert.equal(storedMessages[0]?.content, "[D1:1] Maya: I moved in 2022.");
   } finally {
     await rm(tempDir, { recursive: true, force: true });

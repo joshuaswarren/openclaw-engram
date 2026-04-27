@@ -17,7 +17,7 @@
  */
 
 import path from "node:path";
-import { access, mkdir, unlink, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import type { StorageManager } from "../storage.js";
 import type { PluginConfig } from "../types.js";
 import {
@@ -34,6 +34,11 @@ import {
 export const FIRST_START_DEMOTION_CAP = 50;
 export const LIFECYCLE_INIT_DONE_MARKER = ".lifecycle-init-done";
 const LIFECYCLE_QMD_REFRESH_PENDING_MARKER = ".lifecycle-qmd-refresh-pending";
+
+type QmdRefreshPendingMarker = {
+  createdAt: string;
+  collection: string;
+};
 
 export interface FirstStartMigrationOptions {
   storage: StorageManager;
@@ -89,19 +94,42 @@ async function writeMarker(memoryDir: string, now: Date): Promise<void> {
   await writeFile(p, JSON.stringify({ createdAt: now.toISOString() }), "utf-8");
 }
 
-async function qmdRefreshPendingExists(memoryDir: string): Promise<boolean> {
+async function readQmdRefreshPending(memoryDir: string): Promise<QmdRefreshPendingMarker | null> {
   try {
-    await access(qmdRefreshPendingPath(memoryDir));
-    return true;
+    const raw = await readFile(qmdRefreshPendingPath(memoryDir), "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as { createdAt?: unknown }).createdAt === "string" &&
+      typeof (parsed as { collection?: unknown }).collection === "string" &&
+      (parsed as { collection: string }).collection.length > 0
+    ) {
+      return parsed as QmdRefreshPendingMarker;
+    }
+    return null;
   } catch {
-    return false;
+    return null;
   }
 }
 
-async function writeQmdRefreshPending(memoryDir: string, now: Date): Promise<void> {
+async function qmdRefreshPendingMatches(memoryDir: string, collection: string): Promise<boolean> {
+  const pending = await readQmdRefreshPending(memoryDir);
+  if (!pending) {
+    await clearQmdRefreshPending(memoryDir);
+    return false;
+  }
+  if (pending.collection !== collection) {
+    await clearQmdRefreshPending(memoryDir);
+    return false;
+  }
+  return true;
+}
+
+async function writeQmdRefreshPending(memoryDir: string, now: Date, collection: string): Promise<void> {
   const p = qmdRefreshPendingPath(memoryDir);
   await mkdir(path.dirname(p), { recursive: true });
-  await writeFile(p, JSON.stringify({ createdAt: now.toISOString() }), "utf-8");
+  await writeFile(p, JSON.stringify({ createdAt: now.toISOString(), collection }), "utf-8");
 }
 
 async function clearQmdRefreshPending(memoryDir: string): Promise<void> {
@@ -282,7 +310,7 @@ export async function runFirstStartMigration(
           demotedCount += 1;
           continue;
         } catch {
-          await writeQmdRefreshPending(config.memoryDir, now);
+          await writeQmdRefreshPending(config.memoryDir, now, coldCollection);
           demotedCount += 1;
           continue;
         }
@@ -300,7 +328,7 @@ export async function runFirstStartMigration(
   if (signal?.aborted) {
     return abortedResult(candidateCount, demotedCount, failureCount);
   }
-  if (qmd && await qmdRefreshPendingExists(config.memoryDir)) {
+  if (qmd && await qmdRefreshPendingMatches(config.memoryDir, coldCollection)) {
     try {
       await refreshQmdCollection(qmd, coldCollection, signal);
       await clearQmdRefreshPending(config.memoryDir);

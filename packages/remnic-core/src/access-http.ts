@@ -1302,6 +1302,80 @@ export class EngramAccessHttpServer {
       return;
     }
 
+    // ── Dreams telemetry (issue #678 PR 3+4) ──────────────────────────────────
+
+    if (req.method === "GET" && pathname === "/engram/v1/dreams/status") {
+      const { normalizeDreamsStatusWindowHours } = await import("./maintenance/dreams-ledger.js");
+      const windowHoursRaw = parsed.searchParams.get("windowHours");
+      let windowHours: number;
+      try {
+        windowHours = normalizeDreamsStatusWindowHours(
+          windowHoursRaw !== null ? Number(windowHoursRaw) : undefined,
+        );
+      } catch {
+        this.respondJson(res, 400, { error: "windowHours must be a positive integer" });
+        return;
+      }
+      const namespaceParam = parsed.searchParams.get("namespace");
+      const namespace = namespaceParam && namespaceParam.length > 0 ? namespaceParam : undefined;
+      const result = await this.service.dreamsStatus({
+        windowHours,
+        namespace,
+        principal: this.resolveRequestPrincipal(req),
+      });
+      this.respondJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/engram/v1/dreams/run") {
+      const body = await this.readJsonBody(req) as Record<string, unknown>;
+      const VALID_PHASES = ["lightSleep", "rem", "deepSleep"] as const;
+      const phase = typeof body.phase === "string" ? body.phase : undefined;
+      if (!phase || !(VALID_PHASES as readonly string[]).includes(phase)) {
+        this.respondJson(res, 400, {
+          error: `phase is required and must be one of: ${VALID_PHASES.join(", ")}`,
+        });
+        return;
+      }
+      if (
+        "dryRun" in body &&
+        body.dryRun !== undefined &&
+        typeof body.dryRun !== "boolean"
+      ) {
+        this.respondJson(res, 400, {
+          error: "dryRun must be a boolean when provided",
+        });
+        return;
+      }
+      if (
+        "namespace" in body &&
+        body.namespace !== undefined &&
+        typeof body.namespace !== "string"
+      ) {
+        this.respondJson(res, 400, {
+          error: "namespace must be a string when provided",
+        });
+        return;
+      }
+      const dryRun = body.dryRun === true;
+      const namespace =
+        typeof body.namespace === "string" ? body.namespace : undefined;
+      if (!dryRun) {
+        this.ensureWriteRateLimitAvailable();
+      }
+      const result = await this.service.dreamsRun({
+        phase: phase as import("./types.js").DreamsPhase,
+        dryRun,
+        namespace,
+        authenticatedPrincipal: this.resolveRequestPrincipal(req),
+      });
+      if (this.shouldCountWriteRateLimit(result as { dryRun?: boolean; idempotencyReplay?: boolean })) {
+        this.recordWriteRateLimitHit();
+      }
+      this.respondJson(res, 200, result);
+      return;
+    }
+
     this.respondJson(res, 404, { error: "not_found", code: "not_found" });
   }
 
@@ -1421,10 +1495,28 @@ export class EngramAccessHttpServer {
     // matching the same protection applied to the REST write endpoints.
     // Pre-check ensures capacity; post-check skips counting dry runs and
     // idempotency replays, consistent with the REST handlers.
+    const toolName = typeof request.params?.name === "string" ? request.params.name : "";
+    const toolArgs = request.params?.arguments;
+    const dreamsRunDryRun =
+      (toolName === "engram.dreams_run" || toolName === "remnic.dreams_run") &&
+      toolArgs !== null &&
+      typeof toolArgs === "object" &&
+      !Array.isArray(toolArgs) &&
+      (toolArgs as { dryRun?: unknown }).dryRun === true;
     const isMcpWrite =
       request.method === "tools/call" &&
-      typeof request.params?.name === "string" &&
-      (request.params.name === "engram.memory_store" || request.params.name === "engram.suggestion_submit" || request.params.name === "engram.observe");
+      (
+        toolName === "engram.memory_store" ||
+        toolName === "remnic.memory_store" ||
+        toolName === "engram.suggestion_submit" ||
+        toolName === "remnic.suggestion_submit" ||
+        toolName === "engram.observe" ||
+        toolName === "remnic.observe" ||
+        (
+          !dreamsRunDryRun &&
+          (toolName === "engram.dreams_run" || toolName === "remnic.dreams_run")
+        )
+      );
     if (isMcpWrite) {
       this.ensureWriteRateLimitAvailable();
     }

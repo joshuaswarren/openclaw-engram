@@ -3307,7 +3307,7 @@ export class StorageManager {
     for (const tier of tiers) {
       if (tier === "cold") {
         coldChanged = true;
-      } else if (tier === "hot") {
+      } else if (tier === "hot" || tier === "archive") {
         hotChanged = true;
       }
     }

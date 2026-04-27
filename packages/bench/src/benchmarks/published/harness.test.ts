@@ -256,6 +256,37 @@ test("runPublishedHarness postAnswerHook runs between answer and judge", async (
   assert.ok(calls.some((call) => call.kind === "search"));
 });
 
+test("runPublishedHarness forwards per-trial answer format to strict answering", async () => {
+  const { system, calls } = makeFakeSystem();
+  const result = await runPublishedHarness({
+    options: makeOptions(system),
+    metricsSpec: { metrics: ["f1"] },
+    plans: [
+      {
+        ingestSessions: [
+          { sessionId: "s", messages: [{ role: "user", content: "hi" }] },
+        ],
+        trials: [
+          {
+            taskId: "short-answer",
+            question: "Which city did Maya move to?",
+            expected: "Seattle",
+            recallSessionIds: ["s"],
+            answerFormat: "short",
+          },
+        ],
+      },
+    ],
+  });
+
+  const respond = calls.find((call) => call.kind === "respond") as
+    | { kind: "respond"; question: string }
+    | undefined;
+  assert.ok(respond);
+  assert.match(respond.question, /shortest complete answer/);
+  assert.equal(result.results.tasks[0]?.details.answerFormat, "short");
+});
+
 test("runPublishedHarness llm_judge metric suppressed when judge score negative", async () => {
   const { system } = makeFakeSystem({ judgeScore: -1 });
   const result = await runPublishedHarness({

@@ -620,6 +620,144 @@ test("access HTTP server serves admin console shell without auth and rejects inv
   }
 });
 
+test("access HTTP dreams run rejects non-boolean dryRun without invoking service", async () => {
+  let calls = 0;
+  const service = {
+    ...createFakeService(),
+    dreamsRun: async () => {
+      calls += 1;
+      return {
+        phase: "rem",
+        dryRun: false,
+        durationMs: 0,
+        itemsProcessed: 0,
+      };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramAccessHttpServer({
+    service,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const response = await fetch(`${base}/engram/v1/dreams/run`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ phase: "rem", dryRun: "false" }),
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { error: string };
+    assert.match(payload.error, /dryRun must be a boolean/);
+    assert.equal(calls, 0);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("access HTTP dreams run rejects non-string namespace without invoking service", async () => {
+  let calls = 0;
+  const service = {
+    ...createFakeService(),
+    dreamsRun: async () => {
+      calls += 1;
+      return {
+        phase: "deepSleep",
+        dryRun: false,
+        durationMs: 0,
+        itemsProcessed: 0,
+      };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramAccessHttpServer({
+    service,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const response = await fetch(`${base}/engram/v1/dreams/run`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer secret-token",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ phase: "deepSleep", namespace: 123 }),
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { error: string };
+    assert.match(payload.error, /namespace must be a string/);
+    assert.equal(calls, 0);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("access HTTP dreams run consumes the write rate limit for live runs", async () => {
+  const service = {
+    ...createFakeService(),
+    dreamsRun: async ({ phase, dryRun }: { phase: string; dryRun?: boolean }) => ({
+      phase,
+      dryRun: dryRun === true,
+      durationMs: 1,
+      itemsProcessed: 1,
+    }),
+  } as unknown as EngramAccessService;
+  const server = new EngramAccessHttpServer({
+    service,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+  const headers = {
+    Authorization: "Bearer secret-token",
+    "Content-Type": "application/json",
+  };
+
+  try {
+    for (let index = 0; index < 30; index += 1) {
+      const response = await fetch(`${base}/engram/v1/dreams/run`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ phase: "lightSleep" }),
+      });
+      assert.equal(response.status, 200);
+    }
+
+    const preview = await fetch(`${base}/engram/v1/dreams/run`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ phase: "lightSleep", dryRun: true }),
+    });
+    assert.equal(preview.status, 200);
+
+    const limited = await fetch(`${base}/engram/v1/dreams/run`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ phase: "lightSleep" }),
+    });
+    assert.equal(limited.status, 429);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("access HTTP server rejects invalid trust-zone browse filters", async () => {
   const server = new EngramAccessHttpServer({
     service: createFakeService(),
@@ -1551,7 +1689,15 @@ test("access HTTP server exposes MCP JSON-RPC endpoint at /mcp", async () => {
 
 test("access HTTP server rate-limits MCP write tool calls", async () => {
   const server = new EngramAccessHttpServer({
-    service: createFakeService(),
+    service: {
+      ...createFakeService(),
+      dreamsRun: async ({ phase, dryRun }: { phase: string; dryRun?: boolean }) => ({
+        phase,
+        dryRun: dryRun === true,
+        durationMs: 1,
+        itemsProcessed: 1,
+      }),
+    } as unknown as EngramAccessService,
     host: "127.0.0.1",
     port: 0,
     authToken: "secret-token",
@@ -1599,6 +1745,40 @@ test("access HTTP server rate-limits MCP write tool calls", async () => {
       }),
     });
     assert.equal(limited.status, 429);
+
+    const previewDreamsRun = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1002,
+        method: "tools/call",
+        params: {
+          name: "engram.dreams_run",
+          arguments: { phase: "lightSleep", dryRun: true },
+        },
+      }),
+    });
+    assert.equal(previewDreamsRun.status, 200);
+    const previewPayload = await previewDreamsRun.json() as {
+      result: { structuredContent: { dryRun: boolean } };
+    };
+    assert.equal(previewPayload.result.structuredContent.dryRun, true);
+
+    const limitedDreamsRun = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1001,
+        method: "tools/call",
+        params: {
+          name: "engram.dreams_run",
+          arguments: { phase: "lightSleep" },
+        },
+      }),
+    });
+    assert.equal(limitedDreamsRun.status, 429);
 
     // Read-only MCP calls should still work
     const recallRes = await fetch(`${base}/mcp`, {

@@ -27,7 +27,10 @@
 import { randomUUID } from "node:crypto";
 
 import type { Message } from "../../adapters/types.js";
-import { answerBenchmarkQuestion } from "../../answering.js";
+import {
+  answerBenchmarkQuestion,
+  type BenchmarkAnswerFormat,
+} from "../../answering.js";
 import { benchmarkRecallBudgetForSessionCount } from "../../recall-budget.js";
 import { getGitSha, getRemnicVersion } from "../../reporter.js";
 import {
@@ -71,6 +74,8 @@ export interface HarnessTrial {
   expected: string;
   /** Session IDs that should be consulted via `system.recall`. */
   recallSessionIds: string[];
+  /** Optional answer-shaping protocol for benchmarks with official short/structured outputs. */
+  answerFormat?: BenchmarkAnswerFormat;
   /**
    * Optional hook invoked AFTER `system.recall` and `answerBenchmarkQuestion`
    * but BEFORE the LLM judge. Returns per-trial additions (extra scores
@@ -274,6 +279,7 @@ async function executeTrial(
     recalledText,
     responder: ctx.options.system.responder,
     answerMode: "strict",
+    answerFormat: trial.answerFormat,
   });
 
   // Post-answer hook runs before the judge so dataset-specific signals
@@ -354,6 +360,7 @@ async function executeTrial(
     answeredLength: answered.finalAnswer.length,
     recalledText,
     answeredText: answered.finalAnswer,
+    ...(trial.answerFormat ? { answerFormat: trial.answerFormat } : {}),
     responderModel: answered.model,
     judgeModel: judgeResult.model,
   };

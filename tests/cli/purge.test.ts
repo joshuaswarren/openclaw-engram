@@ -46,11 +46,17 @@ function makeStorageStub(cold: MemoryFile[]): StorageManager {
 test("purge: ISO duration parser includes month components in mixed durations", () => {
   assert.equal(parseDurationToMs("P1Y6M"), (365 + 180) * 86_400_000);
   assert.equal(parseDurationToMs("P2Y3M10D"), (730 + 90 + 10) * 86_400_000);
+  assert.equal(parseDurationToMs("P52W"), 52 * 7 * 86_400_000);
+  assert.equal(parseDurationToMs("P1Y2W"), (365 + 14) * 86_400_000);
+  assert.equal(parseDurationToMs("P0Y90D"), 90 * 86_400_000);
+  assert.equal(parseDurationToMs("PT720H"), 720 * 60 * 60 * 1000);
 });
 
-test("purge: ISO duration parser rejects partial or time durations", () => {
+test("purge: ISO duration parser rejects partial durations", () => {
   assert.equal(parseDurationToMs("P1Yjunk"), null);
-  assert.equal(parseDurationToMs("P1YT2H"), null);
+  assert.equal(parseDurationToMs("P"), null);
+  assert.equal(parseDurationToMs("PT"), null);
+  assert.equal(parseDurationToMs("P0Y0M0W0DT0H0M0S"), null);
 });
 
 test("purge: dryRun defaults to true — no files are deleted without explicit opt-in", async () => {

@@ -467,6 +467,48 @@ test("first-start migration: pending QMD retry uses strict refresh when availabl
   }
 });
 
+test("first-start migration: stale QMD pending marker for another collection does not block init marker", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-fsm-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    const config = makeConfig(dir, {
+      qmdColdCollection: "current-cold",
+    });
+    const stateDir = path.join(dir, "state");
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(
+      path.join(stateDir, ".lifecycle-qmd-refresh-pending"),
+      JSON.stringify({ createdAt: "2026-04-01T00:00:00.000Z", collection: "old-cold" }),
+      "utf-8",
+    );
+
+    let refreshAttempts = 0;
+    const result = await runFirstStartMigration({
+      storage,
+      config,
+      qmd: {
+        updateCollection: async () => {
+          refreshAttempts += 1;
+          throw new Error("stale marker should not retry");
+        },
+        updateCollectionStrict: async () => {
+          refreshAttempts += 1;
+          throw new Error("stale marker should not retry");
+        },
+        embedCollection: async () => {},
+      } as any,
+    });
+
+    assert.equal(result.failureCount, 0);
+    assert.equal(refreshAttempts, 0);
+    await access(path.join(dir, "state", LIFECYCLE_INIT_DONE_MARKER));
+    await assert.rejects(() => access(path.join(stateDir, ".lifecycle-qmd-refresh-pending")));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("first-start migration: abort signal stops demotions before writing marker", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-fsm-"));
   try {
