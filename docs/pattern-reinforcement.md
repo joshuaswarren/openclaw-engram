@@ -163,7 +163,7 @@ reinforcement_count  category    id          last_reinforced_at   content (trunc
 Shows the full reinforcement picture for a single canonical:
 
 - `reinforcement_count` and `last_reinforced_at`
-- `derived_from` provenance chain (page-version refs stamped by the maintenance job)
+- `derived_from` source memory IDs (each cluster member's `frontmatter.id`) stamped by the maintenance job
 - Canonical body
 - Cluster members — memories whose `supersededBy` points at this canonical
 

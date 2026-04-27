@@ -995,6 +995,7 @@ Cross-session pattern detection: clusters memories by normalized content, reinfo
 | `patternReinforcementMinCount` | `3` | Minimum cluster size before a canonical memory is promoted and reinforced. Clamped to `[2, 1000]`; clusters of 1 are degenerate. |
 | `patternReinforcementCategories` | `["preference", "fact", "decision"]` | Memory categories the job considers. Set to `[]` to process no categories. Procedure memories are intentionally excluded from the default list to avoid interference with the procedural miner. |
 | `reinforcementRecallBoostEnabled` | `false` | When `true`, memories with `reinforcement_count > 0` receive an additive score boost during recall. Default `false` (opt-in). Requires `patternReinforcementEnabled: true` upstream to populate reinforcement counts. |
+| `reinforcementRecallBoostWeight` | `0.05` | Per-unit score bonus applied per `reinforcement_count`. Raw boost is `weight × reinforcement_count`, then clipped at `reinforcementRecallBoostMax`. Range `[0, 1]`. |
 | `reinforcementRecallBoostMax` | `0.3` | Maximum additive reinforcement boost per recall result. Range `[0, 1]`. Raw boost formula: `min(reinforcementRecallBoostMax, reinforcementRecallBoostWeight × reinforcement_count)`. |
 
 ## Codex Marketplace (issue #418)
@@ -1464,6 +1465,7 @@ This appendix is flattened from the runtime config schema and the live `parseCon
 | `patternReinforcementMinCount` | `3` | `3` (minimum meaningful pattern; clusters of 2 are allowed but `3` reduces false positives on small corpora) |
 | `patternReinforcementCategories` | `["preference", "fact", "decision"]` | `["preference", "fact", "decision"]` (procedure excluded intentionally — procedural miner handles that category) |
 | `reinforcementRecallBoostEnabled` | `false` | `false` until you confirm pattern reinforcement is producing high-quality canonicals. Enable recall boost only after observing `remnic patterns list` output. |
+| `reinforcementRecallBoostWeight` | `0.05` | `0.05` (per-unit score bonus per `reinforcement_count`; raise cautiously and pair with a lower `reinforcementRecallBoostMax` if you want fast saturation) |
 | `reinforcementRecallBoostMax` | `0.3` | `0.3` (a 30-point maximum additive boost; lower to `0.1`–`0.15` for conservative uplift) |
 | `proactiveExtractionEnabled` | `false` | `false` until you validate the second pass in your environment |
 | `contextCompressionActionsEnabled` | `false` | `false` unless you are validating action-policy flows |
