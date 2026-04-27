@@ -173,9 +173,11 @@ test("purgeMemories: dryRun=false (hard-delete) removes files and updates QMD", 
     await storage.ensureDirectories();
 
     // Write a real memory
-    const id = await storage.writeMemory("fact", "Synthetic fact to purge.", {
+    const rawFact = "Synthetic fact to purge.";
+    const id = await storage.writeMemory("fact", rawFact, {
       source: "test",
     });
+    assert.equal(await storage.hasFactContentHash(rawFact), true, "fact hash should exist before purge");
     const memories = await storage.readAllMemories();
     const memFile = memories.find((m) => m.frontmatter.id === id);
     assert.ok(memFile, "memory must exist on disk");
@@ -205,6 +207,7 @@ test("purgeMemories: dryRun=false (hard-delete) removes files and updates QMD", 
     const afterMemories = await storage.readAllMemories();
     const stillExists = afterMemories.find((m) => m.frontmatter.id === id);
     assert.ok(!stillExists, "purged memory should not be on disk");
+    assert.equal(await storage.hasFactContentHash(rawFact), false, "purged fact hash should be removed");
 
     // QMD collection should have been updated
     assert.ok(updatedCollections.length >= 1, "QMD updateCollection should be called");

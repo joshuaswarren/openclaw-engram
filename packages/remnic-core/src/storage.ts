@@ -2766,6 +2766,19 @@ export class StorageManager {
     return factHashIndex.has(sanitized.text);
   }
 
+  async removeFactContentHashesForMemories(memories: MemoryFile[]): Promise<void> {
+    const factHashIndex = await this.getFactHashIndex();
+    for (const memory of memories) {
+      if (memory.frontmatter.category !== "fact") continue;
+      if (memory.frontmatter.contentHash) {
+        factHashIndex.removeByHash(memory.frontmatter.contentHash);
+      } else {
+        factHashIndex.remove(sanitizeMemoryContent(memory.content).text);
+      }
+    }
+    await factHashIndex.save();
+  }
+
   async isFactContentHashAuthoritative(): Promise<boolean> {
     await this.ensureFactHashIndexAuthoritative();
     return true;

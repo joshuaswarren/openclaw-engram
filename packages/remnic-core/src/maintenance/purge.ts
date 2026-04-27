@@ -153,6 +153,7 @@ export async function purgeMemories(
 
   // Build candidate list
   const candidates: PurgeCandidate[] = [];
+  const candidateMemoriesById = new Map<string, MemoryFile>();
   for (const { memory, resolvedTier } of poolEntries) {
     const ts = resolveTimestamp(memory);
     if (ts.length === 0) continue;
@@ -177,6 +178,7 @@ export async function purgeMemories(
       updatedOrCreated: ts,
       ageMs,
     });
+    candidateMemoriesById.set(memory.frontmatter.id, memory);
   }
 
   if (dryRun) {
@@ -257,6 +259,27 @@ export async function purgeMemories(
   }
 
   const resolvedPurges = [...actuallyPurged, ...alreadyAbsent];
+  const purgedFactMemories = resolvedPurges
+    .map((candidate) => candidateMemoriesById.get(candidate.id))
+    .filter((memory): memory is MemoryFile => memory?.frontmatter.category === "fact");
+  if (purgedFactMemories.length > 0) {
+    const removeFactHashes = (
+      storage as unknown as {
+        removeFactContentHashesForMemories?: (memories: MemoryFile[]) => Promise<void>;
+      }
+    ).removeFactContentHashesForMemories;
+    if (typeof removeFactHashes === "function") {
+      try {
+        await removeFactHashes.call(storage, purgedFactMemories);
+      } catch (hashErr) {
+        errors.push({
+          id: "(fact-hash-index)",
+          path: path.join(storage.dir, "state", "fact-hashes.txt"),
+          error: hashErr instanceof Error ? hashErr.message : String(hashErr),
+        });
+      }
+    }
+  }
 
   return {
     dryRun: false,
