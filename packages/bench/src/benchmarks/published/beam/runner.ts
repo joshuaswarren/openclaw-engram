@@ -8,7 +8,10 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Message } from "../../../adapters/types.js";
-import { answerBenchmarkQuestion } from "../../../answering.js";
+import {
+  answerBenchmarkQuestion,
+  type BenchmarkAnswerFormat,
+} from "../../../answering.js";
 import { benchmarkRecallBudgetForSessionCount } from "../../../recall-budget.js";
 import type {
   BenchmarkDefinition,
@@ -110,6 +113,7 @@ export async function runBeamBenchmark(
       for (const probe of questions) {
         const taskResultId = `${entry.scale}-${entry.conversation.conversation_id}-${ability}-${taskIndex}`;
         const expected = buildExpectedAnswer(probe);
+        const answerFormat = answerFormatForAbility(ability);
         try {
           const rubricTargets = normalizeRubricTargets(probe.rubric);
           const { result: recalledText, durationMs } = await timed(async () => {
@@ -128,6 +132,7 @@ export async function runBeamBenchmark(
             recalledText,
             responder: options.system.responder,
             answerMode: "strict",
+            answerFormat,
           });
           const searchResults = await options.system.search(probe.question, 10);
           const judgeResult = await llmJudgeScoreDetailed(
@@ -173,6 +178,7 @@ export async function runBeamBenchmark(
               planReference: probe.plan_reference,
               sourceChatIds: probe.source_chat_ids,
               rubric: probe.rubric,
+              answerFormat,
               recalledLength: recalledText.length,
               answeredLength: answered.finalAnswer.length,
               recalledText,
@@ -362,6 +368,13 @@ async function* iterateDatasetFiles(
       break;
     }
   }
+}
+
+function answerFormatForAbility(ability: string): BenchmarkAnswerFormat {
+  if (ability === "instruction_following") {
+    return "instruction";
+  }
+  return "short-with-specifics";
 }
 
 async function* streamJsonDataset(
@@ -883,10 +896,41 @@ function computeRubricCoverage(actual: string, rubricTargets: string[]): number 
     return 0;
   }
 
-  const matches = rubricTargets.filter((target) =>
-    containsAnswer(actual, target) === 1,
-  ).length;
+  const matches = rubricTargets.filter((target) => rubricTargetMatches(actual, target)).length;
   return matches / rubricTargets.length;
+}
+
+function rubricTargetMatches(actual: string, target: string): boolean {
+  if (containsAnswer(actual, target) === 1) {
+    return true;
+  }
+
+  const actualTokens = new Set(tokenizeRubricText(actual));
+  const targetTokens = tokenizeRubricText(target);
+  return (
+    targetTokens.length > 0 &&
+    targetTokens.every((token) => actualTokens.has(token))
+  );
+}
+
+function tokenizeRubricText(value: string): string[] {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 0)
+    .map(stemRubricToken);
+}
+
+function stemRubricToken(token: string): string {
+  if (token.endsWith("ing") && token.length > 5) {
+    return token.slice(0, -3);
+  }
+  if (token.endsWith("ed") && token.length > 4) {
+    return token.slice(0, -2);
+  }
+  return token;
 }
 
 function normalizeLimit(limit: number | undefined): number | undefined {

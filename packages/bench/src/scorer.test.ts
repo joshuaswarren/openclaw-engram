@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { llmJudgeScoreDetailed } from "./scorer.ts";
+import { containsAnswer, llmJudgeScoreDetailed } from "./scorer.ts";
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -46,4 +46,14 @@ test("llmJudgeScoreDetailed includes failed scoreWithMetrics wall time in latenc
   assert.equal(result.tokens.input, 0);
   assert.equal(result.tokens.output, 0);
   assert.equal(result.latencyMs >= 10, true);
+});
+
+test("containsAnswer ignores punctuation-only differences", () => {
+  assert.equal(
+    containsAnswer(
+      "Two columns: category and notes",
+      "Two columns: category and notes.",
+    ),
+    1,
+  );
 });

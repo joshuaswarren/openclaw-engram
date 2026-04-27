@@ -94,10 +94,12 @@ export function containsAnswer(
   predicted: string,
   expected: string | number | unknown,
 ): number {
-  const normalizedExpected = normalizeText(expected);
+  const normalizedExpected = normalizeTextForContainment(expected);
   if (normalizedExpected.length === 0) return 0;
 
-  return normalizeText(predicted).includes(normalizedExpected) ? 1 : 0;
+  return normalizeTextForContainment(predicted).includes(normalizedExpected)
+    ? 1
+    : 0;
 }
 
 export async function llmJudgeScore(
@@ -253,6 +255,14 @@ function summarizeMetricValues(values: number[]): AggregateMetrics[string] {
 
 function normalizeText(value: string | number | unknown): string {
   return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizeTextForContainment(value: string | number | unknown): string {
+  return normalizeText(value)
+    .replace(/[^\w\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 0)
+    .join(" ");
 }
 
 function tokenize(value: string | number | unknown): string[] {
