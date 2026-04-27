@@ -83,7 +83,7 @@ Enable the job in plugin config:
 | `patternReinforcementMinCount` | `3` | Minimum cluster size before a canonical is promoted. Clamped to `[2, 1000]`; clusters of 1 are degenerate. |
 | `patternReinforcementCategories` | `["preference", "fact", "decision"]` | Categories the job scans. Empty array means no categories are processed. |
 
-The cadence guard compares the current wall-clock time to the `last_reinforced_at` of the most-recently reinforced canonical. If the oldest canonical was reinforced less than `patternReinforcementCadenceMs` milliseconds ago, the job exits early.
+The cadence guard uses an **in-memory timestamp map** (`lastPatternReinforcementAtByNs`, keyed by namespace) that is set when a run completes. If `Date.now() - lastRunAt < patternReinforcementCadenceMs`, the job returns early with `skippedReason: "cadence"`. Because the map is in-memory, it resets on process restart — operators should account for this when scheduling: a freshly restarted process will always run the job on the next maintenance cycle regardless of how recently the previous process ran it. Set `patternReinforcementCadenceMs: 0` to disable the gate entirely and run on every maintenance cycle.
 
 ## Recall boost
 
