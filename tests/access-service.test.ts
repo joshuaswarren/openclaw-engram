@@ -38,7 +38,7 @@ function dreamsPhasesConfig(deepSleepEnabled = true, deepSleepEnabledExplicitlyS
   };
 }
 
-function createService() {
+function createService(dreamsPhases = dreamsPhasesConfig()) {
   const orchestrator = {
     config: {
       memoryDir: "/tmp/engram",
@@ -67,7 +67,7 @@ function createService() {
       recallCrossNamespaceBudgetWindowMs: 60_000,
       recallCrossNamespaceBudgetSoftLimit: 10,
       recallCrossNamespaceBudgetHardLimit: 30,
-      dreamsPhases: dreamsPhasesConfig(),
+      dreamsPhases,
     },
     recall: async () => "ctx",
     lastRecall: {
@@ -81,6 +81,17 @@ function createService() {
   };
   return new EngramAccessService(orchestrator as any);
 }
+
+test("dreamsRun rejects deepSleep when the phase is explicitly disabled", async () => {
+  const service = createService(dreamsPhasesConfig(false, true));
+
+  await assert.rejects(
+    () => service.dreamsRun({ phase: "deepSleep", dryRun: true }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /dreams\.phases\.deepSleep\.enabled=false/.test(err.message),
+  );
+});
 
 async function writeText(baseDir: string, relPath: string, content: string): Promise<void> {
   const full = path.join(baseDir, relPath);

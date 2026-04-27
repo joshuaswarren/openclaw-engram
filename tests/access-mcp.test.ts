@@ -389,6 +389,36 @@ test("engram.dreams_status rejects invalid windowHours without calling service",
   assert.equal(calls, 1);
 });
 
+test("engram.dreams_run rejects non-boolean dryRun without calling service", async () => {
+  let calls = 0;
+  const service = {
+    ...createFakeService(),
+    dreamsRun: async () => {
+      calls += 1;
+      return {
+        phase: "deepSleep",
+        dryRun: false,
+        durationMs: 0,
+        itemsProcessed: 0,
+      };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(service);
+
+  const invalid = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: {
+      name: "engram.dreams_run",
+      arguments: { phase: "deepSleep", dryRun: "true" },
+    },
+  });
+
+  assert.match(toolCallErrorMessage(invalid), /dryRun must be a boolean/);
+  assert.equal(calls, 0);
+});
+
 test("engram.peer_set rejects non-string kind/displayName/notes (Codex P2 PR #756 round 2)", async () => {
   // Surface-symmetry test: HTTP rejects non-string field types with
   // 400; MCP must reject the same payloads with a tools/call error

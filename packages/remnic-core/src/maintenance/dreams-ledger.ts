@@ -338,12 +338,15 @@ export async function runDreamsPhase(
       const cutoff = Date.now() - 24 * 60 * 60 * 1000;
       itemsProcessed = lines.filter((line) => {
         try {
-          const obj = JSON.parse(line) as { timestamp?: string };
-          if (typeof obj.timestamp === "string") {
-            const ms = Date.parse(obj.timestamp);
-            return Number.isFinite(ms) && ms >= cutoff;
-          }
-          return true;
+          const obj = JSON.parse(line) as { timestamp?: string; ts?: string };
+          const timestamp = typeof obj.ts === "string"
+            ? obj.ts
+            : typeof obj.timestamp === "string"
+              ? obj.timestamp
+              : null;
+          if (!timestamp) return false;
+          const ms = Date.parse(timestamp);
+          return Number.isFinite(ms) && ms >= cutoff;
         } catch {
           return false;
         }
@@ -446,6 +449,7 @@ export async function deepSleepGovernanceRunner(opts: {
 
 export function summarizeGovernanceResultForDreams(
   govResult: {
+    summary?: { scannedMemories?: number };
     proposedActions: unknown[];
     appliedActions: unknown[];
     reviewQueue: unknown[];
@@ -454,8 +458,13 @@ export function summarizeGovernanceResultForDreams(
 ): { scannedMemories: number; appliedActionCount: number; notes?: string } {
   const proposedCount = govResult.proposedActions.length;
   const appliedCount = govResult.appliedActions.length;
+  const scannedCount =
+    typeof govResult.summary?.scannedMemories === "number" &&
+    Number.isFinite(govResult.summary.scannedMemories)
+      ? Math.max(0, Math.floor(govResult.summary.scannedMemories))
+      : govResult.reviewQueue.length;
   return {
-    scannedMemories: govResult.reviewQueue.length,
+    scannedMemories: scannedCount,
     appliedActionCount: appliedCount,
     notes: dryRun
       ? `shadow mode: ${proposedCount} actions proposed`

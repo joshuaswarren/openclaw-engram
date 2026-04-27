@@ -4503,6 +4503,16 @@ export class EngramAccessService {
         `Invalid phase: ${String(options.phase)}. Must be one of: ${validPhases.join(", ")}`,
       );
     }
+    const deepSleep = this.orchestrator.config.dreamsPhases.deepSleep;
+    if (
+      options.phase === "deepSleep" &&
+      deepSleep.enabled === false &&
+      deepSleep.enabledExplicitlySet === true
+    ) {
+      throw new EngramAccessInputError(
+        "memory governance is disabled by dreams.phases.deepSleep.enabled=false",
+      );
+    }
     const dryRun = options.dryRun === true;
     const memoryDir = this.orchestrator.config.memoryDir;
     const result = await runDreamsPhase(

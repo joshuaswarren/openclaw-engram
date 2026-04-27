@@ -2225,6 +2225,13 @@ export class EngramMcpServer {
             `engram.dreams_run: phase is required and must be one of: ${VALID_PHASES.join(", ")}`,
           );
         }
+        if (
+          "dryRun" in args &&
+          args.dryRun !== undefined &&
+          typeof args.dryRun !== "boolean"
+        ) {
+          throw new Error("engram.dreams_run: dryRun must be a boolean when provided");
+        }
         const dryRun = args.dryRun === true;
         return this.service.dreamsRun({
           phase: phase as import("./types.js").DreamsPhase,

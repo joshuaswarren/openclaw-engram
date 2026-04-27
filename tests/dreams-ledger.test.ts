@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import {
   appendDreamsLedgerEntry,
   readDreamsLedgerEntries,
@@ -11,6 +11,7 @@ import {
   summarizeGovernanceResultForDreams,
   normalizeDreamsStatusWindowHours,
   recordDreamsPhaseRun,
+  runDreamsPhase,
   type DreamsLedgerEntry,
 } from "../packages/remnic-core/src/maintenance/dreams-ledger.js";
 
@@ -277,9 +278,41 @@ test("recordDreamsPhaseRun writes scheduled ledger entries", async () => {
   assert.equal(entries[0]?.durationMs, 3000);
 });
 
+test("runDreamsPhase lightSleep counts recent observation ts entries only", async () => {
+  const memoryDir = await makeTmpDir();
+  const ledgerPath = path.join(
+    memoryDir,
+    "state",
+    "observation-ledger",
+    "rebuilt-observations.jsonl",
+  );
+  await mkdir(path.dirname(ledgerPath), { recursive: true });
+  const recentTs = new Date().toISOString();
+  const oldTs = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  await writeFile(
+    ledgerPath,
+    [
+      JSON.stringify({ ts: recentTs, memoryId: "recent" }),
+      JSON.stringify({ ts: oldTs, memoryId: "old" }),
+      JSON.stringify({ timestamp: oldTs, memoryId: "legacy-old" }),
+      JSON.stringify({ memoryId: "missing-ts" }),
+    ].join("\n") + "\n",
+    "utf-8",
+  );
+
+  const result = await runDreamsPhase({
+    memoryDir,
+    phase: "lightSleep",
+    dryRun: true,
+  });
+
+  assert.equal(result.itemsProcessed, 1);
+});
+
 test("summarizeGovernanceResultForDreams does not double-count proposed actions", () => {
   const result = summarizeGovernanceResultForDreams(
     {
+      summary: { scannedMemories: 5 },
       reviewQueue: [{ memoryId: "m1" }, { memoryId: "m2" }],
       proposedActions: [{ memoryId: "m1" }, { memoryId: "m2" }],
       appliedActions: [{ memoryId: "m1" }],
@@ -287,7 +320,7 @@ test("summarizeGovernanceResultForDreams does not double-count proposed actions"
     true,
   );
 
-  assert.equal(result.scannedMemories, 2);
+  assert.equal(result.scannedMemories, 5);
   assert.equal(result.appliedActionCount, 1);
   assert.match(result.notes ?? "", /2 actions proposed/);
 });
