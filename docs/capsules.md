@@ -1,4 +1,4 @@
-# Capsule Export / Import + Encrypted Archives (issue #690 PR 4/4)
+# Memory Capsules — CLI Reference (issue #676 PR 6/6 + issue #690 PR 4/4)
 
 Capsules are portable, versioned archives of a Remnic memory directory. They
 use the V2 bundle format (issue #676) which carries a `capsule` metadata block
@@ -64,15 +64,14 @@ Options:
   --name <id>             Capsule id (alphanumeric + dashes, max 64 chars). Required.
   --out-dir <dir>         Output directory. Default: <memoryDir>/.capsules
   --since <iso8601>       Only include files modified on or after this date.
-                          Accepts YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ.
+                          Accepts YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ (explicit timezone required).
   --include-kinds <list>  Comma-separated top-level subdirectory allow-list
                           (e.g. facts,entities,corrections). When set, only files
                           whose first path segment is in the list are exported.
+  --include-transcripts   Include transcript files (excluded by default).
   --peer-ids <list>       Comma-separated peer id allow-list for the peers/ subtree.
-  --include-transcripts   Include transcripts (excluded by default).
   --encrypt               Seal the archive with the secure-store master key.
                           The store must be unlocked before running this command.
-  --namespace <ns>        Namespace to export (v3.0+, default: config defaultNamespace).
 ```
 
 **Output files:**
@@ -112,6 +111,114 @@ Options:
 The import command checks the first bytes of the archive file for the
 `REMNIC-ENC` magic header. When found, it decrypts in-memory before unpacking.
 The secure-store must be unlocked on the destination machine before importing.
+
+### `remnic capsule merge`
+
+Three-way merge a capsule archive into the current memory directory.
+
+- Files that **exist only in the archive** are always written.
+- Files that are **byte-identical** (same SHA-256) are skipped silently.
+- Files that **differ** are conflicts, resolved by `--conflict-mode`.
+
+```
+remnic capsule merge <archive> [options]
+
+Arguments:
+  archive                   Path to a .capsule.json.gz (or .enc) archive.
+
+Options:
+  --conflict-mode <mode>    Conflict resolution: skip-conflicts (default), prefer-source, prefer-local.
+```
+
+**Conflict modes:**
+
+| Mode | Behaviour |
+|------|-----------|
+| `skip-conflicts` | Keep local file; skip the archive entry; continue processing. |
+| `prefer-source` | Snapshot the local file via page-versioning, then overwrite with the archive content. |
+| `prefer-local` | Keep the local file; skip the archive entry (explicitly chosen, not just a fallback). |
+
+**Example:**
+
+```bash
+# Merge a peer's capsule, keeping your local changes on conflict
+remnic capsule merge shared.capsule.json.gz --conflict-mode prefer-local
+
+# Merge and take the incoming version on conflict (with local snapshot)
+remnic capsule merge update.capsule.json.gz --conflict-mode prefer-source
+```
+
+---
+
+### `remnic capsule list`
+
+List all capsule archives in the capsule store directory. Reads each sidecar `.manifest.json` for metadata — no decompression needed.
+
+```
+remnic capsule list [options]
+
+Options:
+  --dir <path>     Override the capsule store directory. Default: <memoryDir>/.capsules
+  --format <fmt>   Output format: text (default), markdown, json.
+```
+
+**Example output (text):**
+
+```
+daily-backup  [2026-04-26] [47 files]  Daily backup capsule
+weekly-facts  [2026-04-21] [12 files]  Facts only
+shared-bundle [2026-04-15] [83 files]
+```
+
+**Example output (json):**
+
+```json
+{
+  "capsules": [
+    {
+      "id": "daily-backup",
+      "archivePath": "/path/to/.capsules/daily-backup.capsule.json.gz",
+      "manifestPath": "/path/to/.capsules/daily-backup.manifest.json",
+      "createdAt": "2026-04-26T00:00:00.000Z",
+      "pluginVersion": "9.3.68",
+      "fileCount": 47,
+      "description": "Daily backup capsule"
+    }
+  ]
+}
+```
+
+---
+
+### `remnic capsule inspect`
+
+Show a capsule manifest without extracting the archive. Reads the sidecar `.manifest.json` when present (cheap, no decompression); decompresses the archive only if the sidecar is absent.
+
+The `<archive>` argument accepts:
+- An absolute or relative file path to a `.capsule.json.gz` (or `.enc`) file.
+- A capsule **id** — looked up as `<capsulesDir>/<id>.capsule.json.gz`.
+
+```
+remnic capsule inspect <archive> [options]
+
+Arguments:
+  archive         Path to a .capsule.json.gz archive, or a capsule id.
+
+Options:
+  --format <fmt>  Output format: text (default), markdown, json.
+```
+
+**Example:**
+
+```bash
+# By id (looks up <memoryDir>/.capsules/daily-backup.capsule.json.gz)
+remnic capsule inspect daily-backup
+
+# By path
+remnic capsule inspect /path/to/daily-backup.capsule.json.gz --format json
+```
+
+---
 
 ### `remnic backup --encrypt`
 

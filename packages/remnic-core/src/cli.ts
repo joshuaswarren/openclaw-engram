@@ -4079,6 +4079,414 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log("OK");
         });
 
+      // ── Capsule merge / list / inspect (issue #676 PR 6/6) ──────────────
+      // Augments the export + import subcommands above with three-way merge,
+      // directory listing, and manifest inspection surfaces. Option parsing
+      // and rendering live in `capsule-cli.ts` for unit-testability.
+
+      capsuleCmd
+        .command("merge")
+        .description(
+          "Three-way merge of a capsule archive into the memory directory. " +
+            "New files are always written; conflicts are resolved by --conflict-mode.",
+        )
+        .argument("<archive>", "Path to a .capsule.json.gz archive")
+        .option(
+          "--conflict-mode <mode>",
+          "Conflict mode: skip-conflicts (default) | prefer-source | prefer-local",
+        )
+        .action(async (...args: unknown[]) => {
+          const archiveArg = args[0];
+          const opts = (args[1] ?? {}) as Record<string, unknown>;
+          const {
+            parseCapsuleMergeOptions,
+            defaultCapsulesDir,
+          } = await import("./capsule-cli.js");
+          const parsed = parseCapsuleMergeOptions(archiveArg, opts);
+
+          const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const capsulesDir = defaultCapsulesDir(memoryDir);
+
+          // Resolve archive path — same 3-step precedence as `capsule inspect`
+          // so that merge also accepts capsule IDs from the store directory.
+          //   1. Explicit path (starts with /, ./, ../, or contains sep) → tilde-expand and use as-is.
+          //   2. Bare name matching an existing cwd file → resolve to absolute.
+          //   3. Otherwise treat as a capsule id and look up in the capsules store.
+          const { stat: statMerge } = await import("node:fs/promises");
+          let sourceArchive = expandTildePath(parsed.archive);
+          const looksLikePath =
+            sourceArchive.startsWith("/") ||
+            sourceArchive.startsWith("./") ||
+            sourceArchive.startsWith("../") ||
+            sourceArchive.includes(path.sep);
+
+          if (!looksLikePath) {
+            const cwdResolved = path.resolve(sourceArchive);
+            const cwdSt = await statMerge(cwdResolved).catch(() => null);
+            if (cwdSt && cwdSt.isFile()) {
+              sourceArchive = cwdResolved;
+            } else {
+              const byId = path.join(capsulesDir, `${sourceArchive}.capsule.json.gz`);
+              const byIdEnc = path.join(capsulesDir, `${sourceArchive}.capsule.json.gz.enc`);
+              const stId = await statMerge(byId).catch(() => null);
+              if (stId && stId.isFile()) {
+                sourceArchive = byId;
+              } else {
+                const stEnc = await statMerge(byIdEnc).catch(() => null);
+                if (stEnc && stEnc.isFile()) {
+                  sourceArchive = byIdEnc;
+                }
+              }
+            }
+          }
+
+          // Reject encrypted archives before attempting gunzip — mergeCapsule
+          // does not support decryption and would throw a confusing "not a
+          // valid gzip" error. Detect by extension and magic header.
+          // (Codex P1 PRRT_kwDORJXyws59so7S / Cursor PRRT_kwDORJXyws59spK7)
+          if (sourceArchive.endsWith(".enc")) {
+            const { isEncryptedCapsuleFile } = await import("./transfer/capsule-crypto.js");
+            const encDetected = await isEncryptedCapsuleFile(sourceArchive).catch(() => true);
+            if (encDetected) {
+              throw new Error(
+                `capsule merge: encrypted archives (.enc) are not supported by merge. ` +
+                  `Decrypt the archive first with "remnic capsule import" ` +
+                  `(requires unlocked secure-store), then use the decrypted .capsule.json.gz.`,
+              );
+            }
+          }
+
+          const { mergeCapsule } = await import("./transfer/capsule-merge.js");
+          const result = await mergeCapsule({
+            sourceArchive,
+            targetRoot: memoryDir,
+            conflictMode: parsed.conflictMode,
+          });
+
+          const mergedCount = result.merged.length;
+          const skippedCount = result.skipped.length;
+          const conflictCount = result.conflicts.length;
+          console.log(
+            `Capsule merged: ${result.manifest.capsule.id}\n` +
+              `  conflict-mode: ${parsed.conflictMode}\n` +
+              `  merged:        ${mergedCount}\n` +
+              `  conflicts:     ${conflictCount}\n` +
+              `  skipped:       ${skippedCount}`,
+          );
+        });
+
+      capsuleCmd
+        .command("list")
+        .description(
+          "List all capsule archives in the capsule store directory " +
+            "(<memoryDir>/.capsules by default). Reads the sidecar manifest.json for metadata.",
+        )
+        .option(
+          "--dir <path>",
+          "Override the capsule store directory to list",
+        )
+        .option(
+          "--format <fmt>",
+          "Output format: text (default) | markdown | json",
+        )
+        .action(async (...args: unknown[]) => {
+          const opts = (args[0] ?? {}) as Record<string, unknown>;
+          const {
+            parseCapsuleListOptions,
+            renderCapsuleList,
+            defaultCapsulesDir,
+          } = await import("./capsule-cli.js");
+          type CapsuleListEntry = import("./capsule-cli.js").CapsuleListEntry;
+
+          const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const defaultDir = defaultCapsulesDir(memoryDir);
+          // Track whether --dir was explicitly supplied so we can give a clear
+          // error when it doesn't exist (Cursor PRRT_kwDORJXyws59spK8).
+          const dirWasExplicit =
+            typeof opts.dir === "string" && opts.dir.trim() !== "";
+          const parsed = parseCapsuleListOptions(opts, defaultDir);
+          // Expand tilde in the resolved capsules dir (covers --dir ~/... inputs).
+          const capsulesDir = expandTildePath(parsed.capsulesDir);
+
+          // Scan the capsule store directory for *.capsule.json.gz archives.
+          const { readdir, readFile, stat } = await import("node:fs/promises");
+          let dirEntries: string[];
+          try {
+            dirEntries = await readdir(capsulesDir);
+          } catch (err) {
+            const code = (err as NodeJS.ErrnoException).code;
+            if (dirWasExplicit) {
+              // User explicitly provided --dir <path>: any error (including
+              // ENOENT) must be surfaced — a silent empty list would hide a
+              // typo or missing mount. (Cursor PRRT_kwDORJXyws59spK8)
+              throw new Error(
+                `capsule list: cannot read --dir ${capsulesDir}: ${(err as Error).message}`,
+              );
+            }
+            // Default capsulesDir: ENOENT means the directory hasn't been
+            // created yet — treat as empty. Re-throw other errors (EACCES,
+            // ENOTDIR, …). (Codex P1 PRRT_kwDORJXyws59smmg)
+            if (code !== "ENOENT") {
+              throw new Error(
+                `capsule list: cannot read capsule store directory ${capsulesDir}: ${(err as Error).message}`,
+              );
+            }
+            dirEntries = [];
+          }
+
+          const archives = dirEntries
+            .filter(
+              (e) =>
+                e.endsWith(".capsule.json.gz") ||
+                e.endsWith(".capsule.json.gz.enc"),
+            )
+            .sort();
+
+          const entries: CapsuleListEntry[] = [];
+          for (const archiveName of archives) {
+            const archivePath = path.join(capsulesDir, archiveName);
+            // Capsule id is the filename stem before ".capsule.json.gz[.enc]".
+            const id = archiveName
+              .replace(/\.capsule\.json\.gz\.enc$/, "")
+              .replace(/\.capsule\.json\.gz$/, "");
+            const manifestName = `${id}.manifest.json`;
+            const manifestPath = path.join(capsulesDir, manifestName);
+
+            let createdAt: string | null = null;
+            let pluginVersion: string | null = null;
+            let fileCount: number | null = null;
+            let description: string | null = null;
+            let hasManifest = false;
+
+            try {
+              await stat(manifestPath);
+              hasManifest = true;
+            } catch {
+              // sidecar missing — leave metadata as null.
+            }
+
+            if (hasManifest) {
+              try {
+                const raw = await readFile(manifestPath, "utf-8");
+                const sidecar = JSON.parse(raw) as Record<string, unknown>;
+                createdAt =
+                  typeof sidecar.createdAt === "string" ? sidecar.createdAt : null;
+                pluginVersion =
+                  typeof sidecar.pluginVersion === "string"
+                    ? sidecar.pluginVersion
+                    : null;
+                fileCount =
+                  Array.isArray(sidecar.files) ? (sidecar.files as unknown[]).length : null;
+                const capsule = sidecar.capsule as Record<string, unknown> | undefined;
+                if (capsule && typeof capsule.description === "string") {
+                  description = capsule.description;
+                }
+              } catch {
+                // malformed sidecar — leave metadata as null.
+              }
+            }
+
+            entries.push({
+              id,
+              archivePath,
+              manifestPath: hasManifest ? manifestPath : null,
+              createdAt,
+              pluginVersion,
+              fileCount,
+              description,
+            });
+          }
+
+          console.log(renderCapsuleList(entries, parsed.format));
+        });
+
+      capsuleCmd
+        .command("inspect")
+        .description(
+          "Show capsule archive manifest without unpacking. " +
+            "Reads the sidecar .manifest.json when present; otherwise decompresses the archive.",
+        )
+        .argument("<archive>", "Path to a .capsule.json.gz archive (or its id in the capsule store)")
+        .option(
+          "--format <fmt>",
+          "Output format: text (default) | markdown | json",
+        )
+        .action(async (...args: unknown[]) => {
+          const archiveArg = args[0];
+          const opts = (args[1] ?? {}) as Record<string, unknown>;
+          const {
+            parseCapsuleInspectOptions,
+            renderCapsuleInspect,
+            defaultCapsulesDir,
+          } = await import("./capsule-cli.js");
+          type CapsuleInspectData = import("./capsule-cli.js").CapsuleInspectData;
+
+          const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const capsulesDir = defaultCapsulesDir(memoryDir);
+          const parsed = parseCapsuleInspectOptions(archiveArg, opts);
+
+          // Resolve archive path.
+          //
+          // Precedence (CLAUDE.md gotcha — bare relative names must not be
+          // misclassified as capsule ids):
+          //   1. If the argument looks like an explicit path (starts with /,
+          //      ./, ../, or contains a path separator) → use as-is after tilde
+          //      expansion.
+          //   2. Otherwise, check whether the argument resolves to an existing
+          //      file relative to cwd.  A bare name like "my-capsule.capsule.json.gz"
+          //      in the working directory must win over a capsule-id lookup.
+          //   3. If the file does not exist at cwd, treat as a capsule id and
+          //      look it up in the capsules store (plain then encrypted variant).
+          const { stat } = await import("node:fs/promises");
+          let archivePath = expandTildePath(parsed.archive);
+          const looksLikePath =
+            archivePath.startsWith("/") ||
+            archivePath.startsWith("./") ||
+            archivePath.startsWith("../") ||
+            archivePath.includes(path.sep);
+
+          if (!looksLikePath) {
+            // Step 2: check for an existing file at cwd before treating as id.
+            const cwdResolved = path.resolve(archivePath);
+            const cwdSt = await stat(cwdResolved).catch(() => null);
+            if (cwdSt && cwdSt.isFile()) {
+              archivePath = cwdResolved;
+            } else {
+              // Step 3: Treat as a capsule id — find it in the capsules dir.
+              // Try plain archive first, then encrypted variant.
+              const byId = path.join(capsulesDir, `${archivePath}.capsule.json.gz`);
+              const byIdEnc = path.join(capsulesDir, `${archivePath}.capsule.json.gz.enc`);
+              const st = await stat(byId).catch(() => null);
+              if (st && st.isFile()) {
+                archivePath = byId;
+              } else {
+                const stEnc = await stat(byIdEnc).catch(() => null);
+                if (stEnc && stEnc.isFile()) {
+                  archivePath = byIdEnc;
+                }
+              }
+            }
+          }
+
+          const isEncrypted = archivePath.endsWith(".capsule.json.gz.enc");
+
+          // Derive sidecar path: strip ".enc" suffix first (if present), then
+          // replace ".capsule.json.gz" with ".manifest.json".
+          const sidecarPath = archivePath
+            .replace(/\.enc$/, "")
+            .replace(/\.capsule\.json\.gz$/, ".manifest.json");
+
+          // Prefer sidecar manifest for cheap inspection.
+          let sidecar: Record<string, unknown> | null = null;
+          try {
+            const { readFile } = await import("node:fs/promises");
+            const raw = await readFile(sidecarPath, "utf-8");
+            sidecar = JSON.parse(raw) as Record<string, unknown>;
+          } catch {
+            // No sidecar — fall back to decompressing the archive (plain only).
+          }
+
+          let manifest: Record<string, unknown>;
+          if (sidecar !== null) {
+            manifest = sidecar;
+          } else if (isEncrypted) {
+            // No sidecar — attempt in-memory decryption if the secure-store is
+            // unlocked.  decryptCapsuleFileInMemory returns the plaintext gzip
+            // bytes; we then gunzip and parse exactly like the plaintext path.
+            const { gunzipSync } = await import("node:zlib");
+            const { parseExportBundle } = await import("./transfer/types.js");
+            let decryptedBuf: Buffer;
+            try {
+              const { decryptCapsuleFileInMemory } = await import(
+                "./transfer/capsule-crypto.js"
+              );
+              decryptedBuf = await decryptCapsuleFileInMemory(archivePath, memoryDir);
+            } catch (decErr) {
+              const msg =
+                decErr instanceof Error ? decErr.message : String(decErr);
+              const isLocked = msg.includes("locked") || msg.includes("no key");
+              process.stderr.write(
+                isLocked
+                  ? `capsule inspect: secure-store is locked — unlock it first ` +
+                      `(remnic secure-store unlock) or provide the sidecar ` +
+                      `.manifest.json to inspect without decrypting.\n`
+                  : `capsule inspect: failed to decrypt archive — ${msg}\n`,
+              );
+              process.exitCode = 1;
+              return;
+            }
+            const json = gunzipSync(decryptedBuf).toString("utf-8");
+            const parsed2 = parseExportBundle(JSON.parse(json));
+            if (parsed2.capsuleVersion !== 2) {
+              process.stderr.write(
+                `capsule inspect: only V2 capsule archives are supported\n`,
+              );
+              process.exitCode = 1;
+              return;
+            }
+            manifest = (parsed2.bundle as { manifest: Record<string, unknown> }).manifest;
+          } else {
+            const { readFile } = await import("node:fs/promises");
+            const { gunzipSync } = await import("node:zlib");
+            const { parseExportBundle } = await import("./transfer/types.js");
+            const buf = await readFile(archivePath);
+            const json = gunzipSync(buf).toString("utf-8");
+            const parsed2 = parseExportBundle(JSON.parse(json));
+            if (parsed2.capsuleVersion !== 2) {
+              process.stderr.write(
+                `capsule inspect: only V2 capsule archives are supported\n`,
+              );
+              process.exitCode = 1;
+              return;
+            }
+            manifest = (parsed2.bundle as { manifest: Record<string, unknown> }).manifest;
+          }
+
+          const capsule = (manifest.capsule ?? {}) as Record<string, unknown>;
+          const files = Array.isArray(manifest.files) ? manifest.files : [];
+          const TOP_N = 20;
+          const topFiles = (files as Array<{ path: string }>)
+            .slice(0, TOP_N)
+            .map((f) => f.path ?? "");
+
+          const retrievalPolicy = (capsule.retrievalPolicy ?? {}) as Record<string, unknown>;
+          const includes = (capsule.includes ?? {}) as Record<string, unknown>;
+
+          const data: CapsuleInspectData = {
+            capsuleId: typeof capsule.id === "string" ? capsule.id : "(unknown)",
+            version: typeof capsule.version === "string" ? capsule.version : "—",
+            schemaVersion:
+              typeof capsule.schemaVersion === "string" ? capsule.schemaVersion : "—",
+            createdAt:
+              typeof manifest.createdAt === "string" ? manifest.createdAt : null,
+            pluginVersion:
+              typeof manifest.pluginVersion === "string" ? manifest.pluginVersion : null,
+            fileCount: files.length,
+            includesTranscripts: manifest.includesTranscripts === true,
+            description:
+              typeof capsule.description === "string" ? capsule.description : "",
+            parentCapsule:
+              typeof capsule.parentCapsule === "string" ? capsule.parentCapsule : null,
+            retrievalPolicy: {
+              tierWeights:
+                retrievalPolicy.tierWeights != null &&
+                typeof retrievalPolicy.tierWeights === "object"
+                  ? (retrievalPolicy.tierWeights as Record<string, number>)
+                  : {},
+              directAnswerEnabled: retrievalPolicy.directAnswerEnabled === true,
+            },
+            includes: {
+              taxonomy: includes.taxonomy === true,
+              identityAnchors: includes.identityAnchors === true,
+              peerProfiles: includes.peerProfiles === true,
+              procedural: includes.procedural === true,
+            },
+            topFiles,
+          };
+
+          console.log(renderCapsuleInspect(data, parsed.format));
+        });
+
       cmd
         .command("compat")
         .description("Run local compatibility diagnostics for Engram plugin wiring")
