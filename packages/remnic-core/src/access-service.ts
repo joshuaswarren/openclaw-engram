@@ -4541,20 +4541,10 @@ export class EngramAccessService {
             dryRun: false,
             storage,
           });
-          let itemsProcessed = result.clusters.reduce(
+          const itemsProcessed = result.clusters.reduce(
             (sum, cluster) => sum + cluster.memories.length,
             0,
           );
-          try {
-            const memFiles = await storage.readAllMemories();
-            itemsProcessed = memFiles.length;
-          } catch (err) {
-            log.warn(
-              `dreams REM telemetry read failed after consolidation (non-fatal): ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-          }
           return {
             itemsProcessed,
             notes: `REM consolidation found ${result.clustersFound} clusters`,

@@ -121,12 +121,14 @@ test("dreamsRun enforces writable namespace before running phases", async () => 
   );
 });
 
-test("dreamsRun records REM telemetry when post-consolidation count read fails", async () => {
+test("dreamsRun records REM telemetry from consolidation clusters", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-dreams-rem-"));
+  let readAllMemoriesCalls = 0;
   const storage = {
     dir: memoryDir,
     readAllMemories: async () => {
-      throw new Error("telemetry read failed");
+      readAllMemoriesCalls += 1;
+      return [{}, {}, {}, {}, {}];
     },
   };
   let capturedStorage: unknown;
@@ -181,6 +183,7 @@ test("dreamsRun records REM telemetry when post-consolidation count read fails",
     });
 
     assert.equal(capturedStorage, storage);
+    assert.equal(readAllMemoriesCalls, 0);
     assert.equal(result.itemsProcessed, 3);
     assert.equal(result.notes, "REM consolidation found 1 clusters");
     const ledger = await readFile(path.join(memoryDir, "state", "dreams-ledger.jsonl"), "utf-8");

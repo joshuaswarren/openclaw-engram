@@ -128,6 +128,7 @@ export async function readDreamsLedgerEntries(memoryDir: string): Promise<Dreams
     if (!trimmed) continue;
     try {
       const parsed = JSON.parse(trimmed) as Partial<DreamsLedgerEntry>;
+      if (typeof parsed !== "object" || parsed === null) continue;
       if (
         typeof parsed.phase === "string" &&
         (parsed.phase === "lightSleep" || parsed.phase === "rem" || parsed.phase === "deepSleep") &&

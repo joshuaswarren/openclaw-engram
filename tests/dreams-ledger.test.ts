@@ -117,6 +117,9 @@ test("readDreamsLedgerEntries skips malformed lines", async () => {
   // Inject a line missing required fields.
   await writeFile(ledgerPath, await readFile(ledgerPath, "utf-8") + '{"phase":"rem"}\n', "utf-8");
 
+  // Inject a valid JSON value that is not an object.
+  await writeFile(ledgerPath, await readFile(ledgerPath, "utf-8") + "null\n", "utf-8");
+
   const entries = await readDreamsLedgerEntries(memoryDir);
   // Only the valid first line should come through.
   assert.equal(entries.length, 1);
