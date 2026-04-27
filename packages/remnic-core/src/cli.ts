@@ -8385,7 +8385,11 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           );
 
           if (fmt === "json") {
-            console.log(JSON.stringify(result, null, 2));
+            // Omit the internal ledgerEntry field — the public shape matches
+            // the HTTP and MCP surfaces (types.ts::DreamsRunResult).
+            const { ledgerEntry: _discarded, ...publicResult } = result as typeof result & { ledgerEntry?: unknown };
+            void _discarded;
+            console.log(JSON.stringify(publicResult, null, 2));
             return;
           }
 

@@ -13,7 +13,7 @@
  */
 
 import path from "node:path";
-import { mkdir, readdir, readFile, writeFile, rename } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -94,7 +94,7 @@ export function dreamsLedgerPath(memoryDir: string): string {
 /**
  * Append a single entry to the dreams ledger.
  * Creates the file (and its parent directory) if needed.
- * Writes atomically via a temp file → rename so partial writes are impossible.
+ * Uses `appendFile` (O_APPEND) so concurrent callers never overwrite each other.
  */
 export async function appendDreamsLedgerEntry(
   memoryDir: string,
@@ -102,22 +102,7 @@ export async function appendDreamsLedgerEntry(
 ): Promise<void> {
   const ledgerPath = dreamsLedgerPath(memoryDir);
   await mkdir(path.dirname(ledgerPath), { recursive: true });
-
-  const line = JSON.stringify(entry) + "\n";
-
-  // Atomic append: read existing, append line, write to temp, rename.
-  let existing = "";
-  try {
-    existing = await readFile(ledgerPath, "utf-8");
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") throw err;
-    // First entry — start fresh.
-  }
-
-  const tempPath = `${ledgerPath}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tempPath, existing + line, "utf-8");
-  await rename(tempPath, ledgerPath);
+  await appendFile(ledgerPath, JSON.stringify(entry) + "\n", "utf-8");
 }
 
 // ── Reader ────────────────────────────────────────────────────────────────────
