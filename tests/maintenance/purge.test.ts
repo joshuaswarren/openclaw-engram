@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
 import { purgeMemories, type PurgeMemoriesOptions } from "../../packages/remnic-core/src/maintenance/purge.js";
 import type { MemoryFile, MemoryFrontmatter } from "../../packages/remnic-core/src/types.js";
@@ -213,6 +213,46 @@ test("purgeMemories: dryRun=false (hard-delete) removes files and updates QMD", 
     const ledgerPath = path.join(dir, "state", "observation-ledger", "purge-audit.jsonl");
     const ledgerRaw = await readFile(ledgerPath, "utf-8");
     assert.ok(ledgerRaw.includes(id), "purge audit ledger should contain the purged memory id");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("purgeMemories: audit ledger failure aborts before deleting files", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-purge-audit-first-"));
+  try {
+    const { StorageManager } = await import("../../packages/remnic-core/src/storage.js");
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const id = await storage.writeMemory("fact", "Do not delete without audit.", {
+      source: "test",
+    });
+    const [memory] = await storage.readAllMemories();
+    assert.ok(memory, "expected memory to exist");
+    await storage.writeMemoryFrontmatter(memory, {
+      updated: "2020-01-01T00:00:00.000Z",
+    });
+
+    const ledgerDir = path.join(dir, "state", "observation-ledger");
+    await mkdir(path.dirname(ledgerDir), { recursive: true });
+    await writeFile(ledgerDir, "not a directory", "utf-8");
+
+    await assert.rejects(
+      () =>
+        purgeMemories({
+          storage,
+          olderThanMs: 365 * 86_400_000,
+          tier: "all",
+          dryRun: false,
+          now: () => new Date("2026-04-27T00:00:00.000Z"),
+        }),
+      /ENOTDIR|EEXIST/,
+    );
+
+    const stillThere = await storage.getMemoryById(id);
+    assert.ok(stillThere, "memory must remain when audit ledger cannot be written");
+    await access(memory.path);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

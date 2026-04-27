@@ -2229,7 +2229,7 @@ function parseSinceDurationMs(since: string): number {
  *
  * Returns null if the value cannot be parsed.
  */
-function parseDurationToMs(raw: string): number | null {
+export function parseDurationToMs(raw: string): number | null {
   const trimmed = raw.trim();
 
   // Plain number of days
@@ -2248,18 +2248,15 @@ function parseDurationToMs(raw: string): number | null {
   // Reject time part (T...) for simplicity
   if (rest.includes("T")) return null;
 
-  // Validate the entire rest against a strict anchored pattern.
-  // Allowed: zero or more of nY, nM, nD in that order, with at least one.
-  if (!/^(\d+Y)?(\d+M)?(\d+D)?$/.test(rest) || rest === "") return null;
-
-  const yearMatch = rest.match(/^(?:(\d+)Y)?/);
-  const monthMatch = rest.match(/(?:^|Y)(?:(\d+)M)?/);
-  const dayMatch = rest.match(/(\d+)D$/);
+  const match = /^P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)D)?$/.exec(iso);
+  if (!match || (match[1] === undefined && match[2] === undefined && match[3] === undefined)) {
+    return null;
+  }
 
   let totalMs = 0;
-  if (yearMatch?.[1]) totalMs += Number.parseInt(yearMatch[1], 10) * 365 * 86_400_000;
-  if (monthMatch?.[1]) totalMs += Number.parseInt(monthMatch[1], 10) * 30 * 86_400_000;
-  if (dayMatch?.[1]) totalMs += Number.parseInt(dayMatch[1], 10) * 86_400_000;
+  if (match[1]) totalMs += Number.parseInt(match[1], 10) * 365 * 86_400_000;
+  if (match[2]) totalMs += Number.parseInt(match[2], 10) * 30 * 86_400_000;
+  if (match[3]) totalMs += Number.parseInt(match[3], 10) * 86_400_000;
 
   return totalMs > 0 ? totalMs : null;
 }
@@ -3868,6 +3865,9 @@ export function registerCli(
             });
             if (reportHasMachineReadableOutput(options)) {
               console.log(JSON.stringify(result, null, 2));
+              if (!result.dryRun && result.errors.length > 0) {
+                process.exitCode = 1;
+              }
             } else {
               if (result.dryRun) {
                 console.log(`=== Purge dry-run: ${result.candidates.length} candidate(s) would be deleted ===`);

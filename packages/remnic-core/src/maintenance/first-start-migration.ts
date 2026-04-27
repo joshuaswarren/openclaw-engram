@@ -24,6 +24,8 @@ import {
   decideTierTransition,
   type TierRoutingPolicy,
 } from "../tier-routing.js";
+import { TierMigrationExecutor } from "../tier-migration.js";
+import type { SearchBackend } from "../search/port.js";
 import {
   applyUtilityPromotionRuntimePolicy,
   loadUtilityRuntimeValues,
@@ -39,6 +41,12 @@ export interface FirstStartMigrationOptions {
   demotionCap?: number;
   /** When true, report candidates but do not mutate or write the marker. */
   dryRun?: boolean;
+  /** Optional QMD backend used to journal demotions and refresh tier collections. */
+  qmd?: SearchBackend;
+  /** Hot-tier QMD collection name. Defaults to config.qmdCollection. */
+  hotCollection?: string;
+  /** Cold-tier QMD collection name. Defaults to config.qmdColdCollection. */
+  coldCollection?: string;
   /** Override clock for tests. */
   now?: () => Date;
 }
@@ -105,6 +113,7 @@ export async function runFirstStartMigration(
     config,
     demotionCap = FIRST_START_DEMOTION_CAP,
     dryRun = false,
+    qmd,
   } = options;
   const now = (options.now ?? (() => new Date()))();
 
@@ -170,9 +179,26 @@ export async function runFirstStartMigration(
 
   let demotedCount = 0;
   let failureCount = 0;
+  const executor = qmd
+    ? new TierMigrationExecutor({
+        storage,
+        qmd,
+        hotCollection: options.hotCollection ?? config.qmdCollection ?? "openclaw-engram",
+        coldCollection: options.coldCollection ?? config.qmdColdCollection ?? "openclaw-engram-cold",
+      })
+    : null;
   for (const memory of batch) {
     try {
-      await storage.migrateMemoryToTier(memory, "cold");
+      if (executor) {
+        await executor.migrateMemory({
+          memory,
+          fromTier: "hot",
+          toTier: "cold",
+          reason: "first-start-lifecycle-migration",
+        });
+      } else {
+        await storage.migrateMemoryToTier(memory, "cold");
+      }
       demotedCount += 1;
     } catch {
       // Non-fatal — individual migration failures are counted but do not abort

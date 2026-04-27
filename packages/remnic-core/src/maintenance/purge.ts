@@ -81,13 +81,6 @@ export interface PurgeMemoriesResult {
   errors: Array<{ id: string; path: string; error: string }>;
 }
 
-function resolveTier(filePath: string): "hot" | "cold" | "archive" {
-  const normalized = filePath.split(path.sep).join("/");
-  if (normalized.includes("/cold/")) return "cold";
-  if (normalized.includes("/archive/")) return "archive";
-  return "hot";
-}
-
 function resolveTimestamp(memory: MemoryFile): string {
   const fm = memory.frontmatter as unknown as Record<string, unknown>;
   const updated = typeof fm.updated === "string" ? (fm.updated as string) : "";
@@ -197,6 +190,8 @@ export async function purgeMemories(
     };
   }
 
+  await logPurgeAudit(storage, candidates, now);
+
   // Hard-delete phase
   const errors: Array<{ id: string; path: string; error: string }> = [];
   const actuallyPurged: PurgeCandidate[] = [];
@@ -237,9 +232,6 @@ export async function purgeMemories(
   } else if (typeof (storage as unknown as { invalidateAllMemoriesCacheForDir?: () => void }).invalidateAllMemoriesCacheForDir === "function") {
     (storage as unknown as { invalidateAllMemoriesCacheForDir: () => void }).invalidateAllMemoriesCacheForDir();
   }
-
-  // Append purge audit to ledger before returning (write rollback data before success marker)
-  await logPurgeAudit(storage, actuallyPurged, now);
 
   // Update QMD index for affected collections
   if (qmd) {

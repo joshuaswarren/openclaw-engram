@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { purgeMemories } from "../../packages/remnic-core/src/maintenance/purge.js";
+import { parseDurationToMs } from "../../packages/remnic-core/src/cli.js";
 import type { MemoryFile, MemoryFrontmatter } from "../../packages/remnic-core/src/types.js";
 import type { StorageManager } from "../../packages/remnic-core/src/storage.js";
 
@@ -41,6 +42,16 @@ function makeStorageStub(cold: MemoryFile[]): StorageManager {
 }
 
 // ── --confirm guard: dryRun must default to true (fail-safe) ──────────────
+
+test("purge: ISO duration parser includes month components in mixed durations", () => {
+  assert.equal(parseDurationToMs("P1Y6M"), (365 + 180) * 86_400_000);
+  assert.equal(parseDurationToMs("P2Y3M10D"), (730 + 90 + 10) * 86_400_000);
+});
+
+test("purge: ISO duration parser rejects partial or time durations", () => {
+  assert.equal(parseDurationToMs("P1Yjunk"), null);
+  assert.equal(parseDurationToMs("P1YT2H"), null);
+});
 
 test("purge: dryRun defaults to true — no files are deleted without explicit opt-in", async () => {
   const old = makeMemory({ id: "old", updated: "2024-01-01T00:00:00.000Z", filePath: "/tmp/cold/old.md" });

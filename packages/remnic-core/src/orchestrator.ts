@@ -2531,6 +2531,9 @@ export class Orchestrator {
         const result = await runFirstStartMigration({
           storage: this.storage,
           config: this.config,
+          qmd: this.qmd,
+          hotCollection: this.config.qmdCollection,
+          coldCollection: this.config.qmdColdCollection,
         });
         if (!result.skipped) {
           log.info(

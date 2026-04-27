@@ -49,6 +49,15 @@ function makeConfig(memoryDir: string, overrides: Record<string, unknown> = {}) 
   });
 }
 
+function makeQmdStub(logs: string[]) {
+  return {
+    updateCollection: async (collection: string) => {
+      logs.push(collection);
+    },
+    embedCollection: async () => {},
+  };
+}
+
 // ── Skip conditions ────────────────────────────────────────────────────────
 
 test("first-start migration: skips when lifecyclePolicyEnabled=false", async () => {
@@ -211,6 +220,46 @@ test("first-start migration: respects demotionCap", async () => {
     const result = await runFirstStartMigration({ storage, config, demotionCap: 2 });
     assert.ok(result.demotedCount <= 2, `demotedCount ${result.demotedCount} must not exceed cap 2`);
     assert.equal(result.cappedAt, 2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("first-start migration: journals demotions and updates cold QMD collection", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-fsm-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    const config = makeConfig(dir, {
+      qmdTierDemotionMinAgeDays: 1,
+      qmdTierDemotionValueThreshold: 0.99,
+      qmdCollection: "hot-test",
+      qmdColdCollection: "cold-test",
+    });
+
+    const id = await storage.writeMemory("fact", "Old low-value fact.", { source: "test" });
+    const memory = await storage.getMemoryById(id);
+    assert.ok(memory, "expected memory to exist");
+    await storage.writeMemoryFrontmatter(memory, {
+      updated: "2020-01-01T00:00:00.000Z",
+      created: "2020-01-01T00:00:00.000Z",
+      confidence: 0.01,
+    });
+
+    const qmdUpdates: string[] = [];
+    const result = await runFirstStartMigration({
+      storage,
+      config,
+      qmd: makeQmdStub(qmdUpdates) as any,
+    });
+
+    assert.equal(result.demotedCount, 1);
+    assert.deepEqual(qmdUpdates, ["cold-test"]);
+
+    const journalPath = path.join(dir, "state", "tier-migration-journal.jsonl");
+    const journalRaw = await readFile(journalPath, "utf-8");
+    assert.match(journalRaw, /first-start-lifecycle-migration/);
+    assert.match(journalRaw, new RegExp(id));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
