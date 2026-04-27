@@ -103,8 +103,10 @@ Or via query string (for GET-friendly recall paths and `remnic xray`):
 GET /engram/v1/recall/xray?q=...&disclosure=section
 ```
 
-Unknown values return `400` with `code: "invalid_disclosure"` and a message
-listing `chunk`, `section`, `raw`.
+Invalid values on the primary `/engram/v1/recall` endpoint return `400` with
+`code: "input_error"`. Invalid values on the `/engram/v1/recall/xray`
+query-string path return `400` with `code: "invalid_disclosure"`. Both include
+a message listing the valid options: `chunk`, `section`, `raw`.
 
 ### MCP
 
@@ -160,11 +162,17 @@ to `section` when the top-K confidence score falls below the configured
 threshold (`recallDisclosureEscalationThreshold`, default `0.5`):
 
 ```jsonc
-// openclaw.plugin.json (excerpt)
+// openclaw.json (excerpt) — plugins.entries.openclaw-engram.config
 {
-  "config": {
-    "recallDisclosureEscalation": "auto",
-    "recallDisclosureEscalationThreshold": 0.4
+  "plugins": {
+    "entries": {
+      "openclaw-engram": {
+        "config": {
+          "recallDisclosureEscalation": "auto",
+          "recallDisclosureEscalationThreshold": 0.4
+        }
+      }
+    }
   }
 }
 ```
