@@ -404,3 +404,18 @@ test("StorageManager — locked store throws SecureStoreLockedError on readAllMe
     );
   });
 });
+
+test("StorageManager — locked store throws SecureStoreLockedError on readProfile", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const profilePath = path.join(dir, "profile.md");
+    await writeMaybeEncryptedFile(profilePath, "# Profile\n\nprivate", key, {}, dir);
+
+    const storage = new StorageManager(dir, []);
+
+    await assert.rejects(
+      () => storage.readProfile(),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+  });
+});

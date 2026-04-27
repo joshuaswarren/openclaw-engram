@@ -3030,7 +3030,10 @@ export class StorageManager {
   async readProfile(): Promise<string> {
     try {
       return await readMaybeEncryptedFile(this.profilePath, this._secureStoreKey, this.baseDir);
-    } catch {
+    } catch (error) {
+      if (error instanceof SecureStoreLockedError) {
+        throw error;
+      }
       return "";
     }
   }
