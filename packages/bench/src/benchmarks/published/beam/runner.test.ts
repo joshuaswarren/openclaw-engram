@@ -125,6 +125,19 @@ test("BEAM rubric coverage does not reward post-mention negation", async () => {
   );
 });
 
+test("BEAM rubric coverage does not reward weakened syntax highlighting", async () => {
+  const result = await runBeamWithInstructionAnswer(
+    "Syntax-highlighted code blocks are optional for implementation help.",
+  );
+
+  assert.equal(
+    result.results.tasks.find((task) =>
+      task.taskId.includes("instruction_following"),
+    )?.scores.rubric_coverage,
+    0,
+  );
+});
+
 async function runBeamWithInstructionAnswer(instructionAnswer: string) {
   return runBeamBenchmark({
     benchmark: beamDefinition,

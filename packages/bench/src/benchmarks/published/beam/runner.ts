@@ -47,13 +47,13 @@ const SPLIT_ORDER: Record<string, number> = {
 };
 const SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN =
   "(?:syntax highlight(?:ed|ing)|code blocks? with syntax highlighting)";
-const SYNTAX_HIGHLIGHTING_NEGATION_PATTERN =
-  "\\b(?:do not|don't|dont|not|never|no|without|avoid|disable)\\b";
+const SYNTAX_HIGHLIGHTING_WEAKENING_PATTERN =
+  "\\b(?:do not|don't|dont|not|never|no|without|avoid|disable|optional|unnecessary|not needed)\\b";
 const SYNTAX_HIGHLIGHTING_NEGATED_BEFORE = new RegExp(
-  `${SYNTAX_HIGHLIGHTING_NEGATION_PATTERN}.{0,60}${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}`,
+  `${SYNTAX_HIGHLIGHTING_WEAKENING_PATTERN}.{0,60}${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}`,
 );
 const SYNTAX_HIGHLIGHTING_NEGATED_AFTER = new RegExp(
-  `${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}.{0,60}${SYNTAX_HIGHLIGHTING_NEGATION_PATTERN}`,
+  `${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}.{0,60}${SYNTAX_HIGHLIGHTING_WEAKENING_PATTERN}`,
 );
 const SYNTAX_HIGHLIGHTING_RUBRIC = new RegExp(
   SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN,
