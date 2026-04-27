@@ -259,6 +259,19 @@ test("BEAM rubric coverage allows compliant syntax answers that disable plain te
   );
 });
 
+test("BEAM rubric coverage allows compliant syntax answers that are not optional", async () => {
+  const result = await runBeamWithInstructionAnswer(
+    "Code blocks with syntax highlighting are not optional.",
+  );
+
+  assert.equal(
+    result.results.tasks.find((task) =>
+      task.taskId.includes("instruction_following"),
+    )?.scores.rubric_coverage,
+    1,
+  );
+});
+
 test("BEAM rubric coverage allows pre-mention contrastive negation", async () => {
   const result = await runBeamWithInstructionAnswer(
     "Do not use plain text; use code blocks with syntax highlighting.",

@@ -60,6 +60,9 @@ const SYNTAX_HIGHLIGHTING_SHORT_NEGATED_BEFORE = new RegExp(
 const SYNTAX_HIGHLIGHTING_NEGATED_AFTER = new RegExp(
   `${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}.{0,60}${SYNTAX_HIGHLIGHTING_WEAKENING_AFTER_PATTERN}`,
 );
+const SYNTAX_HIGHLIGHTING_NOT_OPTIONAL_AFTER = new RegExp(
+  `${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}.{0,60}\\b(?:is|are|be|being)?\\s*not\\s+optional\\b`,
+);
 const SYNTAX_HIGHLIGHTING_RUBRIC = new RegExp(
   SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN,
 );
@@ -963,9 +966,10 @@ function mentionsSyntaxHighlightingRequirement(value: string): boolean {
 function negatesSyntaxHighlighting(value: string): boolean {
   return splitRubricClauses(value).some(
     (clause) =>
-      SYNTAX_HIGHLIGHTING_DIRECT_NEGATED_BEFORE.test(clause) ||
-      SYNTAX_HIGHLIGHTING_SHORT_NEGATED_BEFORE.test(clause) ||
-      SYNTAX_HIGHLIGHTING_NEGATED_AFTER.test(clause),
+      !SYNTAX_HIGHLIGHTING_NOT_OPTIONAL_AFTER.test(clause) &&
+      (SYNTAX_HIGHLIGHTING_DIRECT_NEGATED_BEFORE.test(clause) ||
+        SYNTAX_HIGHLIGHTING_SHORT_NEGATED_BEFORE.test(clause) ||
+        SYNTAX_HIGHLIGHTING_NEGATED_AFTER.test(clause)),
   );
 }
 
