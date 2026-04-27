@@ -46,7 +46,7 @@ const SPLIT_ORDER: Record<string, number> = {
   "10M": 3,
 };
 const SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN =
-  "(?:syntax highlight(?:ed|ing)|code blocks? with syntax highlighting)";
+  "(?:syntax highlight(?:ed|ing) code blocks?|code blocks? with syntax highlighting)";
 const SYNTAX_HIGHLIGHTING_WEAKENING_BEFORE_PATTERN =
   "\\b(?:do not|don't|dont|must not|should not|never|no|without|avoid|disable)\\b";
 const SYNTAX_HIGHLIGHTING_WEAKENING_AFTER_PATTERN =

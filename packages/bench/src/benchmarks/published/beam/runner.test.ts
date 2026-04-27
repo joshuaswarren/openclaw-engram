@@ -138,6 +138,19 @@ test("BEAM rubric coverage does not reward weakened syntax highlighting", async 
   );
 });
 
+test("BEAM rubric coverage requires code blocks for syntax highlighting rubric", async () => {
+  const result = await runBeamWithInstructionAnswer(
+    "Syntax highlighting is useful for implementation help.",
+  );
+
+  assert.equal(
+    result.results.tasks.find((task) =>
+      task.taskId.includes("instruction_following"),
+    )?.scores.rubric_coverage,
+    0,
+  );
+});
+
 test("BEAM rubric coverage allows compliant contrastive syntax answers", async () => {
   const result = await runBeamWithInstructionAnswer(
     "Always use syntax-highlighted code blocks, not plain text.",
