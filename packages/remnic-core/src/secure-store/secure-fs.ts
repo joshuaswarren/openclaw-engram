@@ -43,7 +43,7 @@
  * Naming: `secure-fs.ts` (not `vault-fs.ts`) — see `kdf.ts` naming note.
  */
 
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { generateSalt, open, seal } from "./cipher.js";
@@ -384,19 +384,28 @@ export async function migrateMemoryDirToEncrypted(
  */
 async function collectMdFiles(dir: string): Promise<string[]> {
   const results: string[] = [];
-  let entries: Awaited<ReturnType<typeof readdir>>;
+  let names: string[];
   try {
-    entries = await readdir(dir, { withFileTypes: true });
+    names = await readdir(dir, { encoding: "utf8" });
   } catch {
     return results;
   }
-  for (const entry of entries) {
-    if (entry.name.startsWith(".secure-store")) continue;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
+  for (const name of names) {
+    if (name.startsWith(".secure-store")) continue;
+    const full = path.join(dir, name);
+    let isDir = false;
+    let isFile = false;
+    try {
+      const s = await stat(full);
+      isDir = s.isDirectory();
+      isFile = s.isFile();
+    } catch {
+      continue;
+    }
+    if (isDir) {
       const sub = await collectMdFiles(full);
       results.push(...sub);
-    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+    } else if (isFile && name.endsWith(".md")) {
       results.push(full);
     }
   }

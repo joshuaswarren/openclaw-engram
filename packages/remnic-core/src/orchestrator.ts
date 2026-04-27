@@ -1744,13 +1744,18 @@ export class Orchestrator {
     // If secureStoreEnabled, check whether the keyring already holds a key
     // for this memory dir (e.g. operator unlocked before daemon restart).
     if (config.secureStoreEnabled) {
+      // Mark the store as required so writes throw SecureStoreLockedError
+      // instead of silently falling back to plaintext when locked (P1 finding
+      // from Cursor review of PR #767).
+      this.storage.setSecureStoreRequired(true);
       const storeId = secureStoreDir(config.memoryDir);
       const existingKey = keyring.getKey(storeId);
       if (existingKey) {
         this.storage.setSecureStoreKey(existingKey, config.secureStoreEncryptOnWrite);
       }
       // If no key is present the store remains locked until `remnic secure-store unlock`
-      // is run — reads of encrypted files will throw SecureStoreLockedError.
+      // is run — reads of encrypted files will throw SecureStoreLockedError,
+      // and writes will throw SecureStoreLockedError via resolveWriteKey().
     }
     this.qmd = createSearchBackend(config);
     const conversationIndexRuntime = createConversationIndexRuntime(config, {
