@@ -10,6 +10,33 @@ import { getMemoryProjectionPath } from "../src/memory-projection-store.js";
 import { StorageManager } from "../src/storage.js";
 import { recordTrustZoneRecord } from "../src/trust-zones.ts";
 
+function dreamsPhasesConfig(deepSleepEnabled = true) {
+  return {
+    lightSleep: {
+      enabled: true,
+      cadenceMs: 0,
+      promoteHeatThreshold: 0.55,
+      staleDecayThreshold: 0.65,
+      archiveDecayThreshold: 0.85,
+      filterStaleEnabled: false,
+    },
+    rem: {
+      enabled: false,
+      cadenceMs: 168 * 3_600_000,
+      similarityThreshold: 0.8,
+      minClusterSize: 3,
+      maxPerRun: 100,
+      minIntervalMs: 10 * 60_000,
+    },
+    deepSleep: {
+      enabled: deepSleepEnabled,
+      cadenceMs: 24 * 3_600_000,
+      versioningEnabled: false,
+      versioningMaxPerPage: 50,
+    },
+  };
+}
+
 function createService() {
   const orchestrator = {
     config: {
@@ -39,6 +66,7 @@ function createService() {
       recallCrossNamespaceBudgetWindowMs: 60_000,
       recallCrossNamespaceBudgetSoftLimit: 10,
       recallCrossNamespaceBudgetHardLimit: 30,
+      dreamsPhases: dreamsPhasesConfig(),
     },
     recall: async () => "ctx",
     lastRecall: {
@@ -2206,6 +2234,7 @@ test("access service governanceRun skips entity synthesis refresh in shadow mode
         principalFromSessionKeyMode: "prefix",
         principalFromSessionKeyRules: [],
         namespacePolicies: [],
+        dreamsPhases: dreamsPhasesConfig(),
       },
       recall: async () => "ctx",
       lastRecall: { get: () => null, getMostRecent: () => null },
@@ -2219,6 +2248,39 @@ test("access service governanceRun skips entity synthesis refresh in shadow mode
     const result = await service.governanceRun({ mode: "shadow" });
     assert.equal(result.mode, "shadow");
     assert.equal(synthesisCalls, 0);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service governanceRun rejects when deep sleep is disabled", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-governance-disabled-"));
+  try {
+    const storage = new StorageManager(memoryDir);
+    await storage.ensureDirectories();
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "default",
+        searchBackend: "qmd",
+        qmdEnabled: false,
+        nativeKnowledge: undefined,
+        sharedNamespace: "shared",
+        principalFromSessionKeyMode: "prefix",
+        principalFromSessionKeyRules: [],
+        namespacePolicies: [],
+        dreamsPhases: dreamsPhasesConfig(false),
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => storage,
+    } as any);
+
+    await assert.rejects(
+      () => service.governanceRun({ mode: "shadow" }),
+      /memory governance is disabled by dreams\.phases\.deepSleep\.enabled=false/,
+    );
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
@@ -2242,6 +2304,7 @@ test("access service governanceRun preserves apply result when entity synthesis 
         principalFromSessionKeyMode: "prefix",
         principalFromSessionKeyRules: [],
         namespacePolicies: [],
+        dreamsPhases: dreamsPhasesConfig(),
       },
       recall: async () => "ctx",
       lastRecall: { get: () => null, getMostRecent: () => null },
