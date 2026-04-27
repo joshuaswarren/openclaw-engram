@@ -13566,9 +13566,8 @@ export class Orchestrator {
   ): Promise<void> {
     try {
       const { recordDreamsPhaseRun } = await import("./maintenance/dreams-ledger.js");
-      const dreamsStorage = await this.getStorage(this.config.defaultNamespace);
       await recordDreamsPhaseRun({
-        memoryDir: dreamsStorage.dir,
+        memoryDir: this.storage.dir,
         phase,
         trigger: "scheduled",
         itemsProcessed,
