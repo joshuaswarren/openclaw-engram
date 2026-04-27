@@ -198,6 +198,7 @@ test("summarizeTierDistribution: runOperatorDoctor includes tier_distribution ch
 
     const orchestrator = {
       config,
+      storage: new StorageManager(memoryDir),
       qmd: {
         async probe() { return false; },
         isAvailable() { return false; },

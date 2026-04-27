@@ -2852,20 +2852,54 @@ export class StorageManager {
     return factHashIndex.has(sanitized.text);
   }
 
+  private factContentHashForRemoval(memory: MemoryFile): string | null {
+    if (memory.frontmatter.category !== "fact") return null;
+    if (typeof memory.frontmatter.contentHash === "string" && memory.frontmatter.contentHash.length > 0) {
+      return memory.frontmatter.contentHash;
+    }
+    const configuredHashSource = stripCitationMarkersForHashRemoval(memory.content, this.citationTemplate);
+    const hashSource =
+      configuredHashSource !== memory.content
+        ? configuredHashSource
+        : stripDefaultCitationMarkersWithoutRegex(memory.content);
+    return ContentHashIndex.computeHash(sanitizeMemoryContent(hashSource).text);
+  }
+
   async removeFactContentHashesForMemories(memories: MemoryFile[]): Promise<void> {
     await this.ensureFactHashIndexAuthoritative();
     const factHashIndex = await this.getFactHashIndex();
+    const removedIds = new Set(
+      memories
+        .map((memory) => memory.frontmatter.id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    );
+    const removedHashes = new Map<MemoryFile, string>();
     for (const memory of memories) {
+      const hash = this.factContentHashForRemoval(memory);
+      if (hash) {
+        removedHashes.set(memory, hash);
+      }
+    }
+    if (removedHashes.size === 0) return;
+
+    const remainingActiveHashes = new Set<string>();
+    const remainingMemories = [
+      ...await this.readAllMemories(),
+      ...await this.readAllColdMemories(),
+    ];
+    for (const memory of remainingMemories) {
       if (memory.frontmatter.category !== "fact") continue;
-      if (memory.frontmatter.contentHash) {
-        factHashIndex.removeByHash(memory.frontmatter.contentHash);
-      } else {
-        const configuredHashSource = stripCitationMarkersForHashRemoval(memory.content, this.citationTemplate);
-        const hashSource =
-          configuredHashSource !== memory.content
-            ? configuredHashSource
-            : stripDefaultCitationMarkersWithoutRegex(memory.content);
-        factHashIndex.remove(sanitizeMemoryContent(hashSource).text);
+      if (removedIds.has(memory.frontmatter.id)) continue;
+      if (inferMemoryStatus(memory.frontmatter, memory.path) !== "active") continue;
+      const hash = this.factContentHashForRemoval(memory);
+      if (hash) {
+        remainingActiveHashes.add(hash);
+      }
+    }
+
+    for (const hash of removedHashes.values()) {
+      if (!remainingActiveHashes.has(hash)) {
+        factHashIndex.removeByHash(hash);
       }
     }
     await factHashIndex.save();

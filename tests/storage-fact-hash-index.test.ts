@@ -226,6 +226,40 @@ test("removeFactContentHashesForMemories strips configured legacy citation templ
   }
 });
 
+test("removeFactContentHashesForMemories preserves a hash still owned by another active fact", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-fact-hash-remove-shared-"));
+  try {
+    const storage = new StorageManager(dir);
+    const rawBody = "Duplicate fact that should remain deduped.";
+
+    const firstId = await storage.writeMemory("fact", rawBody, { source: "test" });
+    const secondId = await storage.writeMemory("fact", rawBody, { source: "test" });
+    const first = await storage.getMemoryById(firstId);
+    const second = await storage.getMemoryById(secondId);
+    assert.ok(first, "expected first fact to exist");
+    assert.ok(second, "expected second fact to exist");
+    assert.equal(await storage.hasFactContentHash(rawBody), true);
+
+    await unlink(first.path);
+    storage.invalidateAllMemoriesCacheForDir();
+    await storage.removeFactContentHashesForMemories([first]);
+
+    assert.equal(
+      await storage.hasFactContentHash(rawBody),
+      true,
+      "hash should remain while another active duplicate fact still exists",
+    );
+
+    await unlink(second.path);
+    storage.invalidateAllMemoriesCacheForDir();
+    await storage.removeFactContentHashesForMemories([second]);
+
+    assert.equal(await storage.hasFactContentHash(rawBody), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test(
   "rebuild from disk (Thread 4 fix): legacy fact with unknown custom citation and no contentHash is indexed by its full body",
   async () => {

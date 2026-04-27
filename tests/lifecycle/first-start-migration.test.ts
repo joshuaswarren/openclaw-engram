@@ -342,6 +342,41 @@ test("first-start migration: retries QMD refresh after a successful move throws"
   }
 });
 
+test("first-start migration: counts completed disk demotion when no QMD exists", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-fsm-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    const config = makeConfig(dir, {
+      qmdTierDemotionMinAgeDays: 1,
+      qmdTierDemotionValueThreshold: 0.99,
+    });
+
+    const id = await storage.writeMemory("fact", "Old low-value fact.", { source: "test" });
+    const memory = await storage.getMemoryById(id);
+    assert.ok(memory, "expected memory to exist");
+    await storage.writeMemoryFrontmatter(memory, {
+      updated: "2020-01-01T00:00:00.000Z",
+      created: "2020-01-01T00:00:00.000Z",
+      confidence: 0.01,
+    });
+
+    const migrateMemoryToTier = storage.migrateMemoryToTier.bind(storage);
+    storage.migrateMemoryToTier = (async (...args: Parameters<StorageManager["migrateMemoryToTier"]>) => {
+      await migrateMemoryToTier(...args);
+      throw new Error("late disk bookkeeping failure");
+    }) as StorageManager["migrateMemoryToTier"];
+
+    const result = await runFirstStartMigration({ storage, config });
+
+    assert.equal(result.demotedCount, 1);
+    assert.equal(result.failureCount, 0);
+    await access(path.join(dir, "state", LIFECYCLE_INIT_DONE_MARKER));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("first-start migration: late QMD retry success writes marker", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-fsm-"));
   try {
@@ -377,6 +412,55 @@ test("first-start migration: late QMD retry success writes marker", async () => 
 
     assert.equal(result.demotedCount, 1);
     assert.equal(result.failureCount, 0);
+    await access(path.join(dir, "state", LIFECYCLE_INIT_DONE_MARKER));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("first-start migration: pending QMD retry uses strict refresh when available", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-fsm-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    const config = makeConfig(dir, {
+      qmdTierDemotionMinAgeDays: 1,
+      qmdTierDemotionValueThreshold: 0.99,
+      qmdColdCollection: "cold-test",
+    });
+
+    const id = await storage.writeMemory("fact", "Old low-value fact.", { source: "test" });
+    const memory = await storage.getMemoryById(id);
+    assert.ok(memory, "expected memory to exist");
+    await storage.writeMemoryFrontmatter(memory, {
+      updated: "2020-01-01T00:00:00.000Z",
+      created: "2020-01-01T00:00:00.000Z",
+      confidence: 0.01,
+    });
+
+    let ordinaryAttempts = 0;
+    let strictAttempts = 0;
+    const result = await runFirstStartMigration({
+      storage,
+      config,
+      qmd: {
+        updateCollection: async () => {
+          ordinaryAttempts += 1;
+          throw new Error("ordinary refresh failed");
+        },
+        updateCollectionStrict: async (collection: string) => {
+          assert.equal(collection, "cold-test");
+          strictAttempts += 1;
+          if (strictAttempts < 2) throw new Error("strict refresh failed");
+        },
+        embedCollection: async () => {},
+      } as any,
+    });
+
+    assert.equal(result.demotedCount, 1);
+    assert.equal(result.failureCount, 0);
+    assert.equal(ordinaryAttempts, 1);
+    assert.equal(strictAttempts, 2);
     await access(path.join(dir, "state", LIFECYCLE_INIT_DONE_MARKER));
   } finally {
     await rm(dir, { recursive: true, force: true });

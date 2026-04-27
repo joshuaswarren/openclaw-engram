@@ -62,6 +62,12 @@ export interface SearchBackend {
   // ── Maintenance ──
   update(execution?: SearchExecutionOptions): Promise<void>;
   updateCollection(collection: string, execution?: SearchExecutionOptions): Promise<void>;
+  /**
+   * Optional strict refresh used by callers that must know whether a collection
+   * was actually refreshed before writing success markers. Ordinary update
+   * calls remain fail-open for migration/maintenance resilience.
+   */
+  updateCollectionStrict?(collection: string, execution?: SearchExecutionOptions): Promise<void>;
   embed(): Promise<void>;
   embedCollection(collection: string): Promise<void>;
 

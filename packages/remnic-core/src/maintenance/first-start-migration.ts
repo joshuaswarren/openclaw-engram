@@ -123,6 +123,18 @@ async function buildTierRoutingPolicy(config: PluginConfig): Promise<TierRouting
   return applyUtilityPromotionRuntimePolicy(basePolicy, runtime);
 }
 
+async function refreshQmdCollection(
+  qmd: SearchBackend,
+  collection: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (typeof qmd.updateCollectionStrict === "function") {
+    await qmd.updateCollectionStrict(collection, { signal });
+    return;
+  }
+  await qmd.updateCollection(collection, { signal });
+}
+
 /**
  * Run the first-start migration sweep.  No-ops when:
  *   - `lifecyclePolicyEnabled` is false, or
@@ -260,9 +272,13 @@ export async function runFirstStartMigration(
       const movedToCold = (await storage.readAllColdMemories().catch(() => [])).some(
         (candidate) => candidate.frontmatter.id === memory.frontmatter.id,
       );
-      if (movedToCold && qmd) {
+      if (movedToCold) {
+        if (!qmd) {
+          demotedCount += 1;
+          continue;
+        }
         try {
-          await qmd.updateCollection(coldCollection);
+          await refreshQmdCollection(qmd, coldCollection, signal);
           demotedCount += 1;
           continue;
         } catch {
@@ -286,7 +302,7 @@ export async function runFirstStartMigration(
   }
   if (qmd && await qmdRefreshPendingExists(config.memoryDir)) {
     try {
-      await qmd.updateCollection(coldCollection);
+      await refreshQmdCollection(qmd, coldCollection, signal);
       await clearQmdRefreshPending(config.memoryDir);
     } catch {
       failureCount += 1;
