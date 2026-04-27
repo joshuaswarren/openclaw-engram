@@ -167,6 +167,32 @@ test("BEAM rubric coverage does not reward weakened syntax highlighting", async 
   );
 });
 
+test("BEAM rubric coverage catches contracted syntax weakening", async () => {
+  const result = await runBeamWithInstructionAnswer(
+    "Code blocks with syntax highlighting aren't required.",
+  );
+
+  assert.equal(
+    result.results.tasks.find((task) =>
+      task.taskId.includes("instruction_following"),
+    )?.scores.rubric_coverage,
+    0,
+  );
+});
+
+test("BEAM rubric coverage catches disabled syntax highlighting", async () => {
+  const result = await runBeamWithInstructionAnswer(
+    "Code blocks with syntax highlighting are disabled.",
+  );
+
+  assert.equal(
+    result.results.tasks.find((task) =>
+      task.taskId.includes("instruction_following"),
+    )?.scores.rubric_coverage,
+    0,
+  );
+});
+
 test("BEAM rubric coverage requires code blocks for syntax highlighting rubric", async () => {
   const result = await runBeamWithInstructionAnswer(
     "Syntax highlighting is useful for implementation help.",
