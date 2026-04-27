@@ -414,8 +414,8 @@
                 "properties": {
                   "enabled": {
                     "type": "boolean",
-                    "default": true,
-                    "description": "Master switch for the deep-sleep phase. Defaults true (nightly governance cron runs unless explicitly disabled)."
+                    "default": false,
+                    "description": "Master switch for the deep-sleep phase. Defaults false unless legacy deep-sleep surfaces are explicitly enabled; set true to allow nightly governance, tier migration, and versioning surfaces."
                   },
                   "cadenceMs": {
                     "type": "integer",

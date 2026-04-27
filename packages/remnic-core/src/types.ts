@@ -309,9 +309,10 @@ export interface DreamsRemConfig {
  */
 export interface DreamsDeepSleepConfig {
   /**
-   * Phase master switch. No direct legacy mirror — deep sleep runs as
-   * long as the nightly governance cron is registered. Set to `false`
-   * to disable without removing the cron.
+   * Phase master switch. No single direct legacy mirror; defaults false unless
+   * an existing deep-sleep surface such as nightly governance auto-registration,
+   * tier migration, or page versioning is explicitly enabled. Set to `false`
+   * to disable those surfaces without removing legacy config keys.
    */
   enabled: boolean;
   /**

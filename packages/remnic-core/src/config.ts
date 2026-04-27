@@ -535,6 +535,10 @@ export function parseConfig(raw: unknown): PluginConfig {
     typeof cfg.versioningMaxPerPage === "number"
       ? Math.max(0, Math.floor(cfg.versioningMaxPerPage))
       : 50;
+  const legacyDeepSleepEnabled =
+    cfg.nightlyGovernanceCronAutoRegister === true ||
+    cfg.qmdTierMigrationEnabled === true ||
+    legacyVersioningEnabled;
 
   // Light sleep phase — dreams.phases.lightSleep.* wins when present.
   const dreamsLightSleepEnabledRaw = coerceBooleanLike(rawDreamsLightSleep.enabled);
@@ -592,7 +596,10 @@ export function parseConfig(raw: unknown): PluginConfig {
   // Deep sleep phase — dreams.phases.deepSleep.* wins when present.
   const dreamsDeepSleepEnabledRaw = coerceBooleanLike(rawDreamsDeepSleep.enabled);
   const dreamsDeepSleep: DreamsDeepSleepConfig = {
-    enabled: dreamsDeepSleepEnabledRaw !== undefined ? dreamsDeepSleepEnabledRaw : true,
+    enabled:
+      dreamsDeepSleepEnabledRaw !== undefined
+        ? dreamsDeepSleepEnabledRaw
+        : legacyDeepSleepEnabled,
     cadenceMs:
       typeof rawDreamsDeepSleep.cadenceMs === "number"
         ? Math.max(0, Math.floor(rawDreamsDeepSleep.cadenceMs))
@@ -1116,7 +1123,10 @@ export function parseConfig(raw: unknown): PluginConfig {
         : "openclaw-engram-cold",
     qmdColdMaxResults:
       typeof cfg.qmdColdMaxResults === "number" ? cfg.qmdColdMaxResults : 8,
-    qmdTierMigrationEnabled: cfg.qmdTierMigrationEnabled === true,
+    // Issue #678 PR 2/4: gate hot/cold tier migration (a deep-sleep activity)
+    // on dreams.phases.deepSleep.enabled. When deep sleep is disabled,
+    // tier migration is forced off regardless of legacy flag.
+    qmdTierMigrationEnabled: dreamsDeepSleep.enabled && cfg.qmdTierMigrationEnabled === true,
     qmdTierDemotionMinAgeDays:
       typeof cfg.qmdTierDemotionMinAgeDays === "number"
         ? Math.max(0, Math.floor(cfg.qmdTierDemotionMinAgeDays))
@@ -1575,7 +1585,13 @@ export function parseConfig(raw: unknown): PluginConfig {
     hourlySummariesEnabled: cfg.hourlySummariesEnabled !== false, // default: true
     daySummaryEnabled: cfg.daySummaryEnabled !== false, // default: true
     hourlySummaryCronAutoRegister: cfg.hourlySummaryCronAutoRegister === true,
-    nightlyGovernanceCronAutoRegister: cfg.nightlyGovernanceCronAutoRegister === true,
+    // Codex P1 on PR 763 round 2: gate the nightly-governance cron
+    // (deep-sleep's primary scheduled execution path) on
+    // dreams.phases.deepSleep.enabled. When the phase is disabled the
+    // cron must NOT auto-register, otherwise `deepSleep.enabled=false`
+    // is a contract lie — deep-sleep keeps running.
+    nightlyGovernanceCronAutoRegister:
+      dreamsDeepSleep.enabled && cfg.nightlyGovernanceCronAutoRegister === true,
     summaryRecallHours:
       typeof cfg.summaryRecallHours === "number" ? cfg.summaryRecallHours : 24,
     maxSummaryCount:
@@ -1702,11 +1718,12 @@ export function parseConfig(raw: unknown): PluginConfig {
         )
       : ["correction", "commitment", "procedure"],
     // semanticConsolidationIntervalHours is derived from dreamsRem.cadenceMs
-    // when an override is set (rounded up to the nearest hour, min 1) so
-    // legacy schedulers honour the new key. Otherwise legacy default applies.
+    // when an override is set (rounded up to the nearest hour). Preserve
+    // explicit zero so legacy schedulers see the same disable-by-zero signal
+    // as the dreams.phases.rem config.
     semanticConsolidationIntervalHours:
       rawDreamsRem.cadenceMs !== undefined
-        ? Math.max(1, Math.ceil(dreamsRem.cadenceMs / 3_600_000))
+        ? Math.max(0, Math.ceil(dreamsRem.cadenceMs / 3_600_000))
         : legacySemanticConsolidationIntervalHours,
     semanticConsolidationMaxPerRun: dreamsRem.maxPerRun,
     // Operator-aware consolidation prompt (issue #561 PR 3).  Defaults
@@ -3020,7 +3037,7 @@ export function parseConfig(raw: unknown): PluginConfig {
 
     // Page-level versioning (issue #371). Issue #678 PR 2/4:
     // dreams.phases.deepSleep.* WINS over legacy keys.
-    versioningEnabled: dreamsDeepSleep.versioningEnabled,
+    versioningEnabled: dreamsDeepSleep.enabled && dreamsDeepSleep.versioningEnabled,
     versioningMaxPerPage: dreamsDeepSleep.versioningMaxPerPage,
     versioningSidecarDir:
       typeof cfg.versioningSidecarDir === "string" && cfg.versioningSidecarDir.trim().length > 0
