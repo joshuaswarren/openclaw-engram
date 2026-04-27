@@ -100,7 +100,33 @@ test("BEAM quick mode uses answer formats for concise facts and remembered instr
 });
 
 test("BEAM rubric coverage does not reward negated syntax highlighting answers", async () => {
-  const result = await runBeamBenchmark({
+  const result = await runBeamWithInstructionAnswer(
+    "Do not use syntax highlighting for implementation help.",
+  );
+
+  assert.equal(
+    result.results.tasks.find((task) =>
+      task.taskId.includes("instruction_following"),
+    )?.scores.rubric_coverage,
+    0,
+  );
+});
+
+test("BEAM rubric coverage does not reward post-mention negation", async () => {
+  const result = await runBeamWithInstructionAnswer(
+    "Syntax highlighting is not required for implementation help.",
+  );
+
+  assert.equal(
+    result.results.tasks.find((task) =>
+      task.taskId.includes("instruction_following"),
+    )?.scores.rubric_coverage,
+    0,
+  );
+});
+
+async function runBeamWithInstructionAnswer(instructionAnswer: string) {
+  return runBeamBenchmark({
     benchmark: beamDefinition,
     mode: "quick",
     system: {
@@ -126,7 +152,7 @@ test("BEAM rubric coverage does not reward negated syntax highlighting answers",
         async respond(question) {
           if (question.includes("implement a login feature")) {
             return {
-              text: "Do not use syntax highlighting for implementation help.",
+              text: instructionAnswer,
               tokens: { input: 1, output: 1 },
               latencyMs: 1,
               model: "beam-test-responder",
@@ -151,11 +177,4 @@ test("BEAM rubric coverage does not reward negated syntax highlighting answers",
       },
     },
   });
-
-  assert.equal(
-    result.results.tasks.find((task) =>
-      task.taskId.includes("instruction_following"),
-    )?.scores.rubric_coverage,
-    0,
-  );
-});
+}

@@ -45,6 +45,19 @@ const SPLIT_ORDER: Record<string, number> = {
   "1M": 2,
   "10M": 3,
 };
+const SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN =
+  "(?:syntax highlight(?:ed|ing)|code blocks? with syntax highlighting)";
+const SYNTAX_HIGHLIGHTING_NEGATION_PATTERN =
+  "\\b(?:do not|don't|dont|not|never|no|without|avoid|disable)\\b";
+const SYNTAX_HIGHLIGHTING_NEGATED_BEFORE = new RegExp(
+  `${SYNTAX_HIGHLIGHTING_NEGATION_PATTERN}.{0,60}${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}`,
+);
+const SYNTAX_HIGHLIGHTING_NEGATED_AFTER = new RegExp(
+  `${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}.{0,60}${SYNTAX_HIGHLIGHTING_NEGATION_PATTERN}`,
+);
+const SYNTAX_HIGHLIGHTING_RUBRIC = new RegExp(
+  SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN,
+);
 
 export const beamDefinition: BenchmarkDefinition = {
   id: "beam",
@@ -917,14 +930,14 @@ function syntaxHighlightingRubricMatches(actual: string, target: string): boolea
 }
 
 function mentionsSyntaxHighlightingRequirement(value: string): boolean {
-  return /(?:syntax highlight(?:ed|ing)|code blocks? with syntax highlighting)/.test(
-    normalizeRubricPhrase(value),
-  );
+  return SYNTAX_HIGHLIGHTING_RUBRIC.test(normalizeRubricPhrase(value));
 }
 
 function negatesSyntaxHighlighting(value: string): boolean {
-  return /\b(?:do not|don't|dont|not|never|no|without|avoid|disable)\b.{0,60}(?:syntax highlight(?:ed|ing)|code blocks? with syntax highlighting)/.test(
-    normalizeRubricPhrase(value),
+  const normalized = normalizeRubricPhrase(value);
+  return (
+    SYNTAX_HIGHLIGHTING_NEGATED_BEFORE.test(normalized) ||
+    SYNTAX_HIGHLIGHTING_NEGATED_AFTER.test(normalized)
   );
 }
 
