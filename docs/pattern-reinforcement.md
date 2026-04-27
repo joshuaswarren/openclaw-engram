@@ -40,7 +40,9 @@ The job:
 3. **Stamps the canonical** with `reinforcement_count` (total cluster size) and `last_reinforced_at` (ISO 8601). Provenance fields `derived_from` (source IDs) and `derived_via: "pattern-reinforcement"` are also written.
 4. **Marks older duplicates** `status: "superseded"` with a `supersededBy` pointer to the canonical's ID.
 
-The job is idempotent: re-running on the same corpus does not double-bump `reinforcement_count`. The bump-only-on-change guard compares cluster size to the canonical's previous counter and writes only when the value changed.
+The job is idempotent for the **counter**: re-running on the same corpus does not double-bump `reinforcement_count`. The bump-only-on-change guard compares cluster size to the canonical's previous counter and bumps only when it grew.
+
+Note that the canonical's frontmatter can still be rewritten on a re-run when the **cluster membership** changes (new sources joined or older sources rotated out, even at the same total count) or when **`derived_via`** needs to be set to `"pattern-reinforcement"` for the first time. In those cases the maintenance job updates `derived_from` and `updated` to keep provenance accurate, while leaving `reinforcement_count` unchanged. Operators tuning write churn should treat these refresh writes as the steady-state cost of accurate provenance, not as counter drift.
 
 ### YAML frontmatter fields
 
