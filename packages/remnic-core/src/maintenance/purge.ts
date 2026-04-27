@@ -92,7 +92,7 @@ async function logPurgeAudit(
   storage: StorageManager,
   candidates: PurgeCandidate[],
   now: Date,
-  event: "PURGE_DELETE_INTENT" | "PURGE_HARD_DELETE" = "PURGE_HARD_DELETE",
+  event: "PURGE_DELETE_INTENT" | "PURGE_HARD_DELETE" | "PURGE_ALREADY_ABSENT" = "PURGE_HARD_DELETE",
 ): Promise<void> {
   const ledgerDir = path.join(storage.dir, "state", "observation-ledger");
   await mkdir(ledgerDir, { recursive: true });
@@ -196,6 +196,7 @@ export async function purgeMemories(
   // Hard-delete phase
   const errors: Array<{ id: string; path: string; error: string }> = [];
   const actuallyPurged: PurgeCandidate[] = [];
+  const alreadyAbsent: PurgeCandidate[] = [];
   const collectionsToUpdate = new Set<string>();
   const addCollectionForCandidate = (candidate: PurgeCandidate) => {
     collectionsToUpdate.add(candidate.tier === "cold" ? coldCollection : hotCollection);
@@ -210,6 +211,7 @@ export async function purgeMemories(
       const message = err instanceof Error ? err.message : String(err);
       // ENOENT is fine — already gone
       if (message.includes("ENOENT")) {
+        alreadyAbsent.push(candidate);
         addCollectionForCandidate(candidate);
       } else {
         errors.push({ id: candidate.id, path: candidate.path, error: message });
@@ -218,6 +220,7 @@ export async function purgeMemories(
   }
 
   await logPurgeAudit(storage, actuallyPurged, now, "PURGE_HARD_DELETE");
+  await logPurgeAudit(storage, alreadyAbsent, now, "PURGE_ALREADY_ABSENT");
 
   // Invalidate ALL memory caches — hot and cold — after hard-deleting files.
   //
@@ -253,12 +256,14 @@ export async function purgeMemories(
     }
   }
 
+  const resolvedPurges = [...actuallyPurged, ...alreadyAbsent];
+
   return {
     dryRun: false,
     tier,
     olderThanMs,
-    candidates: actuallyPurged,
-    purgedCount: actuallyPurged.length,
+    candidates: resolvedPurges,
+    purgedCount: resolvedPurges.length,
     errorCount: errors.length,
     errors,
   };

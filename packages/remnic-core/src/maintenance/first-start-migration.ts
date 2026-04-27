@@ -47,6 +47,8 @@ export interface FirstStartMigrationOptions {
   hotCollection?: string;
   /** Cold-tier QMD collection name. Defaults to config.qmdColdCollection. */
   coldCollection?: string;
+  /** Optional shutdown signal. When aborted, the migration stops without writing the done marker. */
+  signal?: AbortSignal;
   /** Override clock for tests. */
   now?: () => Date;
 }
@@ -114,8 +116,22 @@ export async function runFirstStartMigration(
     demotionCap = FIRST_START_DEMOTION_CAP,
     dryRun = false,
     qmd,
+    signal,
   } = options;
   const now = (options.now ?? (() => new Date()))();
+  const abortedResult = (candidateCount = 0, demotedCount = 0, failureCount = 0): FirstStartMigrationResult => ({
+    skipped: candidateCount === 0 && demotedCount === 0 && failureCount === 0,
+    skipReason: candidateCount === 0 && demotedCount === 0 && failureCount === 0 ? "aborted" : undefined,
+    dryRun,
+    candidateCount,
+    demotedCount,
+    failureCount,
+    cappedAt: demotionCap,
+  });
+
+  if (signal?.aborted) {
+    return abortedResult();
+  }
 
   if (!config.lifecyclePolicyEnabled) {
     return {
@@ -153,8 +169,19 @@ export async function runFirstStartMigration(
     };
   }
 
+  if (signal?.aborted) {
+    return abortedResult();
+  }
+
   const policy = await buildTierRoutingPolicy(config);
+  if (signal?.aborted) {
+    return abortedResult();
+  }
+
   const hotMemories = await storage.readAllMemories();
+  if (signal?.aborted) {
+    return abortedResult();
+  }
 
   // Find hot memories that should be demoted to cold
   const demotionCandidates = hotMemories.filter((m) => {
@@ -188,6 +215,9 @@ export async function runFirstStartMigration(
       })
     : null;
   for (const memory of batch) {
+    if (signal?.aborted) {
+      return abortedResult(candidateCount, demotedCount, failureCount);
+    }
     try {
       if (executor) {
         await executor.migrateMemory({
@@ -211,6 +241,9 @@ export async function runFirstStartMigration(
 
   // Write marker AFTER all mutations succeed (CLAUDE.md rule #12).
   // If any demotion failed, skip the marker so the next start retries.
+  if (signal?.aborted) {
+    return abortedResult(candidateCount, demotedCount, failureCount);
+  }
   if (failureCount === 0) {
     await writeMarker(config.memoryDir, now);
   }

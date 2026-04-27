@@ -2523,6 +2523,7 @@ export class Orchestrator {
     // touched by the lifecycle policy, run a one-time rate-limited demotion
     // sweep (capped at 50 demotions) so the hot tier isn't flooded on the
     // first real cron pass. Non-fatal — a failure here must not break init.
+    if (signal.aborted) return;
     if (this.config.lifecyclePolicyEnabled && this.config.qmdTierMigrationEnabled) {
       try {
         const { runFirstStartMigration } = await import(
@@ -2534,6 +2535,7 @@ export class Orchestrator {
           qmd: this.qmd,
           hotCollection: this.config.qmdCollection,
           coldCollection: this.config.qmdColdCollection,
+          signal,
         });
         if (!result.skipped) {
           log.info(

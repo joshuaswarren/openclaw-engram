@@ -224,7 +224,7 @@ test("purgeMemories: dryRun=false (hard-delete) removes files and updates QMD", 
   }
 });
 
-test("purgeMemories: failed unlink records attempt but not success", async () => {
+test("purgeMemories: missing file records already-absent outcome and refreshes QMD", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-purge-failed-unlink-"));
   try {
     const missing = makeMemory({
@@ -251,7 +251,7 @@ test("purgeMemories: failed unlink records attempt but not success", async () =>
       now: () => new Date("2026-04-27T00:00:00.000Z"),
     });
 
-    assert.equal(result.purgedCount, 0);
+    assert.equal(result.purgedCount, 1);
     assert.deepEqual(updatedCollections, ["cold-test"]);
     const ledgerPath = path.join(dir, "state", "observation-ledger", "purge-audit.jsonl");
     const entries = (await readFile(ledgerPath, "utf-8"))
@@ -263,6 +263,7 @@ test("purgeMemories: failed unlink records attempt but not success", async () =>
       });
     assert.deepEqual(entries, [
       { event: "PURGE_DELETE_INTENT", memoryId: "missing-delete" },
+      { event: "PURGE_ALREADY_ABSENT", memoryId: "missing-delete" },
     ]);
   } finally {
     await rm(dir, { recursive: true, force: true });

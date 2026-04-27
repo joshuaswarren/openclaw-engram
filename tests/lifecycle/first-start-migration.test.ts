@@ -265,6 +265,53 @@ test("first-start migration: journals demotions and updates cold QMD collection"
   }
 });
 
+test("first-start migration: abort signal stops demotions before writing marker", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-fsm-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    const config = makeConfig(dir, {
+      qmdTierDemotionMinAgeDays: 1,
+      qmdTierDemotionValueThreshold: 0.99,
+      qmdCollection: "hot-test",
+      qmdColdCollection: "cold-test",
+    });
+
+    for (let i = 0; i < 2; i++) {
+      const id = await storage.writeMemory("fact", `Old low-value fact ${i}.`, { source: "test" });
+      const memory = await storage.getMemoryById(id);
+      assert.ok(memory, "expected memory to exist");
+      await storage.writeMemoryFrontmatter(memory, {
+        updated: "2020-01-01T00:00:00.000Z",
+        created: "2020-01-01T00:00:00.000Z",
+        confidence: 0.01,
+      });
+    }
+
+    const controller = new AbortController();
+    const result = await runFirstStartMigration({
+      storage,
+      config,
+      qmd: {
+        updateCollection: async () => {
+          controller.abort();
+        },
+        embedCollection: async () => {},
+      } as any,
+      signal: controller.signal,
+    });
+
+    assert.equal(result.skipped, false);
+    assert.equal(result.candidateCount, 2);
+    assert.equal(result.demotedCount, 1);
+
+    const markerPath = path.join(dir, "state", LIFECYCLE_INIT_DONE_MARKER);
+    await assert.rejects(() => access(markerPath), "marker should not exist after abort");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("first-start migration: FIRST_START_DEMOTION_CAP constant is 50", () => {
   assert.equal(FIRST_START_DEMOTION_CAP, 50);
 });
