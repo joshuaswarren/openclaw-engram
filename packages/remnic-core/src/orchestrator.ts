@@ -1718,6 +1718,10 @@ export class Orchestrator {
     return this.qmd.isAvailable();
   }
 
+  invalidateLiveContentHashIndex(): void {
+    this.contentHashIndex = null;
+  }
+
   constructor(config: PluginConfig) {
     this.config = config;
     this.profiler = new ProfilingCollector({

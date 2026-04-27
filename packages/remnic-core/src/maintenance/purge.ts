@@ -58,6 +58,8 @@ export interface PurgeMemoriesOptions {
   hotCollection?: string;
   /** Cold-tier QMD collection name (default: `"openclaw-engram-cold"`). */
   coldCollection?: string;
+  /** Optional hook for long-lived hosts to clear their live dedupe mirror after purge hash cleanup. */
+  afterFactHashRemoval?: () => void | Promise<void>;
   /** Override clock for tests. */
   now?: () => Date;
 }
@@ -293,6 +295,7 @@ export async function purgeMemories(
     if (typeof removeFactHashes === "function") {
       try {
         await removeFactHashes.call(storage, purgedFactMemories);
+        await options.afterFactHashRemoval?.();
       } catch (hashErr) {
         errors.push({
           id: "(fact-hash-index)",

@@ -3862,6 +3862,7 @@ export function registerCli(
               qmd: confirmed ? orchestrator.qmd : undefined,
               hotCollection: orchestrator.config.qmdCollection,
               coldCollection: orchestrator.config.qmdColdCollection,
+              afterFactHashRemoval: () => orchestrator.invalidateLiveContentHashIndex(),
             });
             if (reportHasMachineReadableOutput(options)) {
               console.log(JSON.stringify(result, null, 2));

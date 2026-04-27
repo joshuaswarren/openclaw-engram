@@ -1769,6 +1769,7 @@ export class QmdClient implements SearchBackend {
       }
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`QMD update failed for collection ${name}: ${msg}`);
+      throw err;
     }
   }
 
