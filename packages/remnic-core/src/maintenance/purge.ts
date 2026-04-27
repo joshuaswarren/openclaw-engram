@@ -92,13 +92,14 @@ async function logPurgeAudit(
   storage: StorageManager,
   candidates: PurgeCandidate[],
   now: Date,
+  event: "PURGE_HARD_DELETE_ATTEMPT" | "PURGE_HARD_DELETE" = "PURGE_HARD_DELETE",
 ): Promise<void> {
   const ledgerDir = path.join(storage.dir, "state", "observation-ledger");
   await mkdir(ledgerDir, { recursive: true });
   const ledgerPath = path.join(ledgerDir, "purge-audit.jsonl");
   const entries = candidates.map((c) =>
     JSON.stringify({
-      event: "PURGE_HARD_DELETE",
+      event,
       timestamp: now.toISOString(),
       memoryId: c.id,
       path: c.path,
@@ -190,7 +191,7 @@ export async function purgeMemories(
     };
   }
 
-  await logPurgeAudit(storage, candidates, now);
+  await logPurgeAudit(storage, candidates, now, "PURGE_HARD_DELETE_ATTEMPT");
 
   // Hard-delete phase
   const errors: Array<{ id: string; path: string; error: string }> = [];
@@ -214,6 +215,8 @@ export async function purgeMemories(
       }
     }
   }
+
+  await logPurgeAudit(storage, actuallyPurged, now, "PURGE_HARD_DELETE");
 
   // Invalidate ALL memory caches — hot and cold — after hard-deleting files.
   //
