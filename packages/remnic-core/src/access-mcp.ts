@@ -1072,6 +1072,26 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
+      {
+        name: "engram.peer_forget",
+        description:
+          "DESTRUCTIVELY purge the entire peer directory (identity.md + profile.md + interactions.log.md and any companion files). " +
+          "Requires confirm: 'yes'. Idempotent — safe to call twice. " +
+          "Use engram.peer_delete when you only want to remove the identity record and preserve profile data.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Peer id to purge." },
+            confirm: {
+              type: "string",
+              enum: ["yes"],
+              description: "Must be exactly 'yes' to proceed. Guard against accidental invocation.",
+            },
+          },
+          required: ["id", "confirm"],
+          additionalProperties: false,
+        },
+      },
     ].flatMap((tool) => withToolAliases(tool));
   }
 
@@ -2109,6 +2129,18 @@ export class EngramMcpServer {
         const id = typeof args.id === "string" ? args.id : "";
         if (!id) throw new Error("engram.peer_profile_get: id is required");
         return this.service.peerProfileGet(id);
+      }
+      case "engram.peer_forget":
+      case "remnic.peer_forget": {
+        const id = typeof args.id === "string" ? args.id : "";
+        if (!id) throw new Error("engram.peer_forget: id is required");
+        const confirm = typeof args.confirm === "string" ? args.confirm : "";
+        if (confirm !== "yes") {
+          throw new Error(
+            "engram.peer_forget: confirm must be 'yes' to prevent accidental data loss",
+          );
+        }
+        return this.service.peerForget(id, { confirm: "yes" });
       }
       default:
         throw new Error(`unknown tool: ${name}`);

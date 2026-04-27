@@ -6376,6 +6376,13 @@ export class Orchestrator {
     // true AND `peerProfileRecallMaxFields` must be > 0 AND a peer ID
     // must be registered for this session (rule 30 — new
     // filters/transforms must have configuration gates).
+    //
+    // Issue #679 completion: side-channel annotation for recall X-ray.
+    // We capture the peer id and injected-field count separately from
+    // the promise result string so the xray snapshot builder can record
+    // them without re-parsing the rendered section text. Null = no
+    // injection happened (feature off, no peer, no profile, error).
+    let peerProfileXrayAnnotation: { peerId: string; fieldsInjected: number } | null = null;
     const peerProfileRecallPromise = (async (): Promise<string | null> => {
       if (!this.config.peerProfileRecallEnabled) return null;
       if (this.config.peerProfileRecallMaxFields <= 0) return null;
@@ -6434,6 +6441,8 @@ export class Orchestrator {
           });
         const capped = fieldsByRecency.slice(0, this.config.peerProfileRecallMaxFields);
         const lines = capped.map(({ key, value }) => `**${key}**: ${value}`);
+        // Record xray annotation: peerId + how many fields were injected.
+        peerProfileXrayAnnotation = { peerId, fieldsInjected: capped.length };
         return `## Peer Profile\n\n${lines.join("\n\n")}`;
       } catch (err) {
         recordRecallSectionMetric({
@@ -9481,6 +9490,13 @@ export class Orchestrator {
           sessionKey,
           namespace: selfNamespace,
           traceId,
+          // Issue #679 completion: record peer-profile injection in the
+          // xray snapshot. peerProfileXrayAnnotation is set inside
+          // peerProfileRecallPromise when injection actually occurred,
+          // and stays null otherwise. By the time xray capture runs,
+          // phase-1 parallel work is complete so the annotation is
+          // guaranteed to be populated.
+          peerProfileInjection: peerProfileXrayAnnotation,
         });
       } catch (err) {
         // Capture is a best-effort side channel: a capture failure

@@ -1191,11 +1191,12 @@ export class EngramAccessHttpServer {
       return;
     }
 
-    // ── Peer Registry endpoints (issue #679 PR 4/5) ──────────────────────────
+    // ── Peer Registry endpoints (issue #679) ─────────────────────────────────
     //   GET    /engram/v1/peers              — list all peers
     //   GET    /engram/v1/peers/:id          — get one peer
     //   PUT    /engram/v1/peers/:id          — upsert (create/update)
-    //   DELETE /engram/v1/peers/:id          — delete (idempotent)
+    //   DELETE /engram/v1/peers/:id          — delete identity only (idempotent)
+    //   DELETE /engram/v1/peers/:id?forget=true — destructive full purge (issue #679 completion)
     //   GET    /engram/v1/peers/:id/profile  — get peer profile
     if (req.method === "GET" && pathname === "/engram/v1/peers") {
       const result = await this.service.peerList();
@@ -1262,6 +1263,26 @@ export class EngramAccessHttpServer {
       }
 
       if (req.method === "DELETE") {
+        // `?forget=true` triggers the destructive full-purge path (issue #679
+        // completion). The caller must also pass `confirm=yes` in the request
+        // body; absent confirmation yields 400. Plain DELETE (no ?forget) keeps
+        // the existing soft-delete behaviour (identity.md only).
+        const forgetParam = parsed.searchParams.get("forget");
+        if (forgetParam === "true") {
+          const body = await this.readJsonBody(req) as Record<string, unknown>;
+          const confirm = typeof body.confirm === "string" ? body.confirm : "";
+          if (confirm !== "yes") {
+            this.respondJson(res, 400, {
+              error: "confirm_required",
+              code: "confirm_required",
+              message: "DELETE ?forget=true requires { confirm: 'yes' } in the request body",
+            });
+            return;
+          }
+          const result = await this.service.peerForget(peerId, { confirm: "yes" });
+          this.respondJson(res, 200, result);
+          return;
+        }
         const result = await this.service.peerDelete(peerId);
         this.respondJson(res, 200, result);
         return;
