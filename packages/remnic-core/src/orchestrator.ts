@@ -2983,15 +2983,42 @@ export class Orchestrator {
   async runSemanticConsolidationNow(options?: {
     dryRun?: boolean;
     thresholdOverride?: number;
+    storage?: StorageManager;
   }): Promise<SemanticConsolidationResult> {
     return this.runSemanticConsolidation({ ...options, force: true });
+  }
+
+  async runDeepSleepGovernanceNow(options?: {
+    dryRun?: boolean;
+    storage?: StorageManager;
+  }): Promise<{ scannedMemories: number; appliedActionCount: number; notes?: string }> {
+    const targetStorage = options?.storage ?? this.storage;
+    const { runMemoryGovernance } = await import("./maintenance/memory-governance.js");
+    const { summarizeGovernanceResultForDreams } = await import("./maintenance/dreams-ledger.js");
+    const govResult = await runMemoryGovernance({
+      memoryDir: targetStorage.dir,
+      mode: options?.dryRun === true ? "shadow" : "apply",
+    });
+    if (options?.dryRun !== true) {
+      try {
+        await this.processEntitySynthesisQueue(
+          this.namespaceFromStorageDir(targetStorage.dir),
+          5,
+        );
+      } catch (error) {
+        log.debug(`deep-sleep governance: entity synthesis refresh failed after apply: ${error}`);
+      }
+    }
+    return summarizeGovernanceResultForDreams(govResult, options?.dryRun === true);
   }
 
   private async runSemanticConsolidation(options?: {
     dryRun?: boolean;
     thresholdOverride?: number;
     force?: boolean;
+    storage?: StorageManager;
   }): Promise<SemanticConsolidationResult> {
+    const targetStorage = options?.storage ?? this.storage;
     const result: SemanticConsolidationResult = {
       clustersFound: 0,
       memoriesConsolidated: 0,
@@ -3007,7 +3034,7 @@ export class Orchestrator {
 
     log.info("[semantic-consolidation] starting run");
 
-    const allMemories = await this.storage.readAllMemories();
+    const allMemories = await targetStorage.readAllMemories();
     if (allMemories.length < 10) {
       log.debug("[semantic-consolidation] too few memories, skipping");
       return result;
@@ -3169,12 +3196,12 @@ export class Orchestrator {
         const derivedFromEntries: string[] = [];
         for (const m of cluster.memories) {
           if (!m.path) continue;
-          const entry = await this.storage.snapshotForProvenance(m.path);
+          const entry = await targetStorage.snapshotForProvenance(m.path);
           if (entry) derivedFromEntries.push(entry);
         }
 
         // Write the canonical memory
-        const canonicalId = await this.storage.writeMemory(
+        const canonicalId = await targetStorage.writeMemory(
           newest.frontmatter.category,
           canonicalContent,
           {
@@ -3196,7 +3223,7 @@ export class Orchestrator {
 
         // Archive originals
         for (const m of cluster.memories) {
-          const archiveResult = await this.storage.archiveMemory(m, {
+          const archiveResult = await targetStorage.archiveMemory(m, {
             actor: "semantic-consolidation",
             reasonCode: "semantic-consolidation",
             relatedMemoryIds: [canonicalId],
@@ -3231,7 +3258,7 @@ export class Orchestrator {
               m.frontmatter?.created
             ) {
               deindexMemory(
-                this.config.memoryDir,
+                targetStorage.dir,
                 m.path,
                 m.frontmatter.created,
                 m.frontmatter.tags ?? [],
@@ -3277,7 +3304,7 @@ export class Orchestrator {
     try {
       await materializeAfterSemanticConsolidation({
         config: this.config,
-        memoryDir: this.config.memoryDir,
+        memoryDir: targetStorage.dir,
       });
     } catch (err) {
       log.warn(
@@ -3298,7 +3325,7 @@ export class Orchestrator {
         const { runPeerProfileReasoner } = await import("./peers/index.js");
         const llm = new FallbackLlmClient(this.config.gatewayConfig);
         const peerResult = await runPeerProfileReasoner({
-          memoryDir: this.config.memoryDir,
+          memoryDir: targetStorage.dir,
           enabled: true,
           llm,
           model: this.config.peerProfileReasonerModel,
@@ -12883,8 +12910,18 @@ export class Orchestrator {
     // v8.3 Lifecycle policy pass — deterministic promotion/decay metadata
     if (this.config.lifecyclePolicyEnabled) {
       try {
+        const lightSleepStartedAt = new Date().toISOString();
         const lifecycleCorpus = await this.storage.readAllMemories();
         await this.runLifecyclePolicyPass(lifecycleCorpus);
+        await this.recordScheduledDreamsPhaseRun(
+          "lightSleep",
+          lifecycleCorpus.length,
+          `scheduled lifecycle policy pass assessed ${lifecycleCorpus.length} memories`,
+          {
+            startedAt: lightSleepStartedAt,
+            completedAt: new Date().toISOString(),
+          },
+        );
       } catch (err) {
         log.warn(`lifecycle policy pass failed (ignored): ${err}`);
       }
@@ -12893,14 +12930,34 @@ export class Orchestrator {
     // v8.3 Compression guideline learning pass (default off, fail-open).
     await this.runCompressionGuidelineLearningPass();
 
-    await this.runTierMigrationCycle(this.storage, "maintenance");
-    allMemories = await this.storage.readAllMemories();
+    try {
+      const deepSleepStartedAt = new Date().toISOString();
+      await this.runTierMigrationCycle(this.storage, "maintenance");
+      allMemories = await this.storage.readAllMemories();
 
-    // Fact archival pass (v6.0) — move old, low-importance, rarely-accessed facts to archive/
-    if (this.config.factArchivalEnabled) {
-      const archived = await this.runFactArchival(allMemories);
-      if (archived > 0) {
-        log.info(`archived ${archived} old low-importance facts`);
+      // Fact archival pass (v6.0) — move old, low-importance, rarely-accessed facts to archive/
+      if (this.config.factArchivalEnabled) {
+        const archived = await this.runFactArchival(allMemories);
+        if (archived > 0) {
+          log.info(`archived ${archived} old low-importance facts`);
+        }
+      }
+      await this.recordScheduledDreamsPhaseRun(
+        "deepSleep",
+        allMemories.length,
+        `scheduled deep-sleep maintenance assessed ${allMemories.length} memories`,
+        {
+          startedAt: deepSleepStartedAt,
+          completedAt: new Date().toISOString(),
+        },
+      );
+    } catch (err) {
+      log.warn(`deep-sleep maintenance pass failed (ignored): ${err}`);
+      try {
+        allMemories = await this.storage.readAllMemories();
+      } catch (readErr) {
+        log.warn(`deep-sleep maintenance recovery read failed: ${readErr}`);
+        throw err;
       }
     }
 
@@ -12932,12 +12989,30 @@ export class Orchestrator {
         }
 
         if (shouldRun) {
+          const remStartedAt = new Date().toISOString();
           const semResult = await this.runSemanticConsolidation();
+          let remItemsProcessed = allMemories.length;
+          try {
+            allMemories = await this.storage.readAllMemories();
+            remItemsProcessed = allMemories.length;
+          } catch (err) {
+            log.warn(
+              `[semantic-consolidation] post-run telemetry refresh failed (non-fatal): ${err}`,
+            );
+          }
+          await this.recordScheduledDreamsPhaseRun(
+            "rem",
+            remItemsProcessed,
+            `scheduled REM consolidation found ${semResult.clustersFound} clusters`,
+            {
+              startedAt: remStartedAt,
+              completedAt: new Date().toISOString(),
+            },
+          );
           if (semResult.memoriesArchived > 0) {
             log.info(
               `[semantic-consolidation] archived ${semResult.memoriesArchived} memories during maintenance`,
             );
-            allMemories = await this.storage.readAllMemories();
           }
           // Only persist last-run timestamp if the run succeeded (had no errors or made progress)
           if (semResult.errors === 0 || semResult.memoriesArchived > 0) {
@@ -13443,8 +13518,10 @@ export class Orchestrator {
     }
   }
 
-  private async buildLifecycleActionPriors(): Promise<Map<string, number>> {
-    const events = await this.storage.readMemoryActionEvents(1200);
+  private async buildLifecycleActionPriors(
+    storage: StorageManager = this.storage,
+  ): Promise<Map<string, number>> {
+    const events = await storage.readMemoryActionEvents(1200);
     if (events.length === 0) return new Map<string, number>();
 
     const nowMs = Date.now();
@@ -13493,8 +13570,37 @@ export class Orchestrator {
     return out;
   }
 
+  private async recordScheduledDreamsPhaseRun(
+    phase: "lightSleep" | "rem" | "deepSleep",
+    itemsProcessed: number,
+    notes: string,
+    timing: { startedAt?: string; completedAt?: string } = {},
+  ): Promise<void> {
+    try {
+      const { recordDreamsPhaseRun } = await import("./maintenance/dreams-ledger.js");
+      await recordDreamsPhaseRun({
+        memoryDir: this.storage.dir,
+        phase,
+        trigger: "scheduled",
+        itemsProcessed,
+        notes,
+        startedAt: timing.startedAt,
+        completedAt: timing.completedAt,
+      });
+    } catch (error) {
+      log.debug(`dreams ledger scheduled ${phase} write failed (non-fatal): ${error}`);
+    }
+  }
+
+  async runLifecyclePolicyNow(storage: StorageManager = this.storage): Promise<{ memoriesAssessed: number }> {
+    const lifecycleCorpus = await storage.readAllMemories();
+    await this.runLifecyclePolicyPass(lifecycleCorpus, storage);
+    return { memoriesAssessed: lifecycleCorpus.length };
+  }
+
   private async runLifecyclePolicyPass(
     allMemories: MemoryFile[],
+    storage: StorageManager = this.storage,
   ): Promise<void> {
     const now = new Date();
     const nowIso = now.toISOString();
@@ -13517,7 +13623,7 @@ export class Orchestrator {
       archiveDecayThreshold: thresholds.archiveDecayThreshold,
       protectedCategories: this.config.lifecycleProtectedCategories,
     };
-    const actionPriors = await this.buildLifecycleActionPriors();
+    const actionPriors = await this.buildLifecycleActionPriors(storage);
 
     for (const memory of allMemories) {
       if (
@@ -13563,7 +13669,7 @@ export class Orchestrator {
 
       if (!shouldPersist) continue;
 
-      const wrote = await this.storage.writeMemoryFrontmatter(memory, {
+      const wrote = await storage.writeMemoryFrontmatter(memory, {
         lifecycleState: nextState,
         heatScore: decision.heatScore,
         decayScore: decision.decayScore,
@@ -13591,7 +13697,7 @@ export class Orchestrator {
       },
     };
     const metricsPath = path.join(
-      this.storage.dir,
+      storage.dir,
       "state",
       "lifecycle-metrics.json",
     );
