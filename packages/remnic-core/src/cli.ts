@@ -3872,7 +3872,8 @@ export function registerCli(
               if (result.dryRun) {
                 console.log(`=== Purge dry-run: ${result.candidates.length} candidate(s) would be deleted ===`);
               } else {
-                console.log(`=== Purge complete: ${result.purgedCount} deleted, ${result.errorCount} error(s) ===`);
+                const absentPart = result.alreadyAbsentCount > 0 ? `, ${result.alreadyAbsentCount} already absent` : "";
+                console.log(`=== Purge complete: ${result.purgedCount} deleted${absentPart}, ${result.errorCount} error(s) ===`);
               }
               console.log(`  tier:       ${result.tier}`);
               console.log(`  older-than: ${olderThanRaw} (${Math.round(olderThanMs / 86_400_000)}d)`);

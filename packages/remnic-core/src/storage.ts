@@ -2773,7 +2773,9 @@ export class StorageManager {
       if (memory.frontmatter.contentHash) {
         factHashIndex.removeByHash(memory.frontmatter.contentHash);
       } else {
-        factHashIndex.remove(sanitizeMemoryContent(memory.content).text);
+        const stripped = stripCitationForTemplate(memory.content, this.citationTemplate);
+        const hashSource = stripped !== memory.content ? stripped : memory.content;
+        factHashIndex.remove(sanitizeMemoryContent(hashSource).text);
       }
     }
     await factHashIndex.save();
@@ -3172,6 +3174,25 @@ export class StorageManager {
    *  (e.g. projection verify/rebuild). */
   invalidateAllMemoriesCacheForDir(): void {
     this.invalidateAllMemoriesCache();
+  }
+
+  /** Invalidate only the cache layers affected by direct tier file deletes. */
+  invalidateMemoryCachesForTiers(tiers: Iterable<"hot" | "cold" | "archive">): void {
+    let hotChanged = false;
+    let coldChanged = false;
+    for (const tier of tiers) {
+      if (tier === "cold") {
+        coldChanged = true;
+      } else {
+        hotChanged = true;
+      }
+    }
+    if (hotChanged) {
+      this.invalidateAllMemoriesCache();
+    }
+    if (coldChanged) {
+      this.invalidateColdMemoriesCache();
+    }
   }
 
   /** Clear ALL static caches. Use in tests that write files directly

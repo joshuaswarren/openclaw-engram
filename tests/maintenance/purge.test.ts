@@ -202,6 +202,7 @@ test("purgeMemories: dryRun=false (hard-delete) removes files and updates QMD", 
 
     assert.equal(result.dryRun, false);
     assert.ok(result.purgedCount >= 1, "at least one memory should be purged");
+    assert.equal(result.alreadyAbsentCount, 0);
 
     // File should be gone
     const afterMemories = await storage.readAllMemories();
@@ -254,7 +255,9 @@ test("purgeMemories: missing file records already-absent outcome and refreshes Q
       now: () => new Date("2026-04-27T00:00:00.000Z"),
     });
 
-    assert.equal(result.purgedCount, 1);
+    assert.equal(result.purgedCount, 0);
+    assert.equal(result.alreadyAbsentCount, 1);
+    assert.equal(result.candidates.length, 1);
     assert.deepEqual(updatedCollections, ["cold-test"]);
     const ledgerPath = path.join(dir, "state", "observation-ledger", "purge-audit.jsonl");
     const entries = (await readFile(ledgerPath, "utf-8"))

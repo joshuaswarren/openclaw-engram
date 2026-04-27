@@ -77,8 +77,13 @@ export interface PurgeMemoriesResult {
   olderThanMs: number;
   candidates: PurgeCandidate[];
   purgedCount: number;
+  alreadyAbsentCount: number;
   errorCount: number;
   errors: Array<{ id: string; path: string; error: string }>;
+}
+
+function hasErrorCode(err: unknown, code: string): boolean {
+  return typeof err === "object" && err !== null && "code" in err && (err as { code?: unknown }).code === code;
 }
 
 function resolveTimestamp(memory: MemoryFile): string {
@@ -188,6 +193,7 @@ export async function purgeMemories(
       olderThanMs,
       candidates,
       purgedCount: 0,
+      alreadyAbsentCount: 0,
       errorCount: 0,
       errors: [],
     };
@@ -212,7 +218,7 @@ export async function purgeMemories(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // ENOENT is fine — already gone
-      if (message.includes("ENOENT")) {
+      if (hasErrorCode(err, "ENOENT")) {
         alreadyAbsent.push(candidate);
         addCollectionForCandidate(candidate);
       } else {
@@ -221,23 +227,32 @@ export async function purgeMemories(
     }
   }
 
-  await logPurgeAudit(storage, actuallyPurged, now, "PURGE_HARD_DELETE");
-  await logPurgeAudit(storage, alreadyAbsent, now, "PURGE_ALREADY_ABSENT");
+  const recordPostDeleteAudit = async (
+    purgedCandidates: PurgeCandidate[],
+    event: "PURGE_HARD_DELETE" | "PURGE_ALREADY_ABSENT",
+  ) => {
+    try {
+      await logPurgeAudit(storage, purgedCandidates, now, event);
+    } catch (auditErr) {
+      errors.push({
+        id: "(purge-audit)",
+        path: path.join(storage.dir, "state", "observation-ledger", "purge-audit.jsonl"),
+        error: auditErr instanceof Error ? auditErr.message : String(auditErr),
+      });
+    }
+  };
+  await recordPostDeleteAudit(actuallyPurged, "PURGE_HARD_DELETE");
+  await recordPostDeleteAudit(alreadyAbsent, "PURGE_ALREADY_ABSENT");
 
-  // Invalidate ALL memory caches — hot and cold — after hard-deleting files.
-  //
-  // We use StorageManager.clearAllStaticCaches() (the public static surface
-  // designed for "files changed outside normal write paths") because:
-  //   - invalidateAllMemoriesCacheForDir() only clears the hot cache
-  //     (by design — see the UvBq comment in storage.ts)
-  //   - invalidateColdMemoriesCache() is private
-  //   - purge deletes files directly (like a test writing to disk), so the
-  //     static clear is the documented fallback for exactly this situation
-  //
-  // Fall back to the hot-only public method when storage is a stub (tests).
-  const storageClass = (storage as unknown as { constructor: { clearAllStaticCaches?: () => void } }).constructor;
-  if (typeof storageClass?.clearAllStaticCaches === "function") {
-    storageClass.clearAllStaticCaches();
+  const resolvedPurges = [...actuallyPurged, ...alreadyAbsent];
+
+  const invalidateTierCaches = (
+    storage as unknown as {
+      invalidateMemoryCachesForTiers?: (tiers: Iterable<"hot" | "cold" | "archive">) => void;
+    }
+  ).invalidateMemoryCachesForTiers;
+  if (typeof invalidateTierCaches === "function") {
+    invalidateTierCaches.call(storage, new Set(resolvedPurges.map((candidate) => candidate.tier)));
   } else if (typeof (storage as unknown as { invalidateAllMemoriesCacheForDir?: () => void }).invalidateAllMemoriesCacheForDir === "function") {
     (storage as unknown as { invalidateAllMemoriesCacheForDir: () => void }).invalidateAllMemoriesCacheForDir();
   }
@@ -258,7 +273,6 @@ export async function purgeMemories(
     }
   }
 
-  const resolvedPurges = [...actuallyPurged, ...alreadyAbsent];
   const purgedFactMemories = resolvedPurges
     .map((candidate) => candidateMemoriesById.get(candidate.id))
     .filter((memory): memory is MemoryFile => memory?.frontmatter.category === "fact");
@@ -285,8 +299,9 @@ export async function purgeMemories(
     dryRun: false,
     tier,
     olderThanMs,
-    candidates: resolvedPurges,
-    purgedCount: resolvedPurges.length,
+    candidates,
+    purgedCount: actuallyPurged.length,
+    alreadyAbsentCount: alreadyAbsent.length,
     errorCount: errors.length,
     errors,
   };

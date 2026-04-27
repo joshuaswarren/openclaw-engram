@@ -212,8 +212,10 @@ export async function runFirstStartMigration(
         qmd,
         hotCollection: options.hotCollection ?? config.qmdCollection ?? "openclaw-engram",
         coldCollection: options.coldCollection ?? config.qmdColdCollection ?? "openclaw-engram-cold",
-      })
+    })
     : null;
+  const coldCollection = options.coldCollection ?? config.qmdColdCollection ?? "openclaw-engram-cold";
+
   for (const memory of batch) {
     if (signal?.aborted) {
       return abortedResult(candidateCount, demotedCount, failureCount);
@@ -231,6 +233,21 @@ export async function runFirstStartMigration(
       }
       demotedCount += 1;
     } catch {
+      const current = await storage.getMemoryById(memory.frontmatter.id).catch(() => null);
+      const movedToCold =
+        current?.path.includes(`${path.sep}cold${path.sep}`) === true ||
+        (await storage.readAllColdMemories().catch(() => [])).some(
+          (candidate) => candidate.frontmatter.id === memory.frontmatter.id,
+        );
+      if (movedToCold && qmd) {
+        try {
+          await qmd.updateCollection(coldCollection);
+          demotedCount += 1;
+          continue;
+        } catch {
+          // Fall through to failure accounting below.
+        }
+      }
       // Non-fatal — individual migration failures are counted but do not abort
       // the sweep. We track them so the marker is only written when ALL
       // attempted demotions succeeded (CLAUDE.md rule #12: don't write a
@@ -243,6 +260,13 @@ export async function runFirstStartMigration(
   // If any demotion failed, skip the marker so the next start retries.
   if (signal?.aborted) {
     return abortedResult(candidateCount, demotedCount, failureCount);
+  }
+  if (candidateCount === 0 && qmd) {
+    try {
+      await qmd.updateCollection(coldCollection);
+    } catch {
+      failureCount += 1;
+    }
   }
   if (failureCount === 0) {
     await writeMarker(config.memoryDir, now);
