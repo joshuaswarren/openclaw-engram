@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  __setSecretRefResolverForTest,
   clearAuthTokenSecretCache,
   isAgentAccessSecretRef,
   resolveAgentAccessAuthToken,
@@ -30,17 +29,20 @@ test("resolveAgentAccessAuthToken returns undefined for empty / undefined input"
 test("resolveAgentAccessAuthToken delegates SecretRef objects to gateway resolver", async () => {
   clearAuthTokenSecretCache();
   const calls: unknown[] = [];
-  __setSecretRefResolverForTest(async (ref) => {
+  const resolveSecretRef = async (ref: any) => {
     calls.push(ref);
     return "resolved-secret-value";
-  });
+  };
 
   try {
-    const result = await resolveAgentAccessAuthToken({
-      source: "exec",
-      provider: "kc_openclaw_remnic_token",
-      id: "value",
-    });
+    const result = await resolveAgentAccessAuthToken(
+      {
+        source: "exec",
+        provider: "kc_openclaw_remnic_token",
+        id: "value",
+      },
+      { resolveSecretRef },
+    );
     assert.equal(result, "resolved-secret-value");
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0], {
@@ -49,7 +51,24 @@ test("resolveAgentAccessAuthToken delegates SecretRef objects to gateway resolve
       id: "value",
     });
   } finally {
-    __setSecretRefResolverForTest(null);
+    clearAuthTokenSecretCache();
+  }
+});
+
+test("resolveAgentAccessAuthToken trims SecretRef resolver output", async () => {
+  clearAuthTokenSecretCache();
+
+  try {
+    const result = await resolveAgentAccessAuthToken(
+      {
+        source: "exec",
+        provider: "kc_openclaw_remnic_token",
+        id: "value",
+      },
+      { resolveSecretRef: async () => "  resolved-secret-value\n" },
+    );
+    assert.equal(result, "resolved-secret-value");
+  } finally {
     clearAuthTokenSecretCache();
   }
 });
@@ -57,23 +76,22 @@ test("resolveAgentAccessAuthToken delegates SecretRef objects to gateway resolve
 test("resolveAgentAccessAuthToken caches resolved SecretRef values", async () => {
   clearAuthTokenSecretCache();
   let callCount = 0;
-  __setSecretRefResolverForTest(async () => {
+  const resolveSecretRef = async () => {
     callCount += 1;
     return "cached-token";
-  });
+  };
 
   try {
     const ref = { source: "exec", provider: "kc_x", id: "value" };
-    const first = await resolveAgentAccessAuthToken(ref);
-    const second = await resolveAgentAccessAuthToken(ref);
+    const first = await resolveAgentAccessAuthToken(ref, { resolveSecretRef });
+    const second = await resolveAgentAccessAuthToken(ref, { resolveSecretRef });
     // Same shape but different object reference — should still hit cache
-    const third = await resolveAgentAccessAuthToken({ ...ref });
+    const third = await resolveAgentAccessAuthToken({ ...ref }, { resolveSecretRef });
     assert.equal(first, "cached-token");
     assert.equal(second, "cached-token");
     assert.equal(third, "cached-token");
     assert.equal(callCount, 1);
   } finally {
-    __setSecretRefResolverForTest(null);
     clearAuthTokenSecretCache();
   }
 });
@@ -81,24 +99,28 @@ test("resolveAgentAccessAuthToken caches resolved SecretRef values", async () =>
 test("resolveAgentAccessAuthToken cache key is order-independent", async () => {
   clearAuthTokenSecretCache();
   let callCount = 0;
-  __setSecretRefResolverForTest(async () => {
+  const resolveSecretRef = async () => {
     callCount += 1;
     return "stable-token";
-  });
+  };
 
   try {
-    await resolveAgentAccessAuthToken({ source: "exec", provider: "p", id: "v" });
-    await resolveAgentAccessAuthToken({ id: "v", provider: "p", source: "exec" });
+    await resolveAgentAccessAuthToken(
+      { source: "exec", provider: "p", id: "v" },
+      { resolveSecretRef },
+    );
+    await resolveAgentAccessAuthToken(
+      { id: "v", provider: "p", source: "exec" },
+      { resolveSecretRef },
+    );
     assert.equal(callCount, 1, "key sort should make order-permuted refs share a cache slot");
   } finally {
-    __setSecretRefResolverForTest(null);
     clearAuthTokenSecretCache();
   }
 });
 
-test("resolveAgentAccessAuthToken throws when gateway resolver is unavailable", async () => {
+test("resolveAgentAccessAuthToken throws when no SecretRef resolver is provided", async () => {
   clearAuthTokenSecretCache();
-  __setSecretRefResolverForTest(null);
 
   await assert.rejects(
     () =>
@@ -107,7 +129,7 @@ test("resolveAgentAccessAuthToken throws when gateway resolver is unavailable", 
         provider: "kc_x",
         id: "value",
       }),
-    /OpenClaw gateway secret resolver is not available|cannot resolve/i,
+    /SecretRef resolver was not provided|cannot resolve/i,
   );
 });
 
@@ -120,44 +142,54 @@ test("resolveAgentAccessAuthToken throws on missing source field", async () => {
       } as unknown as Parameters<typeof resolveAgentAccessAuthToken>[0]),
     /missing required `source` field/,
   );
+  await assert.rejects(
+    () =>
+      resolveAgentAccessAuthToken({
+        source: "   ",
+      } as unknown as Parameters<typeof resolveAgentAccessAuthToken>[0]),
+    /missing required `source` field/,
+  );
 });
 
 test("resolveAgentAccessAuthToken throws when SecretRef resolves to empty string", async () => {
   clearAuthTokenSecretCache();
-  __setSecretRefResolverForTest(async () => "");
   try {
     await assert.rejects(
       () =>
-        resolveAgentAccessAuthToken({
-          source: "exec",
-          provider: "kc_x",
-          id: "value",
-        }),
+        resolveAgentAccessAuthToken(
+          {
+            source: "exec",
+            provider: "kc_x",
+            id: "value",
+          },
+          { resolveSecretRef: async () => "" },
+        ),
       /resolved to empty value/,
     );
   } finally {
-    __setSecretRefResolverForTest(null);
     clearAuthTokenSecretCache();
   }
 });
 
 test("resolveAgentAccessAuthToken surfaces resolver errors with context", async () => {
   clearAuthTokenSecretCache();
-  __setSecretRefResolverForTest(async () => {
+  const resolveSecretRef = async () => {
     throw new Error("keychain locked");
-  });
+  };
   try {
     await assert.rejects(
       () =>
-        resolveAgentAccessAuthToken({
-          source: "exec",
-          provider: "kc_x",
-          id: "value",
-        }),
+        resolveAgentAccessAuthToken(
+          {
+            source: "exec",
+            provider: "kc_x",
+            id: "value",
+          },
+          { resolveSecretRef },
+        ),
       /failed to resolve.*SecretRef.*keychain locked/,
     );
   } finally {
-    __setSecretRefResolverForTest(null);
     clearAuthTokenSecretCache();
   }
 });
@@ -165,19 +197,18 @@ test("resolveAgentAccessAuthToken surfaces resolver errors with context", async 
 test("resolveAgentAccessAuthToken does not cache failed resolutions", async () => {
   clearAuthTokenSecretCache();
   let callCount = 0;
-  __setSecretRefResolverForTest(async () => {
+  const resolveSecretRef = async () => {
     callCount += 1;
     if (callCount === 1) throw new Error("transient");
     return "second-try-success";
-  });
+  };
   try {
     const ref = { source: "exec", provider: "kc_x", id: "value" };
-    await assert.rejects(() => resolveAgentAccessAuthToken(ref));
-    const second = await resolveAgentAccessAuthToken(ref);
+    await assert.rejects(() => resolveAgentAccessAuthToken(ref, { resolveSecretRef }));
+    const second = await resolveAgentAccessAuthToken(ref, { resolveSecretRef });
     assert.equal(second, "second-try-success");
     assert.equal(callCount, 2);
   } finally {
-    __setSecretRefResolverForTest(null);
     clearAuthTokenSecretCache();
   }
 });
@@ -190,5 +221,6 @@ test("isAgentAccessSecretRef recognizes SecretRef shapes", () => {
   assert.equal(isAgentAccessSecretRef(null), false);
   assert.equal(isAgentAccessSecretRef({}), false);
   assert.equal(isAgentAccessSecretRef({ source: "" }), false);
+  assert.equal(isAgentAccessSecretRef({ source: "   " }), false);
   assert.equal(isAgentAccessSecretRef([1, 2, 3]), false);
 });

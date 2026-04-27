@@ -239,8 +239,8 @@ export {
   resolveAgentAccessAuthToken,
   isAgentAccessSecretRef,
   clearAuthTokenSecretCache,
-  __setSecretRefResolverForTest,
 } from "./resolve-auth-token.js";
+export type { ResolveSecretRefFn } from "./resolve-auth-token.js";
 export type { SecretRef, AgentAccessAuthToken } from "./types.js";
 
 // Recall X-ray CLI helpers (issue #570).  Exported so the standalone

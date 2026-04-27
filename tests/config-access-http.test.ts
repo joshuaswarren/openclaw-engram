@@ -167,6 +167,17 @@ test("parseConfig rejects non-string non-SecretRef authToken shapes (issue #757)
         openaiApiKey: "sk-test",
         agentAccessHttp: {
           enabled: true,
+          authToken: { source: "   " } as unknown as string,
+        },
+      }),
+    /unsupported SecretRef shape/,
+  );
+  assert.throws(
+    () =>
+      parseConfig({
+        openaiApiKey: "sk-test",
+        agentAccessHttp: {
+          enabled: true,
           authToken: ["not", "an", "object"] as unknown as string,
         },
       }),

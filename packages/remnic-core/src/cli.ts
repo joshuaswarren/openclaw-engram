@@ -89,7 +89,10 @@ import { WebDavServer } from "./network/webdav.js";
 import { GraphDashboardServer, type DashboardStatus } from "./dashboard-runtime.js";
 import { EngramAccessService } from "./access-service.js";
 import { EngramAccessHttpServer } from "./access-http.js";
-import { resolveAgentAccessAuthToken } from "./resolve-auth-token.js";
+import {
+  resolveAgentAccessAuthToken,
+  type ResolveSecretRefFn,
+} from "./resolve-auth-token.js";
 import { EngramMcpServer } from "./access-mcp.js";
 import { runCompatChecks } from "./compat/checks.js";
 import { parseConfig } from "./config.js";
@@ -240,6 +243,15 @@ interface CliApi {
     options: { commands: string[] },
   ): void;
 }
+
+type RegisterCliOptions = {
+  resolveSecretRef?: ResolveSecretRefFn | null;
+  loadResolveSecretRef?: () =>
+    | Promise<ResolveSecretRefFn | null | undefined>
+    | ResolveSecretRefFn
+    | null
+    | undefined;
+};
 
 interface CliProgram {
   command(name: string): CliCommand;
@@ -3415,7 +3427,11 @@ function buildConversationIndexRebuildAction(orchestrator: Orchestrator) {
   };
 }
 
-export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
+export function registerCli(
+  api: CliApi,
+  orchestrator: Orchestrator,
+  registerOptions: RegisterCliOptions = {},
+): void {
   api.registerCli(
     ({ program }) => {
       const cmd = program
@@ -6590,10 +6606,16 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             typeof options.token === "string" && options.token.trim().length > 0
               ? options.token
               : undefined;
+          const resolveSecretRef =
+            registerOptions.resolveSecretRef ??
+            (registerOptions.loadResolveSecretRef
+              ? await registerOptions.loadResolveSecretRef()
+              : null);
           const resolvedConfigAuthToken = cliTokenOverride
             ? undefined
             : await resolveAgentAccessAuthToken(
                 orchestrator.config.agentAccessHttp.authToken,
+                { resolveSecretRef },
               );
           const status = await runAccessHttpServeCliCommand({
             service: accessService,

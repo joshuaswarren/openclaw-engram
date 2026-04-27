@@ -71,6 +71,7 @@ import {
 } from "./codex-compat.js";
 import { planRecallMode } from "../packages/remnic-core/src/intent.js";
 import { resolvePrincipal, resolveAgentAccessAuthToken } from "@remnic/core";
+import { findGatewayRuntimeModules } from "./resolve-provider-secret.js";
 import { createDreamsSurface } from "../packages/remnic-core/src/surfaces/dreams.js";
 import { createHeartbeatSurface, type HeartbeatEntry } from "../packages/remnic-core/src/surfaces/heartbeat.js";
 import type { ConsolidationObservation } from "../packages/remnic-core/src/types.js";
@@ -120,6 +121,80 @@ const SESSION_COMMANDS_REGISTERED_GUARD =
  * a true full stop where the gateway rebuilds its command registry.
  */
 const CLI_ACTIVE_SERVICE_COUNT = "__openclawEngramCliActiveServiceCount";
+const SECRET_REF_RESOLVER_TEST_KEY = "__openclawEngramSecretRefResolverForTest";
+
+type ResolveSecretRefFn = (
+  ref: import("../packages/remnic-core/src/types.js").SecretRef,
+  context?: unknown,
+) => Promise<string | undefined> | string | undefined;
+
+const SECRET_REF_RESOLVER_RETRY_BACKOFF_MS = 60_000;
+const SECRET_REF_RESOLVER_EXPORT_NAMES = [
+  "resolveSecretRef",
+  "resolveSecret",
+  "loadSecretRef",
+  "readSecretRef",
+] as const;
+const SECRET_REF_RESOLVER_MODULE_PREFIXES = [
+  "runtime-secret-resolver.runtime-",
+  "runtime-secrets.runtime-",
+  "runtime-secret.runtime-",
+  "runtime-model-auth.runtime-",
+] as const;
+
+let secretRefResolver: ResolveSecretRefFn | null = null;
+let secretRefResolverLoaded = false;
+let secretRefResolverNextRetryAt = 0;
+
+async function loadOpenClawSecretRefResolver(): Promise<ResolveSecretRefFn | null> {
+  const testResolver = (globalThis as Record<string, unknown>)[SECRET_REF_RESOLVER_TEST_KEY];
+  if (typeof testResolver === "function") {
+    return testResolver as ResolveSecretRefFn;
+  }
+  if (secretRefResolverLoaded) return secretRefResolver;
+  if (
+    secretRefResolverNextRetryAt > 0 &&
+    Date.now() < secretRefResolverNextRetryAt
+  ) {
+    return null;
+  }
+
+  try {
+    const { pathToFileURL } = await import("node:url");
+    for (const prefix of SECRET_REF_RESOLVER_MODULE_PREFIXES) {
+      const candidates = await findGatewayRuntimeModules(prefix);
+      for (const candidate of candidates) {
+        try {
+          const importUrl = pathToFileURL(candidate).href;
+          const mod = (await import(importUrl)) as Record<string, unknown>;
+          for (const exportName of SECRET_REF_RESOLVER_EXPORT_NAMES) {
+            const fn = mod[exportName];
+            if (typeof fn === "function") {
+              secretRefResolver = fn as ResolveSecretRefFn;
+              secretRefResolverLoaded = true;
+              log.debug(
+                `loaded OpenClaw SecretRef resolver "${exportName}" from ${prefix}*.js`,
+              );
+              return secretRefResolver;
+            }
+          }
+        } catch {
+          // Try next candidate.
+        }
+      }
+    }
+  } catch {
+    // Silent — fall through to backoff.
+  }
+
+  secretRefResolverNextRetryAt = Date.now() + SECRET_REF_RESOLVER_RETRY_BACKOFF_MS;
+  log.debug(
+    `OpenClaw SecretRef resolver not available — will retry after ${
+      SECRET_REF_RESOLVER_RETRY_BACKOFF_MS / 1000
+    }s`,
+  );
+  return null;
+}
 
 type ServiceKeys = {
   REGISTERED_GUARD: string;
@@ -127,6 +202,7 @@ type ServiceKeys = {
   HOOK_APIS: string;
   ACCESS_SERVICE: string;
   ACCESS_HTTP_SERVER: string;
+  ACCESS_HTTP_AUTH_STATE: string;
   /**
    * Guards service.start() against duplicate invocation when multiple api instances
    * each register the service (all registries get registerService, but initialize
@@ -151,6 +227,7 @@ function buildServiceKeys(serviceId: string): ServiceKeys {
     HOOK_APIS: `__openclawEngramHookApis${suffix}`,
     ACCESS_SERVICE: `__openclawEngramAccessService${suffix}`,
     ACCESS_HTTP_SERVER: `__openclawEngramAccessHttpServer${suffix}`,
+    ACCESS_HTTP_AUTH_STATE: `__openclawEngramAccessHttpAuthState${suffix}`,
     SERVICE_STARTED: `__openclawEngramServiceStarted${suffix}`,
     INIT_PROMISE: `__openclawEngramInitPromise${suffix}`,
     ORCHESTRATOR: `__openclawEngramOrchestrator${suffix}`,
@@ -612,9 +689,14 @@ const pluginDefinition = {
     const rawAuthToken = cfg.agentAccessHttp.authToken;
     const authTokenIsSecretRef =
       rawAuthToken !== undefined && typeof rawAuthToken !== "string";
-    let resolvedSecretRefAuthToken: string | undefined;
+    const accessHttpAuthState =
+      (((globalThis as any)[keys.ACCESS_HTTP_AUTH_STATE] ??= {
+        resolvedSecretRefAuthToken: undefined as string | undefined,
+      }) as { resolvedSecretRefAuthToken: string | undefined });
     const authTokensFromSecretRef = (): string[] =>
-      resolvedSecretRefAuthToken ? [resolvedSecretRefAuthToken] : [];
+      accessHttpAuthState.resolvedSecretRefAuthToken
+        ? [accessHttpAuthState.resolvedSecretRefAuthToken]
+        : [];
 
     const existingAccessHttpServer = (globalThis as any)[
       keys.ACCESS_HTTP_SERVER
@@ -3629,6 +3711,7 @@ const pluginDefinition = {
       registerCli(
         api as unknown as Parameters<typeof registerCli>[0],
         orchestrator,
+        { loadResolveSecretRef: loadOpenClawSecretRefResolver },
       );
     }
 
@@ -3802,22 +3885,15 @@ const pluginDefinition = {
               // never opens with an empty auth set. A resolution failure is
               // fatal — log loudly and skip starting the bridge entirely.
               if (authTokenIsSecretRef) {
-                try {
-                  const resolved = await resolveAgentAccessAuthToken(rawAuthToken);
-                  if (!resolved) {
-                    log.error(
-                      "agentAccessHttp.authToken SecretRef resolved to empty value — refusing to start the HTTP bridge",
-                    );
-                    return;
-                  }
-                  resolvedSecretRefAuthToken = resolved;
-                } catch (err) {
-                  log.error(
-                    "failed to resolve agentAccessHttp.authToken SecretRef — HTTP bridge will not start",
-                    err,
+                const resolved = await resolveAgentAccessAuthToken(rawAuthToken, {
+                  resolveSecretRef: await loadOpenClawSecretRefResolver(),
+                });
+                if (!resolved) {
+                  throw new Error(
+                    "agentAccessHttp.authToken SecretRef resolved to empty value — refusing to start the HTTP bridge",
                   );
-                  return;
                 }
+                accessHttpAuthState.resolvedSecretRefAuthToken = resolved;
               }
               try {
                 const status = await accessHttpServer.start();
@@ -4071,6 +4147,7 @@ const pluginDefinition = {
           removeDreamingObserver?.();
           removeDreamingObserver = null;
           delete (globalThis as any)[keys.ACCESS_HTTP_SERVER];
+          delete (globalThis as any)[keys.ACCESS_HTTP_AUTH_STATE];
           delete (globalThis as any)[keys.ACCESS_SERVICE];
         }
 

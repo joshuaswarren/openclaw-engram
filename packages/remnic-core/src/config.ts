@@ -77,7 +77,7 @@ function coerceBooleanLike(value: unknown): boolean | undefined {
 function isSecretRefShape(value: unknown): value is import("./types.js").SecretRef {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const obj = value as Record<string, unknown>;
-  return typeof obj.source === "string" && obj.source.length > 0;
+  return typeof obj.source === "string" && obj.source.trim().length > 0;
 }
 
 /**
