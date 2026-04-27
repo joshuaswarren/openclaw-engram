@@ -47,13 +47,15 @@ const SPLIT_ORDER: Record<string, number> = {
 };
 const SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN =
   "(?:syntax highlight(?:ed|ing)|code blocks? with syntax highlighting)";
-const SYNTAX_HIGHLIGHTING_WEAKENING_PATTERN =
-  "\\b(?:do not|don't|dont|not|never|no|without|avoid|disable|optional|unnecessary|not needed)\\b";
+const SYNTAX_HIGHLIGHTING_WEAKENING_BEFORE_PATTERN =
+  "\\b(?:do not|don't|dont|must not|should not|never|no|without|avoid|disable)\\b";
+const SYNTAX_HIGHLIGHTING_WEAKENING_AFTER_PATTERN =
+  "\\b(?:(?:is|are|be|being)?\\s*(?:not required|not needed|optional|unnecessary)|(?:must|should|do|does|is|are)?\\s*(?:not|never)\\s+(?:be\\s+)?(?:used|required|needed|enabled|applied)|avoid|disable)\\b";
 const SYNTAX_HIGHLIGHTING_NEGATED_BEFORE = new RegExp(
-  `${SYNTAX_HIGHLIGHTING_WEAKENING_PATTERN}.{0,60}${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}`,
+  `${SYNTAX_HIGHLIGHTING_WEAKENING_BEFORE_PATTERN}.{0,60}${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}`,
 );
 const SYNTAX_HIGHLIGHTING_NEGATED_AFTER = new RegExp(
-  `${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}.{0,60}${SYNTAX_HIGHLIGHTING_WEAKENING_PATTERN}`,
+  `${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}.{0,60}${SYNTAX_HIGHLIGHTING_WEAKENING_AFTER_PATTERN}`,
 );
 const SYNTAX_HIGHLIGHTING_RUBRIC = new RegExp(
   SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN,
