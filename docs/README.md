@@ -33,6 +33,7 @@
 
 ## Feature Guides
 
+- [At-Rest Encryption](encryption.md) — AES-256-GCM transparent storage encryption, secure-store CLI, threat model (issue #690)
 - [Advanced Retrieval](advanced-retrieval.md) — Reranking, query expansion, feedback loop
 - [Recall X-ray](xray.md) — Per-result retrieval attribution: which tier served each memory and why (issue #570)
 - [Temporal Recall](temporal-recall.md) — `valid_at` / `invalid_at` fact lifecycle and `as_of` recall filter (issue #680)

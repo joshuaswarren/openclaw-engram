@@ -698,6 +698,21 @@ export interface PluginConfig {
   activeRecallAllowChainedActiveMemory: boolean;
   dreaming: DreamingConfig;
   procedural: ProceduralConfig;
+  /**
+   * At-rest encryption configuration (issue #690 PR 3/4).
+   *
+   * When `secureStoreEnabled` is true, `StorageManager` reads and
+   * writes memory files through the `secure-fs` encryption layer.
+   * The store must be unlocked via `remnic secure-store unlock` before
+   * any recall or store operations will succeed.
+   *
+   * When `secureStoreEncryptOnWrite` is true (the default when enabled),
+   * every new memory write is encrypted. Set to false to pause new
+   * encryptions while still being able to decrypt existing files.
+   */
+  secureStoreEnabled: boolean;
+  /** Encrypt new writes when the secure-store is unlocked. Default true. */
+  secureStoreEncryptOnWrite: boolean;
   // Coding-agent project/branch scoping (issue #569)
   codingMode: CodingModeConfig;
   heartbeat: HeartbeatConfig;

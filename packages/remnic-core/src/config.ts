@@ -1409,6 +1409,9 @@ export function parseConfig(raw: unknown): PluginConfig {
       cfg.activeRecallAllowChainedActiveMemory === true,
     dreaming,
     procedural,
+    // At-rest encryption (issue #690 PR 3/4)
+    secureStoreEnabled: cfg.secureStoreEnabled === true,
+    secureStoreEncryptOnWrite: cfg.secureStoreEncryptOnWrite !== false, // default: true when enabled
     codingMode,
     heartbeat,
     slotBehavior,
