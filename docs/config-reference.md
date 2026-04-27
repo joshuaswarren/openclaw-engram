@@ -1010,6 +1010,20 @@ Stored as `category: procedure` markdown under `memoryDir/procedures/`. Narrativ
 | `procedural.proceduralMiningCronAutoRegister` | `false` | When `true`, installer may register the nightly procedural mining cron entry. |
 | `procedural.recallMaxProcedures` | `2` | Max procedure previews injected on task-initiation recall (`1`–`10`). Lowered from `3` in issue #567 PR 3/5 so procedural injection does not crowd other recall sections. |
 
+## Pattern reinforcement (issue #687)
+
+Cross-session pattern detection: clusters memories by normalized content, reinforces recurring primitives with `reinforcement_count` + `last_reinforced_at`, and optionally boosts their recall score. Narrative overview: [pattern-reinforcement.md](pattern-reinforcement.md).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `patternReinforcementEnabled` | `false` | Master gate. Set to `true` to enable the maintenance job that detects and reinforces recurring memory patterns across sessions. Default `false` (opt-in). |
+| `patternReinforcementCadenceMs` | `604800000` | Minimum milliseconds between pattern-reinforcement runs (default 7 days). Set to `0` to disable cadence gating and allow the job to run on every MCP/cron invocation. |
+| `patternReinforcementMinCount` | `3` | Minimum cluster size before a canonical memory is promoted and reinforced. Clamped to `[2, 1000]`; clusters of 1 are degenerate. |
+| `patternReinforcementCategories` | `["preference", "fact", "decision"]` | Memory categories the job considers. Set to `[]` to process no categories. Procedure memories are intentionally excluded from the default list to avoid interference with the procedural miner. |
+| `reinforcementRecallBoostEnabled` | `false` | When `true`, memories with `reinforcement_count > 0` receive an additive score boost during recall. Default `false` (opt-in). Requires `patternReinforcementEnabled: true` upstream to populate reinforcement counts. |
+| `reinforcementRecallBoostWeight` | `0.05` | Per-unit score bonus applied per `reinforcement_count`. Raw boost is `weight × reinforcement_count`, then clipped at `reinforcementRecallBoostMax`. Range `[0, 1]`. |
+| `reinforcementRecallBoostMax` | `0.3` | Maximum additive reinforcement boost per recall result. Range `[0, 1]`. Raw boost formula: `min(reinforcementRecallBoostMax, reinforcementRecallBoostWeight × reinforcement_count)`. |
+
 ## Codex Marketplace (issue #418)
 
 | Setting | Default | Description |
@@ -1472,6 +1486,13 @@ This appendix is flattened from the runtime config schema and the live `parseCon
 | `procedural.lookbackDays` | `14` | `14` (lowered from `30` in issue #567 PR 3/5) |
 | `procedural.proceduralMiningCronAutoRegister` | `false` | `false` unless you intentionally want installer cron registration |
 | `procedural.recallMaxProcedures` | `2` | `2` (lowered from `3` in issue #567 PR 3/5) |
+| `patternReinforcementEnabled` | `false` | `false` until you have enough cross-session data to observe clustering benefits. See [pattern-reinforcement.md](pattern-reinforcement.md). |
+| `patternReinforcementCadenceMs` | `604800000` | `604800000` (7 days). Lower to `86400000` (1 day) for faster iteration during evaluation; set to `0` to disable cadence gating entirely. |
+| `patternReinforcementMinCount` | `3` | `3` (minimum meaningful pattern; clusters of 2 are allowed but `3` reduces false positives on small corpora) |
+| `patternReinforcementCategories` | `["preference", "fact", "decision"]` | `["preference", "fact", "decision"]` (procedure excluded intentionally — procedural miner handles that category) |
+| `reinforcementRecallBoostEnabled` | `false` | `false` until you confirm pattern reinforcement is producing high-quality canonicals. Enable recall boost only after observing `remnic patterns list` output. |
+| `reinforcementRecallBoostWeight` | `0.05` | `0.05` (per-unit score bonus per `reinforcement_count`; raise cautiously and pair with a lower `reinforcementRecallBoostMax` if you want fast saturation) |
+| `reinforcementRecallBoostMax` | `0.3` | `0.3` (a 30-point maximum additive boost; lower to `0.1`–`0.15` for conservative uplift) |
 | `proactiveExtractionEnabled` | `false` | `false` until you validate the second pass in your environment |
 | `contextCompressionActionsEnabled` | `false` | `false` unless you are validating action-policy flows |
 | `compressionGuidelineLearningEnabled` | `false` | `false` unless action-policy telemetry is already stable |
