@@ -193,9 +193,22 @@ Provenance (derived_from):
 Run `remnic patterns explain mem_jkl012 --format json` for machine-readable output.
 ```
 
-## Dreams integration
+## Triggering the job
 
-The pattern-reinforcement job runs as part of the **REM phase** of the Dreams consolidation pipeline (issue #678) when Dreams is enabled. The job also registers as a standalone maintenance cron entry. See [Dreams: phased consolidation](dreams.md) for scheduling details.
+Pattern reinforcement is **not** triggered automatically by the Dreams REM phase. The runtime call site is `EngramAccessService.patternReinforcementRun`, which is exposed through:
+
+- **MCP tool:** `remnic.pattern_reinforcement_run` (canonical) / `engram.pattern_reinforcement_run` (legacy alias)
+- **Maintenance scheduler / cron:** the job can be registered as a standalone maintenance cron entry
+
+To trigger an ad-hoc run, call the MCP tool directly:
+
+```json
+{ "name": "remnic.pattern_reinforcement_run", "arguments": {} }
+```
+
+Pass `"force": true` to bypass the in-process cadence gate for an immediate run regardless of when the last run completed.
+
+See [Dreams: phased consolidation](dreams.md) for the Dreams pipeline; pattern reinforcement scheduling is independent of it.
 
 ## Relationship to procedural memory
 
@@ -246,11 +259,15 @@ Minimal config to turn on the job with weekly cadence:
 
 ### Running the job manually via MCP
 
-```
-remnic.procedure_mining_run   ← procedural miner (separate)
+Pattern reinforcement has its own MCP tool:
+
+```json
+{ "name": "remnic.pattern_reinforcement_run", "arguments": {} }
 ```
 
-Pattern reinforcement does not yet have a dedicated MCP tool (PR 4/4 ships the CLI only). Trigger via Dreams REM or the maintenance scheduler.
+Pass `"force": true` to bypass the in-process cadence gate. The legacy alias `engram.pattern_reinforcement_run` also works.
+
+For the separate procedural miner, use `remnic.procedure_mining_run`.
 
 ## Acceptance criteria (from issue #687)
 
