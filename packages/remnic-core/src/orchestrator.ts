@@ -12926,6 +12926,12 @@ export class Orchestrator {
       );
     } catch (err) {
       log.warn(`deep-sleep maintenance pass failed (ignored): ${err}`);
+      try {
+        allMemories = await this.storage.readAllMemories();
+      } catch (readErr) {
+        log.warn(`deep-sleep maintenance recovery read failed: ${readErr}`);
+        throw err;
+      }
     }
 
     // Semantic consolidation pass — find similar memories, synthesize canonical versions
