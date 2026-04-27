@@ -81,7 +81,7 @@ Enable the job in plugin config:
 | Key | Default | Notes |
 | --- | ------- | ----- |
 | `patternReinforcementEnabled` | `false` | Master gate. Set to `true` to enable the maintenance job. |
-| `patternReinforcementCadenceMs` | `604800000` (7 days) | Minimum milliseconds between runs. Set to `0` to disable cadence gating (run on every maintenance cycle). |
+| `patternReinforcementCadenceMs` | `604800000` (7 days) | Minimum milliseconds between runs. Set to `0` to disable cadence gating (run on every invocation of the MCP/cron trigger). |
 | `patternReinforcementMinCount` | `3` | Minimum cluster size before a canonical is promoted. Clamped to `[2, 1000]`; clusters of 1 are degenerate. |
 | `patternReinforcementCategories` | `["preference", "fact", "decision"]` | Categories the job scans. Empty array means no categories are processed. |
 
@@ -115,21 +115,9 @@ A memory reinforced 12 times with default weight and max would receive `min(0.3,
 
 ## X-ray surfacing
 
-When `recallDirectAnswerEnabled` is on, Recall X-ray surfaces a `reinforcementBoost` field in the per-result score decomposition:
+When `reinforcementRecallBoostEnabled` is on and a result actually received a non-zero boost (`reinforcementBoost > 0`), Recall X-ray attaches the value to the per-result `explain` object. The shared X-ray renderer formats it inline as `reinforcement_boost=<value>` alongside the other score components (`importance`, `mmr_penalty`, `tier_prior`, etc.). Results that did not receive a boost simply omit the field.
 
-```json
-{
-  "memoryId": "mem_jkl012",
-  "scores": {
-    "base": 0.72,
-    "reinforcementBoost": 0.30,
-    "final": 1.02
-  },
-  "reinforcement_count": 12
-}
-```
-
-This makes it easy to audit which results were boosted by pattern reinforcement vs. which won on raw relevance. See [Recall X-ray](xray.md) for the full decomposition schema.
+This makes it easy to audit which results were boosted by pattern reinforcement vs. which won on raw relevance. See [Recall X-ray](xray.md) for the full per-result explain schema.
 
 ## CLI surface
 

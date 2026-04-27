@@ -991,7 +991,7 @@ Cross-session pattern detection: clusters memories by normalized content, reinfo
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `patternReinforcementEnabled` | `false` | Master gate. Set to `true` to enable the maintenance job that detects and reinforces recurring memory patterns across sessions. Default `false` (opt-in). |
-| `patternReinforcementCadenceMs` | `604800000` | Minimum milliseconds between pattern-reinforcement runs (default 7 days). Set to `0` to disable cadence gating and allow the job to run on every maintenance cycle. |
+| `patternReinforcementCadenceMs` | `604800000` | Minimum milliseconds between pattern-reinforcement runs (default 7 days). Set to `0` to disable cadence gating and allow the job to run on every MCP/cron invocation. |
 | `patternReinforcementMinCount` | `3` | Minimum cluster size before a canonical memory is promoted and reinforced. Clamped to `[2, 1000]`; clusters of 1 are degenerate. |
 | `patternReinforcementCategories` | `["preference", "fact", "decision"]` | Memory categories the job considers. Set to `[]` to process no categories. Procedure memories are intentionally excluded from the default list to avoid interference with the procedural miner. |
 | `reinforcementRecallBoostEnabled` | `false` | When `true`, memories with `reinforcement_count > 0` receive an additive score boost during recall. Default `false` (opt-in). Requires `patternReinforcementEnabled: true` upstream to populate reinforcement counts. |
