@@ -953,7 +953,7 @@ function negatesSyntaxHighlighting(value: string): boolean {
 
 function splitRubricClauses(value: string): string[] {
   return value
-    .split(/[.;:]+/)
+    .split(/[.,;:]+/)
     .map(normalizeRubricPhrase)
     .filter((clause) => clause.length > 0);
 }
