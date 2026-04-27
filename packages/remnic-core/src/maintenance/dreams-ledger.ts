@@ -13,7 +13,7 @@
  */
 
 import path from "node:path";
-import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readdir, readFile } from "node:fs/promises";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -485,6 +485,18 @@ export function summarizeGovernanceResultForDreams(
 
 async function listMemoryFiles(memoryDir: string): Promise<string[]> {
   const out: string[] = [];
+  try {
+    const root = await lstat(memoryDir);
+    if (root.isSymbolicLink()) {
+      throw new Error(`memoryDir must not be a symlink: ${memoryDir}`);
+    }
+    if (!root.isDirectory()) return out;
+  } catch (err) {
+    if (err instanceof Error && /must not be a symlink/.test(err.message)) {
+      throw err;
+    }
+    return out;
+  }
 
   async function walk(dir: string): Promise<void> {
     let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean }>;

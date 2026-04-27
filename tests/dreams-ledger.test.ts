@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import {
   appendDreamsLedgerEntry,
   readDreamsLedgerEntries,
@@ -344,6 +344,22 @@ test("runDreamsPhase rem skips namespace subtrees when scanning default root", a
   });
 
   assert.equal(result.itemsProcessed, 1);
+});
+
+test("runDreamsPhase rem rejects symlinked memory roots", async () => {
+  const targetDir = await makeTmpDir();
+  const linkParent = await makeTmpDir();
+  const linkedRoot = path.join(linkParent, "linked-root");
+  await symlink(targetDir, linkedRoot);
+
+  await assert.rejects(
+    () => runDreamsPhase({
+      memoryDir: linkedRoot,
+      phase: "rem",
+      dryRun: true,
+    }),
+    /memoryDir must not be a symlink/,
+  );
 });
 
 test("runDreamsPhase live lightSleep requires a real phase runner", async () => {
