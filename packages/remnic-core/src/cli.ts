@@ -2226,6 +2226,8 @@ function parseDurationToMs(raw: string): number | null {
   }
 
   // ISO 8601 duration — simplified subset: P[nY][nM][nD]
+  // Must be fully consumed by recognised components; partial matches like
+  // "P90DX" or "P1Yjunk" are rejected rather than silently truncated.
   const iso = trimmed.toUpperCase();
   if (!iso.startsWith("P")) return null;
   const rest = iso.slice(1);
@@ -2233,16 +2235,18 @@ function parseDurationToMs(raw: string): number | null {
   // Reject time part (T...) for simplicity
   if (rest.includes("T")) return null;
 
+  // Validate the entire rest against a strict anchored pattern.
+  // Allowed: zero or more of nY, nM, nD in that order, with at least one.
+  if (!/^(\d+Y)?(\d+M)?(\d+D)?$/.test(rest) || rest === "") return null;
+
+  const yearMatch = rest.match(/^(?:(\d+)Y)?/);
+  const monthMatch = rest.match(/(?:^|Y)(?:(\d+)M)?/);
+  const dayMatch = rest.match(/(\d+)D$/);
+
   let totalMs = 0;
-  const yearMatch = rest.match(/(\d+)Y/);
-  const monthMatch = rest.match(/(\d+)M/);
-  const dayMatch = rest.match(/(\d+)D/);
-
-  if (!yearMatch && !monthMatch && !dayMatch) return null;
-
-  if (yearMatch) totalMs += Number.parseInt(yearMatch[1], 10) * 365 * 86_400_000;
-  if (monthMatch) totalMs += Number.parseInt(monthMatch[1], 10) * 30 * 86_400_000;
-  if (dayMatch) totalMs += Number.parseInt(dayMatch[1], 10) * 86_400_000;
+  if (yearMatch?.[1]) totalMs += Number.parseInt(yearMatch[1], 10) * 365 * 86_400_000;
+  if (monthMatch?.[1]) totalMs += Number.parseInt(monthMatch[1], 10) * 30 * 86_400_000;
+  if (dayMatch?.[1]) totalMs += Number.parseInt(dayMatch[1], 10) * 86_400_000;
 
   return totalMs > 0 ? totalMs : null;
 }
@@ -3809,15 +3813,17 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             return;
           }
 
-          // --confirm guard: must be literally "yes"
+          // --confirm guard: must be literally "yes" to execute mutations.
+          // Validate explicitly BEFORE computing dryRun so that an invalid
+          // --confirm value (e.g. --confirm maybe) produces an error rather
+          // than silently falling back to dry-run mode.
           const confirmValue = options.confirm;
           const hasDryRunFlag = options.dryRun === true || options["dry-run"] === true;
-          const confirmed = confirmValue === "yes";
-          const dryRun = hasDryRunFlag || !confirmed;
 
-          if (!dryRun && confirmValue !== "yes") {
+          // If --confirm was provided but is not "yes", reject immediately.
+          if (confirmValue !== undefined && confirmValue !== "yes") {
             const msg =
-              "purge: --confirm yes is required to execute mutations. " +
+              "purge: --confirm must be exactly \"yes\" to execute mutations. " +
               "Run with --dry-run to preview candidates without deleting.";
             if (reportHasMachineReadableOutput(options)) {
               console.log(JSON.stringify({ ok: false, error: msg }, null, 2));
@@ -3827,6 +3833,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             process.exitCode = 1;
             return;
           }
+
+          const confirmed = confirmValue === "yes";
+          const dryRun = hasDryRunFlag || !confirmed;
 
           const { purgeMemories } = await import("./maintenance/purge.js");
           try {

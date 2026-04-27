@@ -220,10 +220,21 @@ export async function purgeMemories(
     }
   }
 
-  // Invalidate caches after deletions via the public cache-invalidation method.
-  // invalidateAllMemoriesCacheForDir() is the public surface; fall back to a
-  // no-op if the storage stub used in tests doesn't expose it.
-  if (typeof (storage as unknown as { invalidateAllMemoriesCacheForDir?: () => void }).invalidateAllMemoriesCacheForDir === "function") {
+  // Invalidate ALL memory caches — hot and cold — after hard-deleting files.
+  //
+  // We use StorageManager.clearAllStaticCaches() (the public static surface
+  // designed for "files changed outside normal write paths") because:
+  //   - invalidateAllMemoriesCacheForDir() only clears the hot cache
+  //     (by design — see the UvBq comment in storage.ts)
+  //   - invalidateColdMemoriesCache() is private
+  //   - purge deletes files directly (like a test writing to disk), so the
+  //     static clear is the documented fallback for exactly this situation
+  //
+  // Fall back to the hot-only public method when storage is a stub (tests).
+  const storageClass = (storage as unknown as { constructor: { clearAllStaticCaches?: () => void } }).constructor;
+  if (typeof storageClass?.clearAllStaticCaches === "function") {
+    storageClass.clearAllStaticCaches();
+  } else if (typeof (storage as unknown as { invalidateAllMemoriesCacheForDir?: () => void }).invalidateAllMemoriesCacheForDir === "function") {
     (storage as unknown as { invalidateAllMemoriesCacheForDir: () => void }).invalidateAllMemoriesCacheForDir();
   }
 

@@ -21,7 +21,6 @@ import { access, mkdir, writeFile } from "node:fs/promises";
 import type { StorageManager } from "../storage.js";
 import type { PluginConfig } from "../types.js";
 import {
-  computeTierValueScore,
   decideTierTransition,
   type TierRoutingPolicy,
 } from "../tier-routing.js";
@@ -50,6 +49,9 @@ export interface FirstStartMigrationResult {
   dryRun: boolean;
   candidateCount: number;
   demotedCount: number;
+  /** Number of individual demotion failures. When > 0, the init-done marker is
+   *  NOT written so the next start can retry the failed demotions. */
+  failureCount: number;
   cappedAt: number;
 }
 
@@ -113,6 +115,7 @@ export async function runFirstStartMigration(
       dryRun,
       candidateCount: 0,
       demotedCount: 0,
+      failureCount: 0,
       cappedAt: demotionCap,
     };
   }
@@ -124,6 +127,7 @@ export async function runFirstStartMigration(
       dryRun,
       candidateCount: 0,
       demotedCount: 0,
+      failureCount: 0,
       cappedAt: demotionCap,
     };
   }
@@ -135,6 +139,7 @@ export async function runFirstStartMigration(
       dryRun,
       candidateCount: 0,
       demotedCount: 0,
+      failureCount: 0,
       cappedAt: demotionCap,
     };
   }
@@ -158,28 +163,38 @@ export async function runFirstStartMigration(
       dryRun: true,
       candidateCount,
       demotedCount: 0,
+      failureCount: 0,
       cappedAt: demotionCap,
     };
   }
 
   let demotedCount = 0;
+  let failureCount = 0;
   for (const memory of batch) {
     try {
       await storage.migrateMemoryToTier(memory, "cold");
       demotedCount += 1;
     } catch {
-      // Non-fatal — individual migration failures don't abort the sweep
+      // Non-fatal — individual migration failures are counted but do not abort
+      // the sweep. We track them so the marker is only written when ALL
+      // attempted demotions succeeded (CLAUDE.md rule #12: don't write a
+      // success marker after a partial failure).
+      failureCount += 1;
     }
   }
 
-  // Write marker AFTER all mutations succeed (CLAUDE.md rule #12)
-  await writeMarker(config.memoryDir, now);
+  // Write marker AFTER all mutations succeed (CLAUDE.md rule #12).
+  // If any demotion failed, skip the marker so the next start retries.
+  if (failureCount === 0) {
+    await writeMarker(config.memoryDir, now);
+  }
 
   return {
     skipped: false,
     dryRun: false,
     candidateCount,
     demotedCount,
+    failureCount,
     cappedAt: demotionCap,
   };
 }

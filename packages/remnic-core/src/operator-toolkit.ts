@@ -1520,12 +1520,12 @@ export async function summarizeTierDistribution(
     }
 
     const topDemotionReasons = Object.entries(demotionReasons)
-      .sort((a, b) => b[1] - a[1])
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, 5)
       .map(([reason, count]) => ({ reason, count }));
 
     const statusParts = Object.entries(summary.byStatus)
-      .sort((a, b) => b[1] - a[1])
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, 6)
       .map(([s, n]) => `${s}: ${n}`)
       .join(", ");
