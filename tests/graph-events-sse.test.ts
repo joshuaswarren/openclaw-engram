@@ -51,7 +51,7 @@ function makeFakeService(memoryDir: string): EngramAccessService {
     }),
     // Namespace resolution for the SSE handler — single-namespace stub
     // always returns the root memoryDir.
-    getMemoryDirForNamespace: async (_ns?: string) => memoryDir,
+    getMemoryDirForNamespace: async (_ns?: string, _principal?: string) => memoryDir,
     // All other methods are not exercised in these tests.
   } as unknown as EngramAccessService;
 }
@@ -392,7 +392,7 @@ test("SSE handler subscribes to namespace-resolved bus dir", async () => {
       nativeKnowledgeEnabled: false,
       projectionAvailable: false,
     }),
-    getMemoryDirForNamespace: async (ns?: string) => {
+    getMemoryDirForNamespace: async (ns?: string, _principal?: string) => {
       const resolved = ns === "tenant-a" ? nsDir : rootDir;
       resolvedDirs.push(resolved);
       return resolved;
@@ -442,6 +442,81 @@ test("SSE handler subscribes to namespace-resolved bus dir", async () => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Fix (Cursor PRRT_kwDORJXyws59snoR + Codex PRRT_kwDORJXyws59soGJ):
+// SSE handler must forward the request principal to getMemoryDirForNamespace
+// so namespace ACLs are enforced when namespacesEnabled=true.
+// ---------------------------------------------------------------------------
+
+test("SSE handler forwards request principal to getMemoryDirForNamespace", async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "engram-sse-principal-"));
+
+  const capturedCalls: Array<{ ns: string | undefined; principal: string | undefined }> = [];
+  const fakeService = {
+    memoryDir: rootDir,
+    health: async () => ({
+      ok: true,
+      memoryDir: rootDir,
+      namespacesEnabled: false,
+      defaultNamespace: "global",
+      searchBackend: "qmd",
+      qmdEnabled: false,
+      nativeKnowledgeEnabled: false,
+      projectionAvailable: false,
+    }),
+    getMemoryDirForNamespace: async (ns?: string, principal?: string) => {
+      capturedCalls.push({ ns, principal });
+      return rootDir;
+    },
+  } as unknown as import("../src/access-service.js").EngramAccessService;
+
+  // Use trustPrincipalHeader so the x-engram-principal header is forwarded as
+  // the request principal (matching the production authenticated path).
+  const server = new EngramAccessHttpServer({
+    service: fakeService,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "principal-token",
+    adminConsoleEnabled: false,
+    trustPrincipalHeader: true,
+  });
+  const { port } = await server.start();
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const req = http.request(
+        {
+          host: "127.0.0.1",
+          port,
+          path: "/engram/v1/graph/events",
+          headers: {
+            Authorization: "Bearer principal-token",
+            "x-engram-principal": "user-alice",
+          },
+        },
+        (res) => {
+          assert.equal(res.statusCode, 200);
+          req.destroy();
+          resolve();
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+
+    // Give the async SSE handler time to resolve the service call.
+    await new Promise<void>((r) => setTimeout(r, 80));
+
+    assert.ok(capturedCalls.length >= 1, "getMemoryDirForNamespace must be called");
+    const call = capturedCalls[capturedCalls.length - 1]!;
+    assert.equal(call.principal, "user-alice", "principal must be forwarded to getMemoryDirForNamespace");
+  } finally {
+    await server.stop();
+    destroyGraphEventBus(rootDir);
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
 test("SSE events from a different namespace do not reach an unrelated subscriber", async () => {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), "engram-sse-ns-iso-"));
   const nsA = path.join(rootDir, "ns-a");
@@ -453,7 +528,7 @@ test("SSE events from a different namespace do not reach an unrelated subscriber
   const fakeService = {
     memoryDir: rootDir,
     health: async () => ({ ok: true, memoryDir: rootDir, namespacesEnabled: true, defaultNamespace: "global", searchBackend: "qmd", qmdEnabled: false, nativeKnowledgeEnabled: false, projectionAvailable: false }),
-    getMemoryDirForNamespace: async (ns?: string) => ns === "ns-a" ? nsA : rootDir,
+    getMemoryDirForNamespace: async (ns?: string, _principal?: string) => ns === "ns-a" ? nsA : rootDir,
   } as unknown as import("../src/access-service.js").EngramAccessService;
 
   const server = new EngramAccessHttpServer({

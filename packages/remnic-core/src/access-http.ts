@@ -1207,7 +1207,11 @@ export class EngramAccessHttpServer {
     const namespace = namespaceParam && namespaceParam.length > 0 ? namespaceParam : undefined;
     // Resolve to the per-namespace storage directory so the bus subscription
     // is scoped to the correct tenant (CLAUDE.md rule 42).
-    const memoryDir = await this.service.getMemoryDirForNamespace(namespace);
+    // Pass the request principal so namespace ACL is enforced — without it,
+    // resolveReadableNamespace throws when namespacesEnabled=true (Cursor
+    // thread PRRT_kwDORJXyws59snoR / Codex thread PRRT_kwDORJXyws59soGJ).
+    const principal = this.resolveRequestPrincipal(req);
+    const memoryDir = await this.service.getMemoryDirForNamespace(namespace, principal);
 
     res.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",

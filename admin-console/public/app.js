@@ -1292,6 +1292,18 @@ async function loadMemoryGraph() {
 // ─── Real-time graph SSE updates (issue #691 PR 5/5) ────────────────────────
 
 /**
+ * Pending edge-added payloads whose source or target node had not yet arrived
+ * when the event was first processed.  Retried on every subsequent node-added
+ * event (Codex review thread PRRT_kwDORJXyws59soGK).
+ *
+ * Entries are removed once both endpoint nodes exist in graphData.nodes.
+ * The queue is bounded to 200 entries to prevent unbounded growth from a
+ * disconnected or very busy stream.
+ */
+const _orphanEdgeQueue = [];
+const _ORPHAN_EDGE_QUEUE_MAX = 200;
+
+/**
  * Active EventSource connection for /engram/v1/graph/events.
  * Only one connection is maintained at a time; `mountGraphEventSource` closes
  * the previous one before opening a new one.
@@ -1331,8 +1343,36 @@ function applyGraphEvent(event) {
       };
       graphData.nodes.push(node);
       graphColorForCategory(node.kind);
+      // Drain any queued orphan edges now that a new node has arrived.
+      // Iterate backwards so splicing by index is safe.
+      let drainedAny = false;
+      for (let i = _orphanEdgeQueue.length - 1; i >= 0; i--) {
+        const op = _orphanEdgeQueue[i];
+        const s = graphData.nodes.find((n) => n.id === op.source);
+        const t = graphData.nodes.find((n) => n.id === op.target);
+        if (s && t) {
+          _orphanEdgeQueue.splice(i, 1);
+          const alreadyExists = graphData.edges.some(
+            (e) => e.source === op.source && e.target === op.target && e.kind === op.kind,
+          );
+          if (!alreadyExists) {
+            graphData.edges.push({
+              source: op.source,
+              target: op.target,
+              kind: op.kind,
+              weight: typeof op.weight === "number" ? op.weight : 1.0,
+              label: op.label || "",
+              confidence: typeof op.confidence === "number" ? op.confidence : 1.0,
+              _srcNode: s,
+              _tgtNode: t,
+            });
+            drainedAny = true;
+          }
+        }
+      }
       if (graphSim) graphSim.reheat();
       drawGraph();
+      if (drainedAny && graphSim) graphSim.reheat();
     }
     return;
   }
@@ -1369,6 +1409,26 @@ function applyGraphEvent(event) {
         graphData.edges.push(edge);
         if (graphSim) graphSim.reheat();
         drawGraph();
+      }
+    } else {
+      // One or both endpoint nodes haven't arrived yet — queue the edge payload
+      // so it can be applied once the missing nodes appear (Codex review thread
+      // PRRT_kwDORJXyws59soGK).  Enforce a cap to prevent unbounded growth.
+      const alreadyQueued = _orphanEdgeQueue.some(
+        (e) => e.source === p.source && e.target === p.target && e.kind === p.kind,
+      );
+      if (!alreadyQueued) {
+        if (_orphanEdgeQueue.length >= _ORPHAN_EDGE_QUEUE_MAX) {
+          _orphanEdgeQueue.shift(); // drop the oldest orphan
+        }
+        _orphanEdgeQueue.push({
+          source: p.source,
+          target: p.target,
+          kind: p.kind,
+          weight: p.weight,
+          label: p.label,
+          confidence: p.confidence,
+        });
       }
     }
     return;
