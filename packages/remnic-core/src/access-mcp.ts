@@ -1072,6 +1072,42 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
+      {
+        name: "engram.peer_forget",
+        description:
+          "DESTRUCTIVELY purge the entire peer directory (identity.md + profile.md + interactions.log.md and any companion files). " +
+          "Requires confirm: 'yes'. Idempotent — safe to call twice. " +
+          "Use engram.peer_delete when you only want to remove the identity record and preserve profile data.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Peer id to purge." },
+            confirm: {
+              type: "string",
+              enum: ["yes"],
+              description: "Must be exactly 'yes' to proceed. Guard against accidental invocation.",
+            },
+          },
+          required: ["id", "confirm"],
+          additionalProperties: false,
+        },
+      },
+      // ── Operator Console state (issue #688 PR 2/3) ─────────────────────────
+      {
+        name: "engram.console_state",
+        description:
+          "Return a point-in-time ConsoleStateSnapshot of the engine's runtime state — buffer, extraction queue, dedup decisions, maintenance ledger tail, QMD probe, and daemon info (issue #688). Read-only; never mutates state.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            namespace: {
+              type: "string",
+              description: "Optional namespace to scope the snapshot.",
+            },
+          },
+          additionalProperties: false,
+        },
+      },
       // ── Dreams telemetry (issue #678 PR 3+4) ─────────────────────────────
       {
         name: "engram.dreams_status",
@@ -2147,6 +2183,25 @@ export class EngramMcpServer {
         if (!id) throw new Error("engram.peer_profile_get: id is required");
         return this.service.peerProfileGet(id);
       }
+      case "engram.peer_forget":
+      case "remnic.peer_forget": {
+        const id = typeof args.id === "string" ? args.id : "";
+        if (!id) throw new Error("engram.peer_forget: id is required");
+        const confirm = typeof args.confirm === "string" ? args.confirm : "";
+        if (confirm !== "yes") {
+          throw new Error(
+            "engram.peer_forget: confirm must be 'yes' to prevent accidental data loss",
+          );
+        }
+        return this.service.peerForget(id, { confirm: "yes" });
+      }
+      // ── Operator Console state (issue #688 PR 2/3) ──────────────────────────
+      case "engram.console_state":
+      case "remnic.console_state":
+        return this.service.consoleState(
+          typeof args.namespace === "string" ? args.namespace : undefined,
+          effectivePrincipal,
+        );
       // ── Dreams telemetry (issue #678 PR 3+4) ──────────────────────────────
       case "engram.dreams_status":
       case "remnic.dreams_status": {

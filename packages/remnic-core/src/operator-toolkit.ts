@@ -41,17 +41,30 @@ import {
 } from "./consolidation-provenance-check.js";
 import type {
   BufferSurpriseEvent,
+  DreamsPhasesConfig,
   FileHygieneConfig,
   MemoryFile,
   PluginConfig,
 } from "./types.js";
 import { reportBufferSurpriseDistribution } from "./buffer-surprise-report.js";
+import { readJudgeVerdictStats } from "./extraction-judge-telemetry.js";
 
 interface QmdRuntimeLike {
   probe(): Promise<boolean>;
   isAvailable(): boolean;
   ensureCollection(memoryDir: string): Promise<"present" | "missing" | "unknown" | "skipped">;
   debugStatus(): string;
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error as { code?: unknown }).code === "ENOENT";
+}
+
+function formatUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 interface ConversationIndexLike {
@@ -1148,21 +1161,30 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   });
 
   const agentAccessEnabled = config.agentAccessHttp?.enabled === true;
+  // A SecretRef object counts as "configured" (issue #757) — resolution
+  // happens at service-start time, not at doctor-time.  We only check that
+  // *something* is set; we never log the resolved value.
+  const rawAuthToken = config.agentAccessHttp?.authToken;
+  const authTokenConfigured =
+    (typeof rawAuthToken === "string" && rawAuthToken.length > 0) ||
+    (rawAuthToken !== null &&
+      typeof rawAuthToken === "object" &&
+      typeof (rawAuthToken as { source?: unknown }).source === "string");
   checks.push({
     key: "access_http_auth",
     status: !agentAccessEnabled
       ? "warn"
-      : config.agentAccessHttp?.authToken
+      : authTokenConfigured
       ? "ok"
       : "error",
     summary: !agentAccessEnabled
       ? "Agent access HTTP bridge is disabled."
-      : config.agentAccessHttp?.authToken
+      : authTokenConfigured
       ? "Agent access HTTP bridge has an auth token configured."
       : "Agent access HTTP bridge is enabled without an auth token.",
     remediation: !agentAccessEnabled
       ? "Ignore unless you plan to enable the HTTP bridge."
-      : config.agentAccessHttp?.authToken
+      : authTokenConfigured
       ? undefined
       : "Set `agentAccessHttp.authToken` before exposing the bridge.",
   });
@@ -1211,10 +1233,24 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // counts. Disabled is "ok" with a note; enabled-but-never-run is "warn".
   checks.push(await summarizeGraphEdgeDecayStatus(config));
 
+  // Dreams phases thresholds and last-run timestamps (issue #678 PR 2/4).
+  // Surfaces per-phase: enabled status, cadence, threshold values, and the
+  // best-available last-run timestamp for each of the three pipeline phases.
+  checks.push(await summarizeDreamsPhases(config));
+
   // Security mitigation status (issue #565).
   // Reports whether the cross-namespace budget and anomaly detection
   // mitigations are enabled and surfaces config values for operator review.
   checks.push(summarizeSecurityMitigations(config));
+
+  // Observation throughput + judge acceptance rate (issue #685).
+  // Surfaces the total verdict count, accept/reject/defer breakdown, and the
+  // most recent `observedAt` timestamp from the extraction-judge telemetry
+  // ledger.  This closes the *(future)* item deferred in
+  // `docs/trace-to-primitive.md`.  The check is purely informational — it
+  // always resolves to `ok`; an empty ledger is the expected cold-install
+  // state and is never an error.
+  checks.push(await summarizeObservationThroughput(config.memoryDir));
 
   const summary = checks.reduce(
     (acc, check) => {
@@ -1449,6 +1485,97 @@ async function summarizeGraphEdgeDecayStatus(
   };
 }
 
+/**
+ * Dreams phases doctor check (issue #678 PR 2/4).
+ *
+ * Reports per-phase: enabled status, cadence, threshold values, and last-run
+ * timestamp sourced from `meta.json` (the existing maintenance ledger).
+ *
+ * Last-run mapping (best available in PR 2; PR 3/4 will emit per-phase events):
+ *   light sleep → `meta.lastExtractionAt`   (lifecycle pass runs with extraction)
+ *   REM         → `meta.lastConsolidationAt` (semantic consolidation)
+   *   deep sleep  → latest governance run manifest when present, otherwise null
+ */
+export async function summarizeDreamsPhases(
+  config: Pick<PluginConfig, "memoryDir" | "dreamsPhases">,
+): Promise<OperatorDoctorCheck> {
+  const phases: DreamsPhasesConfig = config.dreamsPhases;
+  const storage = new StorageManager(config.memoryDir);
+
+  // Load meta.json for best-available last-run timestamps.
+  const meta = await storage.loadMeta();
+
+  let deepSleepLastRun: string | null = null;
+  let deepSleepLastRunWarning: string | null = null;
+  try {
+    // Read the latest governance run's manifest from the real on-disk format
+    // rather than treating every failure as "no runs yet".
+    const runsDir = path.join(config.memoryDir, "state", "memory-governance", "runs");
+    const runIds = (await readdir(runsDir)).sort().reverse();
+    if (runIds.length > 0) {
+      const latestRunId = runIds[0];
+      const manifestPath = path.join(
+        runsDir,
+        latestRunId,
+        "manifest.json",
+      );
+      const raw = await readFile(manifestPath, "utf-8");
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof parsed.createdAt === "string" && parsed.createdAt.length > 0) {
+        deepSleepLastRun = parsed.createdAt;
+      }
+    }
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      deepSleepLastRunWarning = `Could not read latest governance run manifest: ${formatUnknownError(error)}`;
+    }
+  }
+
+  // Build per-phase summary lines for the human-readable `summary` field.
+  const phaseLines: string[] = [
+    `lightSleep: enabled=${phases.lightSleep.enabled}, cadenceMs=${phases.lightSleep.cadenceMs}, promoteHeat=${phases.lightSleep.promoteHeatThreshold}, staleDecay=${phases.lightSleep.staleDecayThreshold}, archiveDecay=${phases.lightSleep.archiveDecayThreshold}, filterStale=${phases.lightSleep.filterStaleEnabled}, lastRun=${meta.lastExtractionAt ?? "never"}`,
+    `rem: enabled=${phases.rem.enabled}, cadenceMs=${phases.rem.cadenceMs}, similarity=${phases.rem.similarityThreshold}, minCluster=${phases.rem.minClusterSize}, maxPerRun=${phases.rem.maxPerRun}, minIntervalMs=${phases.rem.minIntervalMs}, lastRun=${meta.lastConsolidationAt ?? "never"}`,
+    `deepSleep: enabled=${phases.deepSleep.enabled}, cadenceMs=${phases.deepSleep.cadenceMs}, versioning=${phases.deepSleep.versioningEnabled}, versioningMaxPerPage=${phases.deepSleep.versioningMaxPerPage}, lastRun=${deepSleepLastRun ?? "never"}`,
+  ];
+
+  return {
+    key: "dreams_phases",
+    status: deepSleepLastRunWarning ? "warn" : "ok",
+    summary: `Dreams pipeline phases: ${phaseLines.join("; ")}${deepSleepLastRunWarning ? `; ${deepSleepLastRunWarning}` : ""}`,
+    remediation: deepSleepLastRunWarning
+      ? "Inspect state/memory-governance/runs and repair or remove unreadable governance run artifacts."
+      : undefined,
+    details: {
+      lightSleep: {
+        enabled: phases.lightSleep.enabled,
+        cadenceMs: phases.lightSleep.cadenceMs,
+        promoteHeatThreshold: phases.lightSleep.promoteHeatThreshold,
+        staleDecayThreshold: phases.lightSleep.staleDecayThreshold,
+        archiveDecayThreshold: phases.lightSleep.archiveDecayThreshold,
+        filterStaleEnabled: phases.lightSleep.filterStaleEnabled,
+        lastRun: meta.lastExtractionAt ?? null,
+      },
+      rem: {
+        enabled: phases.rem.enabled,
+        cadenceMs: phases.rem.cadenceMs,
+        similarityThreshold: phases.rem.similarityThreshold,
+        minClusterSize: phases.rem.minClusterSize,
+        maxPerRun: phases.rem.maxPerRun,
+        minIntervalMs: phases.rem.minIntervalMs,
+        lastRun: meta.lastConsolidationAt ?? null,
+      },
+      deepSleep: {
+        enabled: phases.deepSleep.enabled,
+        cadenceMs: phases.deepSleep.cadenceMs,
+        versioningEnabled: phases.deepSleep.versioningEnabled,
+        versioningMaxPerPage: phases.deepSleep.versioningMaxPerPage,
+        lastRun: deepSleepLastRun,
+        warning: deepSleepLastRunWarning,
+      },
+    },
+  };
+}
+
 function summarizeSecurityMitigations(
   config: Pick<
     PluginConfig,
@@ -1509,6 +1636,61 @@ function summarizeSecurityMitigations(
     summary: `Memory-extraction mitigation config enabled: ${budgetEnabled ? "budget" : ""}${budgetEnabled && anomalyEnabled ? ", " : ""}${anomalyEnabled ? "anomaly detection" : ""}.`,
     details: { ...details, configOnly: true },
   };
+}
+
+/**
+ * Observation throughput check for `remnic doctor` (issue #685).
+ *
+ * Reads the extraction-judge verdict ledger to surface:
+ *  - total observations (verdicts) recorded
+ *  - accept / reject / defer breakdown
+ *  - most-recent `observedAt` timestamp
+ *
+ * The check is purely informational (always `ok`): a missing or empty
+ * ledger is the expected state on a fresh install and is never an error.
+ * This closes the `*(future)*` item deferred in `docs/trace-to-primitive.md`.
+ */
+export async function summarizeObservationThroughput(
+  memoryDir: string,
+): Promise<OperatorDoctorCheck> {
+  try {
+    const stats = await readJudgeVerdictStats(memoryDir);
+    if (stats.total === 0) {
+      return {
+        key: "observations",
+        status: "ok",
+        summary: "No observations recorded yet (extraction-judge telemetry ledger is empty or missing).",
+        details: { total: 0, accept: 0, reject: 0, defer: 0, lastObservedAt: null },
+      };
+    }
+    const acceptPct = ((stats.accept / stats.total) * 100).toFixed(1);
+    const rejectPct = ((stats.reject / stats.total) * 100).toFixed(1);
+    const deferPct = ((stats.defer / stats.total) * 100).toFixed(1);
+    return {
+      key: "observations",
+      status: "ok",
+      summary: `${stats.total} observations recorded: accept=${acceptPct}%, reject=${rejectPct}%, defer=${deferPct}%. Last observed: ${stats.lastTs ?? "unknown"}.`,
+      details: {
+        total: stats.total,
+        accept: stats.accept,
+        reject: stats.reject,
+        defer: stats.defer,
+        deferCapTriggered: stats.deferCapTriggered,
+        deferRate: stats.deferRate,
+        meanElapsedMs: stats.meanElapsedMs,
+        firstObservedAt: stats.firstTs ?? null,
+        lastObservedAt: stats.lastTs ?? null,
+      },
+    };
+  } catch (err) {
+    return {
+      key: "observations",
+      status: "warn",
+      summary: "Could not read observation telemetry ledger.",
+      remediation: "Retry `remnic doctor` after ensuring the memory state directory is readable.",
+      details: { error: String(err) },
+    };
+  }
 }
 
 export async function summarizeConsolidationProvenance(

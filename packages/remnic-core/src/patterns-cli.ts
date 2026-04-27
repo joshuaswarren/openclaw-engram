@@ -28,6 +28,7 @@
  */
 
 import type { MemoryCategory, MemoryFile } from "./types.js";
+import { DERIVED_FROM_MEMORY_ID_RE } from "./consolidation-operator.js";
 import { parseStrictCliDate } from "./training-export/date-parse.js";
 
 export const PATTERNS_OUTPUT_FORMATS = ["text", "markdown", "json"] as const;
@@ -270,10 +271,12 @@ export function collectPatternMemories(
 export interface PatternDerivedFromEntry {
   /** Raw `"<path>:<version>"` reference exactly as stored in `derived_from`. */
   ref: string;
-  /** Memory path component (everything before the final `:`). */
+  /** Source memory id, or the path component for older `path:version` references. */
   path: string;
-  /** Page-version number component (everything after the final `:`), or `null` if the ref is malformed. */
+  /** Page-version number component for older `path:version` references. */
   version: number | null;
+  /** True when an older path-version reference had an invalid version component. */
+  malformed?: boolean;
 }
 
 export interface PatternClusterMember {
@@ -322,17 +325,29 @@ export function explainPatternMemory(
   const derivedFrom: PatternDerivedFromEntry[] = (fm.derived_from ?? []).map(
     (ref) => {
       const lastColon = ref.lastIndexOf(":");
-      if (lastColon <= 0 || lastColon === ref.length - 1) {
-        return { ref, path: ref, version: null };
+      const pathLikeRef = looksLikeDerivedFromPath(ref);
+      if (lastColon >= 0) {
+        const path = ref.slice(0, lastColon);
+        const versionStr = ref.slice(lastColon + 1);
+        if (
+          looksLikeDerivedFromPath(path) &&
+          /^\d+$/.test(versionStr)
+        ) {
+          return { ref, path, version: Number(versionStr) };
+        }
+        if (!pathLikeRef && DERIVED_FROM_MEMORY_ID_RE.test(ref)) {
+          return { ref, path: ref, version: null };
+        }
+        return { ref, path: ref, version: null, malformed: true };
       }
-      const path = ref.slice(0, lastColon);
-      const versionStr = ref.slice(lastColon + 1);
-      const versionNum = Number(versionStr);
-      const version =
-        Number.isFinite(versionNum) && Number.isInteger(versionNum)
-          ? versionNum
-          : null;
-      return { ref, path, version };
+      if (DERIVED_FROM_MEMORY_ID_RE.test(ref)) {
+        return {
+          ref,
+          path: ref,
+          version: null,
+        };
+      }
+      return { ref, path: ref, version: null, malformed: true };
     },
   );
 
@@ -458,8 +473,13 @@ export function renderPatternExplain(
       lines.push("_No derived_from entries recorded._");
     } else {
       for (const entry of detail.derivedFrom) {
-        const versionStr = entry.version !== null ? `v${entry.version}` : "(malformed)";
-        lines.push(`- \`${entry.path}\` ${versionStr}`);
+        const versionStr =
+          entry.version !== null
+            ? ` v${entry.version}`
+            : entry.malformed
+              ? " (malformed)"
+              : "";
+        lines.push(`- \`${entry.path}\`${versionStr}`);
       }
     }
     lines.push("");
@@ -498,8 +518,13 @@ export function renderPatternExplain(
     lines.push("  (none)");
   } else {
     for (const entry of detail.derivedFrom) {
-      const versionStr = entry.version !== null ? `v${entry.version}` : "(malformed)";
-      lines.push(`  - ${entry.path} ${versionStr}`);
+      const versionStr =
+        entry.version !== null
+          ? ` v${entry.version}`
+          : entry.malformed
+            ? " (malformed)"
+            : "";
+      lines.push(`  - ${entry.path}${versionStr}`);
     }
   }
   lines.push("");
@@ -529,6 +554,10 @@ function extractPreview(content: string): string {
   const collapsed = firstLine.trim().replace(/\s+/g, " ");
   if (collapsed.length <= 120) return collapsed;
   return collapsed.slice(0, 117) + "...";
+}
+
+function looksLikeDerivedFromPath(value: string): boolean {
+  return value.includes("/") || value.includes(".");
 }
 
 /**

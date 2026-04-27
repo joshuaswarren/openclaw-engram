@@ -2671,6 +2671,10 @@ export class EngramAccessService {
     summaryPath: string;
     reportPath: string;
   }> {
+    const deepSleep = this.orchestrator.config.dreamsPhases.deepSleep;
+    if (deepSleep.enabled === false && deepSleep.enabledExplicitlySet === true) {
+      throw new Error("memory governance is disabled by dreams.phases.deepSleep.enabled=false");
+    }
     const resolvedNamespace = this.resolveWritableNamespace(
       request.namespace,
       undefined,
@@ -4164,6 +4168,42 @@ export class EngramAccessService {
     return { submitted: memoryIds.length, matched: matchedIds.length };
   }
 
+  // ── Operator Console state (issue #688 PR 2/3) ────────────────────────────
+
+  /**
+   * Gather a point-in-time `ConsoleStateSnapshot` from the orchestrator.
+   *
+   * Principal-aware: `resolveReadableNamespace` enforces ACL before the
+   * snapshot is gathered, so callers cannot read a namespace they don't
+   * have read access to (CLAUDE.md rule 42).  The resolved namespace's
+   * storage directory is forwarded as `config.memoryDir` so the ledger-
+   * tail reader in `gatherConsoleState` scans the correct namespace root
+   * rather than the global root.  Read-only — never mutates orchestrator state.
+   */
+  async consoleState(
+    namespace?: string,
+    principal?: string,
+  ): Promise<import("./console/state.js").ConsoleStateSnapshot> {
+    // Enforce namespace ACL — throws EngramAccessInputError if unauthorized.
+    const resolvedNamespace = this.resolveReadableNamespace(namespace, principal);
+    // Resolve the storage dir for the namespace so the ledger-tail reader
+    // scans the right directory tree.
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const { gatherConsoleState } = await import("./console/state.js");
+    // Pass a thin proxy that overrides config.memoryDir with the namespace-
+    // scoped storage dir while delegating everything else to the real
+    // orchestrator (buffer, qmd, extraction queue, etc. are process-global
+    // and don't require further namespace scoping for a read-only snapshot).
+    const orchestratorProxy = Object.create(this.orchestrator, {
+      config: {
+        value: { ...this.orchestrator.config, memoryDir: storage.dir },
+        enumerable: true,
+        configurable: true,
+      },
+    }) as import("./console/state.js").ConsoleStateOrchestratorLike;
+    return gatherConsoleState(orchestratorProxy);
+  }
+
   // ── Peer Registry surfaces (issue #679 PR 4/5) ────────────────────────────
 
   /**
@@ -4287,6 +4327,41 @@ export class EngramAccessService {
     // the delete to an arbitrary `identity.md` outside `memoryDir`.
     const deleted = await peers.deletePeer(this.orchestrator.config.memoryDir, peerId);
     return { ok: true, deleted };
+  }
+
+  /**
+   * Destructively purge the entire peer directory for a given peerId —
+   * `identity.md`, `profile.md`, `interactions.log.md`, and any other
+   * files in `peers/{id}/`. Requires `confirm: "yes"` to prevent
+   * accidental invocation.
+   *
+   * This is the DESTRUCTIVE counterpart to `peerDelete`, which only
+   * removes `identity.md`. All companion files are permanently removed.
+   *
+   * Returns `{ ok: true, purged: true }` when the directory existed and
+   * was removed; `{ ok: true, purged: false }` when the directory did
+   * not exist (idempotent no-op).
+   */
+  async peerForget(
+    peerId: string,
+    opts: { confirm: string },
+  ): Promise<{ ok: true; purged: boolean }> {
+    const peers = await import("./peers/index.js");
+    const validateId: (id: unknown) => void = peers.assertValidPeerId;
+    try {
+      validateId(peerId);
+    } catch (err) {
+      throw new EngramAccessInputError((err as Error).message);
+    }
+    if (opts.confirm !== "yes") {
+      throw new EngramAccessInputError(
+        "peerForget requires confirm: 'yes' to prevent accidental data loss",
+      );
+    }
+    const result = await peers.forgetPeer(this.orchestrator.config.memoryDir, peerId, {
+      confirm: "yes",
+    });
+    return { ok: true, purged: result.purged };
   }
 
   /**

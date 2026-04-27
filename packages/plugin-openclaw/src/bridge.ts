@@ -23,7 +23,7 @@ export interface BridgeConfig {
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4318;
 const LEGACY_HEALTH_PATH = "/engram/v1/health";
-const SYNC_HEALTH_TIMEOUT_MS = 750;
+const SYNC_HEALTH_TIMEOUT_MS = 2000;
 const HEALTH_WORKER_SOURCE = `
 import { request } from "node:http";
 import { workerData } from "node:worker_threads";

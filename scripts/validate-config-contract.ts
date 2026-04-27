@@ -167,13 +167,14 @@ function main() {
   const pluginJson = JSON.parse(fs.readFileSync(pluginJsonPath, "utf8"));
   const schemaKeys = new Set<string>(Object.keys(pluginJson?.configSchema?.properties ?? {}));
 
-  const expectedSchemaMissing = new Set(["gatewayConfig"]);
+  const expectedSchemaMissing = new Set(["gatewayConfig", "dreamsPhases"]);
+  const expectedSchemaExtra = new Set(["dreams"]);
   const expectedParseMissing = new Set<string>([]);
 
   const failures: Failure[] = [];
 
   const schemaMissing = setDiff(pluginConfigKeys, schemaKeys).filter((k) => !expectedSchemaMissing.has(k));
-  const schemaExtra = setDiff(schemaKeys, pluginConfigKeys);
+  const schemaExtra = setDiff(schemaKeys, pluginConfigKeys).filter((k) => !expectedSchemaExtra.has(k));
   const parseMissing = setDiff(pluginConfigKeys, parseConfigReturnKeys).filter((k) => !expectedParseMissing.has(k));
   const parseExtra = setDiff(parseConfigReturnKeys, pluginConfigKeys);
 

@@ -141,10 +141,38 @@ services:
 All topologies require a bearer token. Set it via:
 
 1. `--token` CLI flag
-2. `OPENCLAW_ENGRAM_ACCESS_TOKEN` environment variable
+2. `OPENCLAW_REMNIC_ACCESS_TOKEN` / `OPENCLAW_ENGRAM_ACCESS_TOKEN` environment variable
 3. `agentAccessHttp.authToken` in `openclaw.json`
 
 Clients must send `Authorization: Bearer <token>` with every request.
+
+### SecretRef tokens (OpenClaw plugin mode, issue #757)
+
+When running under OpenClaw, `agentAccessHttp.authToken` accepts an OpenClaw
+SecretRef object instead of a literal string. Remnic delegates resolution to
+the gateway's built-in secret resolver — the same path that handles
+`gateway.auth.token` and channel `botToken` / `token` fields — so the token
+never appears in cleartext in `openclaw.json`:
+
+```json
+{
+  "agentAccessHttp": {
+    "enabled": true,
+    "authToken": {
+      "source": "exec",
+      "provider": "kc_openclaw_remnic_token",
+      "id": "value"
+    }
+  }
+}
+```
+
+Resolution happens once at plugin startup, before the HTTP listener opens.
+If resolution fails (Keychain locked, missing exec provider, empty value),
+the bridge refuses to start rather than serving requests with no auth.
+
+Standalone Remnic (no OpenClaw gateway present) does **not** support
+SecretRef objects — use a literal string or `${ENV_VAR}` expansion instead.
 
 ## Health Check
 

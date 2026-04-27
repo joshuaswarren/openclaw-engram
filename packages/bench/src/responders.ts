@@ -20,6 +20,8 @@ const DEFAULT_RESPONDER_SYSTEM_PROMPT = [
   "You answer benchmark questions using only the supplied Remnic memory context.",
   "If the context does not contain enough information, say that the answer is unknown.",
   "Do not invent facts that are not grounded in the provided context.",
+  "When the question includes an output protocol, follow it exactly.",
+  "Prefer absolute dates or years over relative wording when memory evidence supports them.",
 ].join(" ");
 
 const DEFAULT_JUDGE_SYSTEM_PROMPT = [

@@ -14,6 +14,7 @@ import {
   type DomainData,
 } from "./fixture.js";
 import { answerBenchmarkQuestion } from "../../../answering.js";
+import { DEFAULT_BENCH_RECALL_BUDGET_CHARS } from "../../../recall-budget.js";
 import type {
   BenchmarkDefinition,
   BenchmarkResult,
@@ -116,7 +117,11 @@ export async function runMemoryArenaBenchmark(
           }
 
           const { result: recalledText, durationMs } = await timed(async () =>
-            options.system.recall(sessionId, question),
+            options.system.recall(
+              sessionId,
+              question,
+              DEFAULT_BENCH_RECALL_BUDGET_CHARS,
+            ),
           );
           const benchmarkQuestion = formatMemoryArenaQuestion(
             task.category,
@@ -127,6 +132,7 @@ export async function runMemoryArenaBenchmark(
             question: benchmarkQuestion,
             recalledText,
             responder: options.system.responder,
+            answerMode: "strict",
           });
           const domainScores = scoreMemoryArenaDomainAnswer(
             task.category,

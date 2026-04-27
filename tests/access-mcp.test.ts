@@ -160,6 +160,16 @@ function createFakeService(): EngramAccessService {
     }),
     peerDelete: async () => ({ ok: true, deleted: true }),
     peerProfileGet: async () => ({ found: false }),
+    consoleState: async () => ({
+      capturedAt: "2026-04-27T00:00:00.000Z",
+      bufferState: { turnsCount: 0, byteCount: 0 },
+      extractionQueue: { depth: 0, recentVerdicts: [] },
+      dedupRecent: [],
+      maintenanceLedgerTail: [],
+      qmdProbe: { available: false, daemonMode: false, debug: "" },
+      daemon: { uptimeMs: 0, version: "test" },
+      errors: [],
+    }),
   } as unknown as EngramAccessService;
 }
 
@@ -269,6 +279,8 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.peer_set",
     "engram.peer_delete",
     "engram.peer_profile_get",
+    "engram.peer_forget",
+    "engram.console_state",
     "engram.dreams_status",
     "engram.dreams_run",
   ];
@@ -443,6 +455,31 @@ test("engram.peer_set rejects non-string kind/displayName/notes (Codex P2 PR #75
   const okResult = ok as { result?: { isError?: boolean } };
   assert.equal(okResult?.result?.isError, false, "expected valid payload to succeed");
   assert.deepEqual(lastSetArgs, { id: "bob", kind: "human", displayName: "Bob", notes: undefined });
+});
+
+test("engram.console_state and remnic.console_state return a ConsoleStateSnapshot", async () => {
+  const server = new EngramMcpServer(createFakeService());
+  await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+
+  for (const toolName of ["engram.console_state", "remnic.console_state"]) {
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: toolName, arguments: {} },
+    });
+    const result = (resp as { result?: { isError?: boolean; content?: Array<{ text?: string }> } }).result;
+    assert.equal(result?.isError, false, `${toolName} should not return isError=true`);
+    const text = result?.content?.[0]?.text ?? "";
+    const parsed = JSON.parse(text) as {
+      capturedAt: string;
+      bufferState: { turnsCount: number };
+      errors: string[];
+    };
+    assert.ok(typeof parsed.capturedAt === "string", `${toolName}: capturedAt must be a string`);
+    assert.deepEqual(parsed.errors, [], `${toolName}: errors must be empty`);
+    assert.equal(parsed.bufferState.turnsCount, 0, `${toolName}: turnsCount must be 0`);
+  }
 });
 
 test("MCP initialize re-reads the server version for each server instance", async () => {
