@@ -8329,7 +8329,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .command("run")
         .description("Manually invoke a single Dreams phase pass")
         .requiredOption("--phase <phase>", "Phase to run: light-sleep, rem, deep-sleep")
-        .option("--dry-run", "Preview without committing writes", false)
+        .option("--dry-run", "Preview without committing writes")
         .option("--format <fmt>", "Output format: text, json (default text)", "text")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, string | boolean>;
@@ -8361,33 +8361,16 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             process.exit(1);
           }
 
-          const { runDreamsPhase } = await import("./maintenance/dreams-ledger.js");
+          const { runDreamsPhase, deepSleepGovernanceRunner } = await import("./maintenance/dreams-ledger.js");
           const result = await runDreamsPhase(
             { memoryDir: orchestrator.config.memoryDir, phase, dryRun },
-            phase === "deepSleep"
-              ? async ({ memoryDir: md, dryRun: dr }) => {
-                  const { runMemoryGovernance } = await import("./maintenance/memory-governance.js");
-                  const govResult = await runMemoryGovernance({
-                    memoryDir: md,
-                    mode: dr ? "shadow" : "apply",
-                  });
-                  const proposedCount = govResult.proposedActions.length;
-                  const appliedCount = govResult.appliedActions.length;
-                  return {
-                    scannedMemories: proposedCount + govResult.reviewQueue.length,
-                    appliedActionCount: appliedCount,
-                    notes: dr
-                      ? `shadow mode: ${proposedCount} actions proposed`
-                      : `applied ${appliedCount} actions`,
-                  };
-                }
-              : undefined,
+            phase === "deepSleep" ? deepSleepGovernanceRunner : undefined,
           );
 
           if (fmt === "json") {
             // Omit the internal ledgerEntry field — the public shape matches
             // the HTTP and MCP surfaces (types.ts::DreamsRunResult).
-            const { ledgerEntry: _discarded, ...publicResult } = result as typeof result & { ledgerEntry?: unknown };
+            const { ledgerEntry: _discarded, ...publicResult } = result;
             void _discarded;
             console.log(JSON.stringify(publicResult, null, 2));
             return;

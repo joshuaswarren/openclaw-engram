@@ -4419,7 +4419,7 @@ export class EngramAccessService {
     phase: import("./types.js").DreamsPhase;
     dryRun?: boolean;
   }): Promise<import("./types.js").DreamsRunResult> {
-    const { runDreamsPhase } = await import("./maintenance/dreams-ledger.js");
+    const { runDreamsPhase, deepSleepGovernanceRunner } = await import("./maintenance/dreams-ledger.js");
     const validPhases = ["lightSleep", "rem", "deepSleep"];
     if (!validPhases.includes(options.phase)) {
       throw new EngramAccessInputError(
@@ -4430,22 +4430,7 @@ export class EngramAccessService {
     const memoryDir = this.orchestrator.config.memoryDir;
     const result = await runDreamsPhase(
       { memoryDir, phase: options.phase, dryRun },
-      options.phase === "deepSleep"
-        ? async ({ memoryDir: md, dryRun: dr }) => {
-            const { runMemoryGovernance } = await import("./maintenance/memory-governance.js");
-            const govResult = await runMemoryGovernance({
-              memoryDir: md,
-              mode: dr ? "shadow" : "apply",
-            });
-            const proposedCount = govResult.proposedActions.length;
-            const appliedCount = govResult.appliedActions.length;
-            return {
-              scannedMemories: proposedCount + govResult.reviewQueue.length,
-              appliedActionCount: appliedCount,
-              notes: dr ? `shadow mode: ${proposedCount} actions proposed` : `applied ${appliedCount} actions`,
-            };
-          }
-        : undefined,
+      options.phase === "deepSleep" ? deepSleepGovernanceRunner : undefined,
     );
     return {
       phase: result.phase,

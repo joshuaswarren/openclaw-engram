@@ -232,12 +232,17 @@ export interface DreamsRunOptions {
   dryRun?: boolean;
 }
 
+/** Public result shape — identical to what HTTP, MCP, and CLI surfaces expose. */
 export interface DreamsRunResult {
   phase: DreamsPhase;
   dryRun: boolean;
   durationMs: number;
   itemsProcessed: number;
   notes?: string;
+}
+
+/** Internal result shape returned by `runDreamsPhase` — includes the raw ledger entry. */
+export interface DreamsRunResultInternal extends DreamsRunResult {
   ledgerEntry: DreamsLedgerEntry;
 }
 
@@ -256,7 +261,7 @@ export interface DreamsRunResult {
 export async function runDreamsPhase(
   options: DreamsRunOptions,
   governanceRunner?: (opts: { memoryDir: string; dryRun: boolean }) => Promise<{ scannedMemories: number; appliedActionCount: number; notes?: string }>,
-): Promise<DreamsRunResult> {
+): Promise<DreamsRunResultInternal> {
   const { memoryDir, phase, dryRun = false } = options;
   const startedAt = new Date().toISOString();
   const startMs = Date.now();
@@ -369,6 +374,34 @@ export async function runDreamsPhase(
     itemsProcessed,
     notes,
     ledgerEntry,
+  };
+}
+
+// ── Shared governance runner (used by access-service.ts + cli.ts) ────────────
+
+/**
+ * Deep-sleep governance runner callback that can be passed to `runDreamsPhase`.
+ *
+ * Extracted here so both the CLI and HTTP/MCP surfaces share identical
+ * behavior without copy-pasting the mapping logic.
+ */
+export async function deepSleepGovernanceRunner(opts: {
+  memoryDir: string;
+  dryRun: boolean;
+}): Promise<{ scannedMemories: number; appliedActionCount: number; notes?: string }> {
+  const { runMemoryGovernance } = await import("./memory-governance.js");
+  const govResult = await runMemoryGovernance({
+    memoryDir: opts.memoryDir,
+    mode: opts.dryRun ? "shadow" : "apply",
+  });
+  const proposedCount = govResult.proposedActions.length;
+  const appliedCount = govResult.appliedActions.length;
+  return {
+    scannedMemories: proposedCount + govResult.reviewQueue.length,
+    appliedActionCount: appliedCount,
+    notes: opts.dryRun
+      ? `shadow mode: ${proposedCount} actions proposed`
+      : `applied ${appliedCount} actions`,
   };
 }
 

@@ -181,6 +181,12 @@ function parseMcpBodies(raw: string): Array<Record<string, unknown>> {
   return messages;
 }
 
+function toolCallErrorMessage(resp: unknown): string {
+  const r = resp as { result?: { isError?: boolean; content?: Array<{ text?: string }> } };
+  if (!r?.result?.isError) return "";
+  return r.result.content?.[0]?.text ?? "";
+}
+
 test("MCP server advertises tools and dispatches recall", async () => {
   const server = new EngramMcpServer(createFakeService());
 
@@ -320,6 +326,57 @@ test("MCP server advertises tools and dispatches recall", async () => {
   assert.equal(entityResult.structuredContent.entity.name, "person-alex");
 });
 
+test("engram.dreams_status rejects invalid windowHours without calling service", async () => {
+  let capturedWindowHours: number | undefined;
+  let calls = 0;
+  const service = {
+    ...createFakeService(),
+    dreamsStatus: async ({ windowHours }: { windowHours: number }) => {
+      calls += 1;
+      capturedWindowHours = windowHours;
+      return {
+        windowStart: "2026-04-01T00:00:00.000Z",
+        windowEnd: "2026-04-02T00:00:00.000Z",
+        phases: {
+          lightSleep: { phase: "lightSleep", runCount: 0, totalDurationMs: 0, totalItemsProcessed: 0, lastRunAt: null, lastDurationMs: null },
+          rem: { phase: "rem", runCount: 0, totalDurationMs: 0, totalItemsProcessed: 0, lastRunAt: null, lastDurationMs: null },
+          deepSleep: { phase: "deepSleep", runCount: 0, totalDurationMs: 0, totalItemsProcessed: 0, lastRunAt: null, lastDurationMs: null },
+        },
+      };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(service);
+
+  const invalid = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: { name: "engram.dreams_status", arguments: { windowHours: 0 } },
+  });
+  assert.match(toolCallErrorMessage(invalid), /windowHours must be a positive integer/);
+  assert.equal(calls, 0);
+
+  const fractional = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/call",
+    params: { name: "engram.dreams_status", arguments: { windowHours: 1.5 } },
+  });
+  assert.match(toolCallErrorMessage(fractional), /windowHours must be a positive integer/);
+  assert.equal(calls, 0);
+
+  const valid = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: { name: "engram.dreams_status", arguments: { windowHours: 3 } },
+  });
+  const result = valid?.result as { structuredContent?: { windowEnd?: string } };
+  assert.equal(result.structuredContent?.windowEnd, "2026-04-02T00:00:00.000Z");
+  assert.equal(capturedWindowHours, 3);
+  assert.equal(calls, 1);
+});
+
 test("engram.peer_set rejects non-string kind/displayName/notes (Codex P2 PR #756 round 2)", async () => {
   // Surface-symmetry test: HTTP rejects non-string field types with
   // 400; MCP must reject the same payloads with a tools/call error
@@ -346,13 +403,6 @@ test("engram.peer_set rejects non-string kind/displayName/notes (Codex P2 PR #75
   } as unknown as EngramAccessService;
   const server = new EngramMcpServer(fakeService);
 
-  // Helper: tools/call surfaces dispatcher errors via { result: { isError: true, content: [{text}] } }.
-  const errMessage = (resp: unknown): string => {
-    const r = resp as { result?: { isError?: boolean; content?: Array<{ text?: string }> } };
-    if (!r?.result?.isError) return "";
-    return r.result.content?.[0]?.text ?? "";
-  };
-
   // Non-string kind → error.
   const r1 = await server.handleRequest({
     jsonrpc: "2.0",
@@ -360,7 +410,7 @@ test("engram.peer_set rejects non-string kind/displayName/notes (Codex P2 PR #75
     method: "tools/call",
     params: { name: "engram.peer_set", arguments: { id: "bob", kind: 123 } },
   });
-  assert.match(errMessage(r1), /kind must be a string/);
+  assert.match(toolCallErrorMessage(r1), /kind must be a string/);
 
   // Non-string displayName → error.
   const r2 = await server.handleRequest({
@@ -369,7 +419,7 @@ test("engram.peer_set rejects non-string kind/displayName/notes (Codex P2 PR #75
     method: "tools/call",
     params: { name: "engram.peer_set", arguments: { id: "bob", displayName: 42 } },
   });
-  assert.match(errMessage(r2), /displayName must be a string/);
+  assert.match(toolCallErrorMessage(r2), /displayName must be a string/);
 
   // Non-string notes → error.
   const r3 = await server.handleRequest({
@@ -378,7 +428,7 @@ test("engram.peer_set rejects non-string kind/displayName/notes (Codex P2 PR #75
     method: "tools/call",
     params: { name: "engram.peer_set", arguments: { id: "bob", notes: { x: 1 } } },
   });
-  assert.match(errMessage(r3), /notes must be a string/);
+  assert.match(toolCallErrorMessage(r3), /notes must be a string/);
 
   // Service.peerSet must NOT have been invoked for any of the rejected payloads.
   assert.equal(lastSetArgs, null);
