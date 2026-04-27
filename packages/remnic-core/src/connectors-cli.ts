@@ -69,8 +69,21 @@ export interface ConnectorRow {
 export interface ConnectorRunResult {
   /** Number of new documents imported in this pass. */
   docsImported: number;
-  /** Error message if the sync failed, undefined on success. */
+  /**
+   * Error message if the sync or ingest failed, undefined on full success.
+   * When only the cursor write failed after a successful ingest,
+   * this field is undefined and `stateWriteError` carries the failure.
+   */
   error?: string;
+  /**
+   * Set when ingest succeeded but the subsequent cursor-state write failed.
+   * `docsImported` will reflect the actual count of successfully ingested docs
+   * so the operator knows data was persisted even though the cursor did not
+   * advance.  The cursor will be re-fetched from the prior position on the
+   * next poll (Codex P1 thread PRRT_kwDORJXyws59sm76, Cursor thread
+   * PRRT_kwDORJXyws59sm_N).
+   */
+  stateWriteError?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -265,26 +278,36 @@ export function renderConnectorsRunResult(
   result: ConnectorRunResult,
   format: ConnectorsOutputFormat,
 ): string {
+  // A run is "ok" when neither a sync/ingest error nor a state-write error
+  // is present.  A partial success (ingest ok, cursor write failed) still
+  // surfaces as a non-ok status so the operator knows to investigate.
+  const ok = result.error === undefined && result.stateWriteError === undefined;
+
   if (format === "json") {
     return JSON.stringify(
       {
         connector: connectorId,
         docsImported: result.docsImported,
         error: result.error ?? null,
-        ok: result.error === undefined,
+        stateWriteError: result.stateWriteError ?? null,
+        ok,
       },
       null,
       2,
     );
   }
 
-  const ok = result.error === undefined;
   if (format === "markdown") {
     const lines: string[] = [`# connectors run: \`${connectorId}\``, ""];
     lines.push(`- **Status:** ${ok ? "success" : "error"}`);
     lines.push(`- **Docs imported:** ${result.docsImported}`);
-    if (!ok) {
+    if (result.error !== undefined) {
       lines.push(`- **Error:** ${result.error}`);
+    }
+    if (result.stateWriteError !== undefined) {
+      lines.push(
+        `- **State-write error (docs ingested, cursor not advanced):** ${result.stateWriteError}`,
+      );
     }
     return lines.join("\n") + "\n";
   }
@@ -297,7 +320,17 @@ export function renderConnectorsRunResult(
   } else {
     lines.push(`connectors run: ${connectorId} — FAILED`);
     lines.push(`  docs_imported: ${result.docsImported}`);
-    lines.push(`  error:         ${result.error}`);
+    if (result.error !== undefined) {
+      lines.push(`  error:         ${result.error}`);
+    }
+    if (result.stateWriteError !== undefined) {
+      lines.push(
+        `  state_write_error: ${result.stateWriteError}`,
+      );
+      lines.push(
+        `  (docs were ingested; cursor was not advanced — next poll will re-fetch from prior position)`,
+      );
+    }
   }
   return lines.join("\n");
 }
@@ -360,31 +393,16 @@ export async function runConnectorPollOnce(
   args: RunConnectorPollOnceArgs,
 ): Promise<ConnectorRunResult> {
   const { connectorId, priorState, syncFn, ingestFn, writeCursorFn } = args;
-  let runResult: ConnectorRunResult;
+
+  let syncResult: Awaited<ReturnType<typeof syncFn>> | undefined;
+  let ingestError: string | undefined;
+
+  // ── Phase 1: fetch ──────────────────────────────────────────────────────────
   try {
-    const syncResult = await syncFn(priorState?.cursor ?? null);
-    // CRITICAL: ingest docs BEFORE advancing the cursor (CLAUDE.md gotcha #25).
-    // If ingestFn throws, the catch block retains priorState.cursor so the
-    // next poll re-fetches these docs from the same window.
-    if (syncResult.newDocs.length > 0) {
-      await ingestFn(syncResult.newDocs);
-    }
-    runResult = { docsImported: syncResult.newDocs.length };
-    await writeCursorFn({
-      cursor: syncResult.nextCursor,
-      lastSyncStatus: "success",
-      totalDocsImported:
-        (priorState?.totalDocsImported ?? 0) + syncResult.newDocs.length,
-    });
+    syncResult = await syncFn(priorState?.cursor ?? null);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    runResult = { docsImported: 0, error: msg };
-    // Guard the state write so a cursor-persistence failure (e.g. disk full,
-    // read-only memoryDir) does NOT mask the original sync/ingest error that
-    // is already captured in `runResult`.  Log the secondary failure for
-    // operator visibility but re-surface the primary error to the caller
-    // (CLAUDE.md gotcha #13 — wrap external service calls; Codex P2 thread
-    // PRRT_kwDORJXyws59sk8K, Cursor thread PRRT_kwDORJXyws59slAG).
+    // syncFn failed — persist error state with the OLD cursor.
     try {
       await writeCursorFn({
         cursor: priorState?.cursor ?? null,
@@ -394,15 +412,71 @@ export async function runConnectorPollOnce(
       });
     } catch (writeErr) {
       const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+      console.error(
+        `[remnic] connectors/${connectorId}: failed to persist error state after syncFn failure (${writeMsg}); original error: ${msg}`,
+      );
+    }
+    return { docsImported: 0, error: msg };
+  }
+
+  // ── Phase 2: ingest ─────────────────────────────────────────────────────────
+  // CRITICAL: ingest docs BEFORE advancing the cursor (CLAUDE.md gotcha #25).
+  // If ingestFn throws, write the error state with the OLD cursor so the
+  // next poll re-fetches the same document window.
+  if (syncResult.newDocs.length > 0) {
+    try {
+      await ingestFn(syncResult.newDocs);
+    } catch (err) {
+      ingestError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  if (ingestError !== undefined) {
+    // ingestFn failed — persist error state with the OLD cursor.
+    try {
+      await writeCursorFn({
+        cursor: priorState?.cursor ?? null,
+        lastSyncStatus: "error",
+        lastSyncError: ingestError,
+        totalDocsImported: priorState?.totalDocsImported ?? 0,
+      });
+    } catch (writeErr) {
+      const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
       // Intentionally not re-throwing: the original ingest error is the
       // actionable failure for the operator.  The state-write failure is
       // secondary and should not replace it in the rendered output.
+      // (CLAUDE.md gotcha #13; Codex P2 thread PRRT_kwDORJXyws59sk8K,
+      //  Cursor thread PRRT_kwDORJXyws59slAG)
       console.error(
-        `[remnic] connectors/${connectorId}: failed to persist error state (${writeMsg}); original error: ${msg}`,
+        `[remnic] connectors/${connectorId}: failed to persist error state after ingestFn failure (${writeMsg}); original error: ${ingestError}`,
       );
     }
+    return { docsImported: 0, error: ingestError };
   }
-  return runResult;
+
+  // ── Phase 3: advance cursor ─────────────────────────────────────────────────
+  // Ingest succeeded — advance the cursor.  If the cursor write fails, the
+  // docs ARE already in the memory layer so we must report the actual
+  // docsImported count.  Surface the state-write failure as a separate
+  // `stateWriteError` field so the operator can diagnose it without
+  // confusing it with a sync/ingest failure (Codex P1 thread
+  // PRRT_kwDORJXyws59sm76, Cursor thread PRRT_kwDORJXyws59sm_N).
+  const docsImported = syncResult.newDocs.length;
+  try {
+    await writeCursorFn({
+      cursor: syncResult.nextCursor,
+      lastSyncStatus: "success",
+      totalDocsImported: (priorState?.totalDocsImported ?? 0) + docsImported,
+    });
+  } catch (writeErr) {
+    const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+    // Docs are already ingested — preserve the count so the operator knows
+    // data was persisted.  The next poll will re-fetch from the prior cursor
+    // position but that only causes duplicate-ingest, not data loss.
+    return { docsImported, stateWriteError: writeMsg };
+  }
+
+  return { docsImported };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

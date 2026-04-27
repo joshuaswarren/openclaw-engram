@@ -4762,8 +4762,222 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
       return true;
     });
     await cmdConnectorsMarketplace(subAction, marketplaceRest, json);
+  } else if (action === "status") {
+    // `remnic connectors status` — live-connector status (defaults to JSON).
+    // Reads persisted ConnectorState files from the memory dir rather than
+    // booting an orchestrator; no network calls needed.
+    //
+    // Dynamic imports are used for the live-connector symbols so that the
+    // standalone `remnic` binary resolves them from the installed
+    // `@remnic/core` at runtime rather than requiring a static tsc path
+    // that traverses the workspace boundary (same pattern as cli.ts which
+    // uses `await import("./connectors/live/state-store.js")`).
+    const {
+      listConnectorStates: listLiveConnectorStates,
+      GOOGLE_DRIVE_CONNECTOR_ID: GDRIVE_ID,
+      NOTION_CONNECTOR_ID: NOTION_ID,
+      parseConnectorsStatusOptions: parseStatusOpts,
+      renderConnectorsList: renderLiveList,
+    } = await import("@remnic/core" as string);
+
+    const formatFlag = resolveFlagStrict(rest, "--format");
+    let parsed: { format: string };
+    try {
+      parsed = parseStatusOpts({ format: formatFlag });
+    } catch (err) {
+      process.stderr.write(
+        `connectors status: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      process.exitCode = 2;
+      return;
+    }
+    const memoryDir = resolveMemoryDir();
+    const states = await listLiveConnectorStates(memoryDir);
+    const stateMap = new Map(states.map((s: { id: string }) => [s.id, s]));
+    const rows = [
+      {
+        id: GDRIVE_ID as string,
+        displayName: "Google Drive",
+        enabled: true,
+        state: stateMap.get(GDRIVE_ID as string) ?? null,
+      },
+      {
+        id: NOTION_ID as string,
+        displayName: "Notion",
+        enabled: true,
+        state: stateMap.get(NOTION_ID as string) ?? null,
+      },
+    ];
+    console.log(renderLiveList(rows, parsed.format));
+  } else if (action === "run") {
+    // `remnic connectors run <name>` — manually trigger one incremental sync
+    // pass for the named live connector.  Boots a lightweight orchestrator
+    // so the ingest pipeline is available for persisting fetched docs.
+    //
+    // Dynamic imports are used for the live-connector and connectors-cli
+    // symbols (same reasoning as the `status` branch above).
+    const {
+      GOOGLE_DRIVE_CONNECTOR_ID: GDRIVE_ID,
+      NOTION_CONNECTOR_ID: NOTION_ID,
+      createGoogleDriveConnector: makeGDriveConnector,
+      validateGoogleDriveConfig: validateGDriveCfg,
+      createNotionConnector: makeNotionConnector,
+      validateNotionConfig: validateNotionCfg,
+      readConnectorState: readLiveConnectorState,
+      writeConnectorState: writeLiveConnectorState,
+      parseConnectorsListOptions: parseListOpts,
+      parseConnectorsRunName: parseRunName,
+      renderConnectorsRunResult: renderRunResult,
+      runConnectorPollOnce: pollOnce,
+    } = await import("@remnic/core" as string);
+
+    const rawName = nonFlagArgs[0];
+    let connectorName: string;
+    try {
+      connectorName = parseRunName(rawName);
+    } catch (err) {
+      process.stderr.write(
+        `connectors run: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      process.exitCode = 2;
+      return;
+    }
+    const formatFlag = resolveFlagStrict(rest, "--format");
+    let format: string;
+    try {
+      format = parseListOpts({ format: formatFlag }).format;
+    } catch (err) {
+      process.stderr.write(
+        `connectors run: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      process.exitCode = 2;
+      return;
+    }
+
+    initLogger();
+    const configPath = resolveConfigPath();
+    const raw = fs.existsSync(configPath)
+      ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+      : {};
+    const remnicCfg = raw.remnic ?? raw.engram ?? raw;
+    const config = parseConfig(remnicCfg);
+    const orchestrator = new Orchestrator(config);
+    await orchestrator.initialize();
+    await orchestrator.deferredReady;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cfg = (config as any).connectors;
+
+    const sharedIngestFn = async (docs: Array<{ title?: string; content: string }>) => {
+      const fetchedAt = new Date().toISOString();
+      const turns = docs.map((doc) => ({
+        role: "assistant" as const,
+        content: doc.title ? `# ${doc.title}\n\n${doc.content}` : doc.content,
+        timestamp: fetchedAt,
+      }));
+      await orchestrator.ingestBulkImportBatch(turns);
+    };
+
+    const makeWriteCursorFn =
+      (id: string) =>
+      async (state: {
+        cursor: unknown;
+        lastSyncStatus: string;
+        lastSyncError?: string;
+        totalDocsImported: number;
+      }) => {
+        await writeLiveConnectorState(config.memoryDir, id, {
+          id,
+          cursor: state.cursor,
+          lastSyncAt: new Date().toISOString(),
+          lastSyncStatus: state.lastSyncStatus,
+          ...(state.lastSyncError !== undefined
+            ? { lastSyncError: state.lastSyncError }
+            : {}),
+          totalDocsImported: state.totalDocsImported,
+        });
+      };
+
+    let runResult: { docsImported: number; error?: string; stateWriteError?: string };
+    if (connectorName === (GDRIVE_ID as string)) {
+      if (!cfg?.googleDrive?.enabled) {
+        process.stderr.write(
+          `connectors run: connector "${connectorName}" is disabled. Set connectors.googleDrive.enabled=true in config.\n`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      let validatedCfg;
+      try {
+        validatedCfg = validateGDriveCfg(cfg.googleDrive);
+      } catch (err) {
+        process.stderr.write(
+          `connectors run: invalid config for "${connectorName}": ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const connector = makeGDriveConnector();
+      const state = await readLiveConnectorState(config.memoryDir, connectorName);
+      runResult = await pollOnce({
+        connectorId: connectorName,
+        priorState: state,
+        syncFn: (cursor: unknown) =>
+          connector.syncIncremental({
+            cursor,
+            config: validatedCfg as unknown as Record<string, unknown>,
+          }),
+        ingestFn: sharedIngestFn,
+        writeCursorFn: makeWriteCursorFn(connectorName),
+      });
+    } else if (connectorName === (NOTION_ID as string)) {
+      if (!cfg?.notion?.enabled) {
+        process.stderr.write(
+          `connectors run: connector "${connectorName}" is disabled. Set connectors.notion.enabled=true in config.\n`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      let validatedCfg;
+      try {
+        validatedCfg = validateNotionCfg(cfg.notion);
+      } catch (err) {
+        process.stderr.write(
+          `connectors run: invalid config for "${connectorName}": ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const connector = makeNotionConnector();
+      const state = await readLiveConnectorState(config.memoryDir, connectorName);
+      runResult = await pollOnce({
+        connectorId: connectorName,
+        priorState: state,
+        syncFn: (cursor: unknown) =>
+          connector.syncIncremental({
+            cursor,
+            config: validatedCfg as unknown as Record<string, unknown>,
+          }),
+        ingestFn: sharedIngestFn,
+        writeCursorFn: makeWriteCursorFn(connectorName),
+      });
+    } else {
+      process.stderr.write(
+        `connectors run: unknown connector "${connectorName}". Known connectors: ${GDRIVE_ID as string}, ${NOTION_ID as string}.\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    const output = renderRunResult(connectorName, runResult, format);
+    if (runResult.error !== undefined || runResult.stateWriteError !== undefined) {
+      process.stderr.write(output + "\n");
+      process.exitCode = 1;
+    } else {
+      console.log(output);
+    }
   } else {
-    console.log("Usage: remnic connectors <list|install|remove|doctor|marketplace> [id]");
+    console.log("Usage: remnic connectors <list|install|remove|doctor|marketplace|status|run> [id]");
     process.exit(1);
   }
 }

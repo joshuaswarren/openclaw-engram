@@ -382,13 +382,18 @@ test("runConnectorPollOnce: writeCursorFn throws on error path — promise still
   assert.ok(result.error?.includes("sync_failed"));
 });
 
-test("runConnectorPollOnce: writeCursorFn throws on success path — error is captured in result", async () => {
-  // On the SUCCESS path, if writeCursorFn throws after docs are already
-  // ingested, the outer try-catch captures it.  The result carries the
-  // cursor-write error so the operator sees the failure via the rendered
-  // output rather than an unhandled rejection.  docs were ingested so
-  // docsImported reflects 0 (the error path resets it), but the error message
-  // surfaces the cursor-write failure so operators can diagnose it.
+test("runConnectorPollOnce: writeCursorFn throws on success path — docsImported preserved, stateWriteError set", async () => {
+  // Codex P1 thread PRRT_kwDORJXyws59sm76, Cursor thread PRRT_kwDORJXyws59sm_N.
+  //
+  // On the SUCCESS path, if writeCursorFn throws AFTER docs are already
+  // ingested, the result MUST:
+  //   1. report the actual docsImported count (docs ARE in the memory layer)
+  //   2. set stateWriteError (not error) so the operator can distinguish a
+  //      cursor-persistence failure from a sync/ingest failure
+  //   3. leave result.error undefined (the ingest itself succeeded)
+  //
+  // The docs were successfully ingested — reporting docsImported: 0 would
+  // mislead the operator into thinking no data was written.
   const args = makeArgs({
     writeCursorFn: async () => {
       throw new Error("success_cursor_write_failed");
@@ -397,9 +402,41 @@ test("runConnectorPollOnce: writeCursorFn throws on success path — error is ca
 
   const result = await runConnectorPollOnce(args);
 
-  assert.equal(result.docsImported, 0, "error path sets docsImported to 0");
-  assert.ok(
-    result.error?.includes("success_cursor_write_failed"),
-    `expected cursor-write error in result: ${result.error}`,
+  // Docs were already ingested — must reflect the real count.
+  assert.equal(
+    result.docsImported,
+    2,
+    "docsImported must reflect actual ingested count even when cursor write fails",
   );
+  // The cursor-write failure goes into stateWriteError, NOT error.
+  assert.ok(
+    result.stateWriteError?.includes("success_cursor_write_failed"),
+    `expected stateWriteError to contain cursor-write message, got: ${result.stateWriteError}`,
+  );
+  // error must be undefined — the sync/ingest path was clean.
+  assert.equal(
+    result.error,
+    undefined,
+    "result.error must be undefined when only the cursor write failed",
+  );
+});
+
+test("runConnectorPollOnce: writeCursorFn throws on success path — no new docs — stateWriteError set, docsImported 0", async () => {
+  // Edge case: zero new docs + cursor write failure.  docsImported should be 0
+  // (correctly reflecting no new docs) and stateWriteError should be set.
+  const args = makeArgs({
+    syncFn: async () => ({
+      newDocs: [],
+      nextCursor: makeCursor("cursor-v2"),
+    }),
+    writeCursorFn: async () => {
+      throw new Error("cursor_write_zero_docs");
+    },
+  });
+
+  const result = await runConnectorPollOnce(args);
+
+  assert.equal(result.docsImported, 0);
+  assert.ok(result.stateWriteError?.includes("cursor_write_zero_docs"));
+  assert.equal(result.error, undefined);
 });
