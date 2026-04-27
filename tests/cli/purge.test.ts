@@ -56,6 +56,8 @@ test("purge: ISO duration parser rejects partial durations", () => {
   assert.equal(parseDurationToMs("P1Yjunk"), null);
   assert.equal(parseDurationToMs("P"), null);
   assert.equal(parseDurationToMs("PT"), null);
+  assert.equal(parseDurationToMs("P1YT"), null);
+  assert.equal(parseDurationToMs("P30DT"), null);
   assert.equal(parseDurationToMs("P0Y0M0W0DT0H0M0S"), null);
 });
 

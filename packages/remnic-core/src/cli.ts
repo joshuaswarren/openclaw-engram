@@ -2258,6 +2258,9 @@ export function parseDurationToMs(raw: string): number | null {
   ) {
     return null;
   }
+  if (iso.includes("T") && match[5] === undefined && match[6] === undefined && match[7] === undefined) {
+    return null;
+  }
 
   let totalMs = 0;
   if (match[1]) totalMs += Number.parseInt(match[1], 10) * 365 * 86_400_000;
