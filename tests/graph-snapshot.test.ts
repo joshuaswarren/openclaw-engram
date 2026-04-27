@@ -13,7 +13,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import * as path from "node:path";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
 
 import { EngramAccessHttpServer } from "../src/access-http.js";
 import type { EngramAccessService } from "../src/access-service.js";
@@ -866,11 +866,19 @@ test(
         readsByPath.some((p) => p.endsWith(path.join("facts", "2026-04-20", "beta.md"))),
         `expected beta.md read, saw ${readsByPath.join(",")}`,
       );
-      // Resolved reads must remain inside the namespace root.
+      // Resolved reads must remain inside the namespace root.  The
+      // access-service loader canonicalizes the namespace root through
+      // `fs.realpath` (issue #691 PR 2/5 follow-up — codex P1 symlink
+      // bypass), so on platforms where the tmpdir is itself a symlink
+      // (macOS resolves `/var/folders/...` → `/private/var/folders/...`)
+      // we have to compare against the realpath form too.
+      const fs = await import("node:fs/promises");
+      const realDir = await fs.realpath(dir);
+      const realDirWithSep = realDir.endsWith(path.sep) ? realDir : realDir + path.sep;
       for (const p of readsByPath) {
         assert.ok(
-          p.startsWith(dir + path.sep) || p === dir,
-          `read path ${p} escaped namespace root ${dir}`,
+          p.startsWith(realDirWithSep) || p === realDir,
+          `read path ${p} escaped namespace root ${realDir}`,
         );
       }
     } finally {
@@ -879,8 +887,194 @@ test(
   },
 );
 
-// Suppress unused-import warning for `mkdir` / `writeFile` (kept for future
-// fixture extensions that exercise the orchestrator-backed loader).
-void mkdir;
-void writeFile;
+test(
+  "graphSnapshot loader rejects symlinked endpoints that escape the namespace",
+  async () => {
+    // Regression for the codex P1 follow-up on PR #734 (symlink bypass):
+    // the lexical containment check is insufficient because an
+    // in-namespace path can be a symlink to an out-of-namespace file.
+    // The loader must canonicalize via `fs.realpath` and reject
+    // resolved paths that escape the namespace root.
+    const root = await mkdtemp(path.join(os.tmpdir(), "engram-graph-snapshot-symlink-"));
+    try {
+      const ns = path.join(root, "ns");
+      const peer = path.join(root, "peer");
+      await mkdir(path.join(ns, "facts", "2026-04-20"), { recursive: true });
+      await mkdir(peer, { recursive: true });
 
+      // Out-of-namespace "secret" memory.
+      const secret = path.join(peer, "secret.md");
+      await writeFile(
+        secret,
+        "---\nid: secret\ncategory: secret\n---\nsecret\n",
+        "utf-8",
+      );
+
+      // In-namespace symlink that points at the secret.  A naive
+      // lexical guard would accept this because the symlink itself
+      // sits under the namespace root.
+      const fs = await import("node:fs/promises");
+      const symlinked = path.join(ns, "facts", "2026-04-20", "alpha.md");
+      await fs.symlink(secret, symlinked);
+
+      // Seed an edge that uses the symlinked path as both endpoints
+      // (a self-loop is enough to exercise the guard).
+      await appendEdge(ns, {
+        from: "facts/2026-04-20/alpha.md",
+        to: "facts/2026-04-20/alpha.md",
+        type: "entity",
+        weight: 1.0,
+        label: "symlink",
+        ts: "2026-04-20T12:00:00.000Z",
+      });
+
+      // Replicate the access-service realpath loader; verify the
+      // symlinked endpoint is rejected.
+      const namespaceRoot = await fs.realpath(ns);
+      const namespaceRootWithSep = namespaceRoot.endsWith(path.sep)
+        ? namespaceRoot
+        : namespaceRoot + path.sep;
+      const readsByPath: string[] = [];
+      const guardedLoader = async (relPath: string) => {
+        if (path.isAbsolute(relPath)) return null;
+        const candidate = path.resolve(namespaceRoot, relPath);
+        if (candidate !== namespaceRoot && !candidate.startsWith(namespaceRootWithSep)) {
+          return null;
+        }
+        let canonical: string;
+        try {
+          canonical = await fs.realpath(candidate);
+        } catch {
+          canonical = candidate;
+        }
+        if (canonical !== namespaceRoot && !canonical.startsWith(namespaceRootWithSep)) {
+          return null;
+        }
+        readsByPath.push(canonical);
+        // Real file read.
+        try {
+          const raw = await fs.readFile(canonical, "utf-8");
+          const m = raw.match(/category:\s*(\w+)/);
+          return {
+            category: m?.[1] ?? "unknown",
+            label: path.basename(canonical, path.extname(canonical)),
+          };
+        } catch {
+          return null;
+        }
+      };
+
+      const snapshot = await buildGraphSnapshot({
+        memoryDir: ns,
+        graphConfig: {
+          entityGraphEnabled: true,
+          timeGraphEnabled: true,
+          causalGraphEnabled: true,
+        },
+        request: {},
+        loadNode: guardedLoader,
+      });
+
+      // The symlinked endpoint surfaces as an orphan node with
+      // `kind: "unknown"` because the realpath check rejected it.
+      const node = snapshot.nodes.find((n) => n.id === "facts/2026-04-20/alpha.md");
+      assert.ok(node, "symlinked node should still surface");
+      assert.equal(node!.kind, "unknown", "symlinked endpoint must NOT load secret metadata");
+
+      // We never read the secret file via the symlink.
+      for (const readPath of readsByPath) {
+        assert.ok(
+          !readPath.includes("secret.md"),
+          `secret file must never be read via symlink: ${readPath}`,
+        );
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "graphSnapshot loads valid in-namespace files when baseDir is itself a symlink",
+  async () => {
+    // Regression for the Cursor thread PRRT_kwDORJXyws59rLFq on PR #738:
+    // if storage.baseDir is a symlink to a real directory, the realpath
+    // containment check must compare the realpath of the candidate against
+    // the realpath of baseDir — not the raw symlink path.  Without
+    // realpath-resolving both sides, a legitimate in-namespace file whose
+    // canonical path starts with the *real* directory prefix (not the
+    // symlink prefix) would fail the startsWith check and be rejected.
+    //
+    // This test creates:
+    //   root/real-ns/       — the actual memory directory on disk
+    //   root/link-ns  → root/real-ns  — symlink used as storage.baseDir
+    //
+    // Files are seeded into root/real-ns (via the symlink) and the service
+    // is constructed with link-ns as memoryDir.  The snapshot must resolve
+    // and return metadata for the valid files rather than treating them as
+    // out-of-namespace.
+    const root = await mkdtemp(path.join(os.tmpdir(), "engram-gs-baselink-"));
+    try {
+      const realNs = path.join(root, "real-ns");
+      const linkNs = path.join(root, "link-ns");
+      await mkdir(path.join(realNs, "facts", "2026-04-20"), { recursive: true });
+      // Create the symlink: link-ns → real-ns
+      await symlink(realNs, linkNs);
+
+      // Seed a valid memory file inside real-ns.
+      await writeFile(
+        path.join(realNs, "facts", "2026-04-20", "alpha.md"),
+        "---\nid: alpha\ncategory: fact\nupdated: 2026-04-20T12:00:00.000Z\n---\nalpha content\n",
+        "utf-8",
+      );
+
+      // Seed an edge using the symlink path as memoryDir.
+      // appendEdge writes to link-ns/.engram-graphs/entity.jsonl which
+      // resolves (via the symlink) to real-ns/.engram-graphs/entity.jsonl.
+      await appendEdge(linkNs, {
+        from: "facts/2026-04-20/alpha.md",
+        to: "facts/2026-04-20/alpha.md",
+        type: "entity",
+        weight: 1.0,
+        label: "self",
+        ts: "2026-04-20T12:00:00.000Z",
+      });
+
+      // Build the service with the *symlink* path as memoryDir.
+      const { service, readsByPath } = buildSnapshotService(linkNs);
+      const snapshot = await service.graphSnapshot({});
+
+      // The edge must survive (not be dropped as out-of-namespace).
+      assert.equal(snapshot.edges.length, 1, "edge should not be filtered out");
+
+      // The alpha node must surface and carry its loaded metadata (not fall
+      // back to kind:"unknown", which would indicate the loader returned null).
+      const alpha = snapshot.nodes.find((n) => n.id === "facts/2026-04-20/alpha.md");
+      assert.ok(alpha, "alpha node should be present in snapshot");
+      assert.notEqual(
+        alpha!.kind,
+        "unknown",
+        "symlinked baseDir must not cause in-namespace files to be rejected",
+      );
+
+      // At least one storage read must have been attempted for the alpha path.
+      assert.ok(
+        readsByPath.some((p) => p.endsWith(path.join("facts", "2026-04-20", "alpha.md"))),
+        `expected alpha.md read; got: ${readsByPath.join(",")}`,
+      );
+
+      // All storage reads must remain within the real namespace root.
+      const fs = await import("node:fs/promises");
+      const realRoot = await fs.realpath(linkNs);
+      const realRootWithSep = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep;
+      for (const p of readsByPath) {
+        assert.ok(
+          p === realRoot || p.startsWith(realRootWithSep),
+          `read escaped real namespace root: ${p} (real root: ${realRoot})`,
+        );
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
