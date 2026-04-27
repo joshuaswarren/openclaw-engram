@@ -270,10 +270,12 @@ export function collectPatternMemories(
 export interface PatternDerivedFromEntry {
   /** Raw `"<path>:<version>"` reference exactly as stored in `derived_from`. */
   ref: string;
-  /** Memory path component (everything before the final `:`). */
+  /** Source memory id, or the path component for older `path:version` references. */
   path: string;
-  /** Page-version number component (everything after the final `:`), or `null` if the ref is malformed. */
+  /** Page-version number component for older `path:version` references. */
   version: number | null;
+  /** True when an older path-version reference had an invalid version component. */
+  malformed?: boolean;
 }
 
 export interface PatternClusterMember {
@@ -322,8 +324,11 @@ export function explainPatternMemory(
   const derivedFrom: PatternDerivedFromEntry[] = (fm.derived_from ?? []).map(
     (ref) => {
       const lastColon = ref.lastIndexOf(":");
-      if (lastColon <= 0 || lastColon === ref.length - 1) {
+      if (lastColon < 0) {
         return { ref, path: ref, version: null };
+      }
+      if (lastColon === 0 || lastColon === ref.length - 1) {
+        return { ref, path: ref, version: null, malformed: true };
       }
       const path = ref.slice(0, lastColon);
       const versionStr = ref.slice(lastColon + 1);
@@ -332,7 +337,12 @@ export function explainPatternMemory(
         Number.isFinite(versionNum) && Number.isInteger(versionNum)
           ? versionNum
           : null;
-      return { ref, path, version };
+      return {
+        ref,
+        path,
+        version,
+        ...(version === null ? { malformed: true } : {}),
+      };
     },
   );
 
@@ -458,8 +468,13 @@ export function renderPatternExplain(
       lines.push("_No derived_from entries recorded._");
     } else {
       for (const entry of detail.derivedFrom) {
-        const versionStr = entry.version !== null ? `v${entry.version}` : "(malformed)";
-        lines.push(`- \`${entry.path}\` ${versionStr}`);
+        const versionStr =
+          entry.version !== null
+            ? ` v${entry.version}`
+            : entry.malformed
+              ? " (malformed)"
+              : "";
+        lines.push(`- \`${entry.path}\`${versionStr}`);
       }
     }
     lines.push("");
@@ -498,8 +513,13 @@ export function renderPatternExplain(
     lines.push("  (none)");
   } else {
     for (const entry of detail.derivedFrom) {
-      const versionStr = entry.version !== null ? `v${entry.version}` : "(malformed)";
-      lines.push(`  - ${entry.path} ${versionStr}`);
+      const versionStr =
+        entry.version !== null
+          ? ` v${entry.version}`
+          : entry.malformed
+            ? " (malformed)"
+            : "";
+      lines.push(`  - ${entry.path}${versionStr}`);
     }
   }
   lines.push("");

@@ -180,15 +180,15 @@ Pattern: mem_jkl012
   last_reinforced_at: 2026-04-27T08:00:00.000Z
   category:           preference
   status:             active
-  derived_via:        pattern_reinforcement
+  derived_via:        pattern-reinforcement
   path:               memories/preferences/mem_jkl012.md
 
 Canonical content:
   prefer short inline comments over block comments for single-line notes.
 
 Derived from (2):
-  - memories/preferences/mem_abc123.md v1
-  - memories/preferences/mem_def456.md v1
+  - mem_abc123
+  - mem_def456
 
 Cluster members (2):
   - mem_abc123 (status=superseded, supersededAt=2026-04-27T08:00:00.000Z)

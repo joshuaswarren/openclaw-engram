@@ -391,7 +391,7 @@ test("explainPatternMemory returns full detail for a valid canonical", () => {
     makeMemory("canon", {
       reinforcementCount: 4,
       lastReinforcedAt: "2026-04-20T00:00:00Z",
-      derivedFrom: ["facts/2026-01-01/old.md:3", "facts/2026-01-02/older.md:1"],
+      derivedFrom: ["mem-old", "mem-older"],
       derivedVia: "pattern-reinforcement",
       content: "The canonical body.",
     }),
@@ -407,23 +407,25 @@ test("explainPatternMemory returns full detail for a valid canonical", () => {
   assert.equal(detail!.clusterMembers.length, 0);
 });
 
-test("explainPatternMemory parses derived_from path and version correctly", () => {
+test("explainPatternMemory parses derived_from source ids and legacy path versions correctly", () => {
   const memories = [
     makeMemory("canon", {
       reinforcementCount: 2,
       derivedFrom: [
+        "mem-source-id",
         "facts/2026-01-01/mem.md:5",
-        "facts/2026-01-01/malformed",
         "facts/2026-01-01/also-bad:notanumber",
       ],
     }),
   ];
   const detail = explainPatternMemory(memories, "canon")!;
-  assert.equal(detail.derivedFrom[0].path, "facts/2026-01-01/mem.md");
-  assert.equal(detail.derivedFrom[0].version, 5);
-  assert.equal(detail.derivedFrom[1].path, "facts/2026-01-01/malformed");
-  assert.equal(detail.derivedFrom[1].version, null);
+  assert.equal(detail.derivedFrom[0].path, "mem-source-id");
+  assert.equal(detail.derivedFrom[0].version, null);
+  assert.equal(detail.derivedFrom[0].malformed, undefined);
+  assert.equal(detail.derivedFrom[1].path, "facts/2026-01-01/mem.md");
+  assert.equal(detail.derivedFrom[1].version, 5);
   assert.equal(detail.derivedFrom[2].version, null);
+  assert.equal(detail.derivedFrom[2].malformed, true);
 });
 
 test("explainPatternMemory collects cluster members sorted supersededAt desc then id asc", () => {
@@ -570,8 +572,8 @@ const sampleDetail: PatternExplainDetail = {
   canonicalContent: "The canonical fact body.",
   canonicalPath: "facts/2026-01-01/mem-001.md",
   derivedFrom: [
-    { ref: "facts/old.md:3", path: "facts/old.md", version: 3 },
-    { ref: "facts/older.md:1", path: "facts/older.md", version: 1 },
+    { ref: "mem-old", path: "mem-old", version: null },
+    { ref: "mem-older", path: "mem-older", version: null },
   ],
   clusterMembers: [
     {
@@ -589,7 +591,7 @@ test("renderPatternExplain text format shows all key fields", () => {
   assert.ok(output.includes("Pattern: mem-001"));
   assert.ok(output.includes("reinforcement_count: 7"));
   assert.ok(output.includes("The canonical fact body."));
-  assert.ok(output.includes("facts/old.md v3"));
+  assert.ok(output.includes("mem-old"));
   assert.ok(output.includes("mem-superseded-1"));
 });
 
@@ -599,7 +601,7 @@ test("renderPatternExplain markdown format shows heading and sections", () => {
   assert.ok(output.includes("## Canonical content"));
   assert.ok(output.includes("## Derived from (2)"));
   assert.ok(output.includes("## Cluster members (1)"));
-  assert.ok(output.includes("`facts/old.md` v3"));
+  assert.ok(output.includes("`mem-old`"));
 });
 
 test("renderPatternExplain json format produces valid JSON", () => {
@@ -644,7 +646,14 @@ test("renderPatternExplain handles missing lastReinforcedAt gracefully", () => {
 test("renderPatternExplain handles malformed derived_from version as (malformed) in markdown", () => {
   const withMalformed: PatternExplainDetail = {
     ...sampleDetail,
-    derivedFrom: [{ ref: "facts/old.md", path: "facts/old.md", version: null }],
+    derivedFrom: [
+      {
+        ref: "facts/old.md:notanumber",
+        path: "facts/old.md",
+        version: null,
+        malformed: true,
+      },
+    ],
   };
   const output = renderPatternExplain(withMalformed, "markdown");
   assert.ok(output.includes("(malformed)"));
