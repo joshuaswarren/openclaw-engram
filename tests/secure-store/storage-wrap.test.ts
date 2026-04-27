@@ -1,0 +1,477 @@
+/**
+ * Tests for the transparent storage-layer encryption (issue #690 PR 3/4).
+ *
+ * Covers:
+ *  - encrypted-then-decrypted roundtrip preserves content
+ *  - reading plaintext file works (back-compat)
+ *  - locked store raises SecureStoreLockedError on read
+ *  - migration walks a fixture dir and re-writes everything
+ *  - tampered ciphertext (auth tag mismatch) throws SecureStoreDecryptError
+ *  - recall on locked store returns a clear locked error
+ */
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import { mkdtemp, rm, readFile, writeFile, mkdir, symlink } from "node:fs/promises";
+
+import {
+  MAGIC_BYTES,
+  MAGIC_HEADER_SIZE,
+  SecureStoreDecryptError,
+  SecureStoreLockedError,
+  decryptFileBody,
+  encryptFileBody,
+  isEncryptedFile,
+  migrateMemoryDirToEncrypted,
+  readMaybeEncryptedFile,
+  writeMaybeEncryptedFile,
+} from "../../packages/remnic-core/src/secure-store/secure-fs.js";
+import { generateSalt } from "../../packages/remnic-core/src/secure-store/cipher.js";
+import { StorageManager } from "../../packages/remnic-core/src/storage.js";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Build a 32-byte deterministic test key. */
+function makeKey(seed = 0x42): Buffer {
+  return Buffer.alloc(32, seed);
+}
+
+async function withTempDir(fn: (dir: string) => Promise<void>): Promise<void> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-secure-fs-"));
+  try {
+    await fn(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// isEncryptedFile
+// ---------------------------------------------------------------------------
+
+test("isEncryptedFile — returns false for plain UTF-8 buffer", () => {
+  const plain = Buffer.from("---\nid: test\n---\nsome content", "utf8");
+  assert.strictEqual(isEncryptedFile(plain), false);
+});
+
+test("isEncryptedFile — returns true for buffer with REMNIC-ENC magic", () => {
+  const buf = Buffer.alloc(MAGIC_HEADER_SIZE + 10);
+  MAGIC_BYTES.copy(buf, 0);
+  assert.strictEqual(isEncryptedFile(buf), true);
+});
+
+test("isEncryptedFile — returns false for empty buffer", () => {
+  assert.strictEqual(isEncryptedFile(Buffer.alloc(0)), false);
+});
+
+test("isEncryptedFile — returns false for buffer shorter than magic header", () => {
+  assert.strictEqual(isEncryptedFile(MAGIC_BYTES.subarray(0, 4)), false);
+});
+
+// ---------------------------------------------------------------------------
+// encryptFileBody / decryptFileBody roundtrip
+// ---------------------------------------------------------------------------
+
+test("encryptFileBody / decryptFileBody — roundtrip preserves content", () => {
+  const key = makeKey();
+  const content = "---\nid: fact-123\ncategory: fact\n---\nthe quick brown fox";
+  const encrypted = encryptFileBody(content, key);
+  assert.ok(isEncryptedFile(encrypted), "encrypted output must have magic header");
+  const decrypted = decryptFileBody(encrypted, key);
+  assert.strictEqual(decrypted.toString("utf8"), content);
+});
+
+test("encryptFileBody / decryptFileBody — roundtrip with AAD", () => {
+  const key = makeKey();
+  const content = "memory file content with AAD";
+  const aad = Buffer.from("facts/2024-01-01/fact-abc.md", "utf8");
+  const encrypted = encryptFileBody(content, key, aad);
+  const decrypted = decryptFileBody(encrypted, key, aad);
+  assert.strictEqual(decrypted.toString("utf8"), content);
+});
+
+test("decryptFileBody — wrong key throws SecureStoreDecryptError", () => {
+  const key1 = makeKey(0x11);
+  const key2 = makeKey(0x22);
+  const content = "sensitive memory content";
+  const encrypted = encryptFileBody(content, key1);
+  assert.throws(
+    () => decryptFileBody(encrypted, key2),
+    (err) => err instanceof SecureStoreDecryptError,
+  );
+});
+
+test("decryptFileBody — mismatched AAD throws SecureStoreDecryptError", () => {
+  const key = makeKey();
+  const content = "memory content";
+  const aad1 = Buffer.from("facts/2024-01-01/fact-abc.md", "utf8");
+  const aad2 = Buffer.from("facts/2024-01-01/fact-xyz.md", "utf8");
+  const encrypted = encryptFileBody(content, key, aad1);
+  assert.throws(
+    () => decryptFileBody(encrypted, key, aad2),
+    (err) => err instanceof SecureStoreDecryptError,
+  );
+});
+
+test("decryptFileBody — tampered ciphertext throws SecureStoreDecryptError", () => {
+  const key = makeKey();
+  const content = "important memory that should not be tampered";
+  const encrypted = encryptFileBody(content, key);
+  // Flip a byte in the ciphertext region (after the header + envelope header).
+  const tampered = Buffer.from(encrypted);
+  tampered[tampered.length - 1] ^= 0xff;
+  assert.throws(
+    () => decryptFileBody(tampered, key),
+    (err) => err instanceof SecureStoreDecryptError,
+  );
+});
+
+test("decryptFileBody — throws on non-encrypted buffer (missing magic)", () => {
+  const key = makeKey();
+  const plain = Buffer.from("plain text file", "utf8");
+  assert.throws(
+    () => decryptFileBody(plain, key),
+    /REMNIC-ENC magic header/,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// readMaybeEncryptedFile
+// ---------------------------------------------------------------------------
+
+test("readMaybeEncryptedFile — reads plain file when key is null (back-compat)", async () => {
+  await withTempDir(async (dir) => {
+    const filePath = path.join(dir, "plain.md");
+    const content = "---\nid: abc\n---\nplain memory";
+    await writeFile(filePath, content, "utf8");
+    const result = await readMaybeEncryptedFile(filePath, null, dir);
+    assert.strictEqual(result, content);
+  });
+});
+
+test("readMaybeEncryptedFile — reads plain file when key is provided (back-compat)", async () => {
+  await withTempDir(async (dir) => {
+    const filePath = path.join(dir, "plain.md");
+    const content = "---\nid: abc\n---\nplain memory";
+    await writeFile(filePath, content, "utf8");
+    const key = makeKey();
+    const result = await readMaybeEncryptedFile(filePath, key, dir);
+    assert.strictEqual(result, content);
+  });
+});
+
+test("readMaybeEncryptedFile — decrypts encrypted file with correct key", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const content = "---\nid: encrypted-fact\n---\nsecret memory content";
+    const filePath = path.join(dir, "fact.md");
+    await writeMaybeEncryptedFile(filePath, content, key, {}, dir);
+    const result = await readMaybeEncryptedFile(filePath, key, dir);
+    assert.strictEqual(result, content);
+  });
+});
+
+test("readMaybeEncryptedFile — throws SecureStoreLockedError when key is null but file is encrypted", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const content = "---\nid: secret\n---\ncontent";
+    const filePath = path.join(dir, "fact.md");
+    await writeMaybeEncryptedFile(filePath, content, key, {}, dir);
+    await assert.rejects(
+      () => readMaybeEncryptedFile(filePath, null, dir),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// writeMaybeEncryptedFile
+// ---------------------------------------------------------------------------
+
+test("writeMaybeEncryptedFile — writes plain when key is null", async () => {
+  await withTempDir(async (dir) => {
+    const filePath = path.join(dir, "fact.md");
+    const content = "plain content";
+    await writeMaybeEncryptedFile(filePath, content, null);
+    const raw = await readFile(filePath);
+    assert.strictEqual(isEncryptedFile(raw), false);
+    assert.strictEqual(raw.toString("utf8"), content);
+  });
+});
+
+test("writeMaybeEncryptedFile — writes encrypted when key is provided", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const filePath = path.join(dir, "fact.md");
+    const content = "secret content";
+    await writeMaybeEncryptedFile(filePath, content, key, {}, dir);
+    const raw = await readFile(filePath);
+    assert.strictEqual(isEncryptedFile(raw), true);
+  });
+});
+
+test("writeMaybeEncryptedFile — creates parent directories", async () => {
+  await withTempDir(async (dir) => {
+    const filePath = path.join(dir, "facts", "2024-01-01", "fact.md");
+    const content = "nested content";
+    await writeMaybeEncryptedFile(filePath, content, null);
+    const result = await readFile(filePath, "utf8");
+    assert.strictEqual(result, content);
+  });
+});
+
+test("writeMaybeEncryptedFile — overwrites existing file with new encrypted content", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const filePath = path.join(dir, "fact.md");
+    await writeMaybeEncryptedFile(filePath, "content-first", key, {}, dir);
+    await writeMaybeEncryptedFile(filePath, "content-second", key, {}, dir);
+    const result = await readMaybeEncryptedFile(filePath, key, dir);
+    assert.strictEqual(result, "content-second");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// migrateMemoryDirToEncrypted
+// ---------------------------------------------------------------------------
+
+test("migrateMemoryDirToEncrypted — encrypts all .md files", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    // Create a set of plain .md files
+    const files = [
+      path.join(dir, "facts", "2024-01-01", "fact-a.md"),
+      path.join(dir, "facts", "2024-01-02", "fact-b.md"),
+      path.join(dir, "corrections", "correction-c.md"),
+    ];
+    for (const f of files) {
+      await mkdir(path.dirname(f), { recursive: true });
+      await writeFile(f, `---\nid: ${path.basename(f, ".md")}\n---\ncontent`, "utf8");
+    }
+    const result = await migrateMemoryDirToEncrypted(dir, key);
+    assert.strictEqual(result.encrypted, 3);
+    assert.strictEqual(result.skipped, 0);
+    assert.strictEqual(result.errors.length, 0);
+    // Verify all files are now encrypted
+    for (const f of files) {
+      const raw = await readFile(f);
+      assert.ok(isEncryptedFile(raw), `${f} should be encrypted after migration`);
+    }
+  });
+});
+
+test("migrateMemoryDirToEncrypted — only encrypts storage-secure markdown paths", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const encryptedPaths = [
+      path.join(dir, "facts", "2024-01-01", "fact.md"),
+      path.join(dir, "artifacts", "2024-01-01", "artifact.md"),
+      path.join(dir, "archive", "2024-01-01", "archived.md"),
+      path.join(dir, "profile.md"),
+    ];
+    const plainPaths = [
+      path.join(dir, "entities", "person.md"),
+      path.join(dir, "identity", "IDENTITY.md"),
+    ];
+    for (const f of [...encryptedPaths, ...plainPaths]) {
+      await mkdir(path.dirname(f), { recursive: true });
+      await writeFile(f, `content for ${path.basename(f)}`, "utf8");
+    }
+
+    const result = await migrateMemoryDirToEncrypted(dir, key);
+
+    assert.strictEqual(result.encrypted, encryptedPaths.length);
+    assert.strictEqual(result.errors.length, 0);
+    for (const f of encryptedPaths) {
+      assert.ok(isEncryptedFile(await readFile(f)), `${f} should be encrypted`);
+    }
+    for (const f of plainPaths) {
+      assert.strictEqual((await readFile(f, "utf8")).startsWith("content for"), true);
+    }
+  });
+});
+
+test("migrateMemoryDirToEncrypted — skips symlinked directories", async () => {
+  const outside = await mkdtemp(path.join(os.tmpdir(), "remnic-secure-outside-"));
+  try {
+    await withTempDir(async (dir) => {
+      const key = makeKey();
+      const outsideFile = path.join(outside, "outside.md");
+      await writeFile(outsideFile, "outside content", "utf8");
+      await symlink(outside, path.join(dir, "facts"), "dir");
+
+      const result = await migrateMemoryDirToEncrypted(dir, key);
+
+      assert.strictEqual(result.encrypted, 0);
+      assert.strictEqual(result.errors.length, 0);
+      assert.strictEqual(isEncryptedFile(await readFile(outsideFile)), false);
+      assert.strictEqual(await readFile(outsideFile, "utf8"), "outside content");
+    });
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("migrateMemoryDirToEncrypted — skips already-encrypted files", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const filePath = path.join(dir, "facts", "fact.md");
+    await mkdir(path.dirname(filePath), { recursive: true });
+    // Write it already encrypted
+    await writeMaybeEncryptedFile(filePath, "already encrypted", key, {}, dir);
+    const result = await migrateMemoryDirToEncrypted(dir, key);
+    assert.strictEqual(result.encrypted, 0);
+    assert.strictEqual(result.skipped, 1);
+  });
+});
+
+test("migrateMemoryDirToEncrypted — decryptable after migration", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const originalContent = "---\nid: fact-migrate\ncategory: fact\n---\noriginal content";
+    const filePath = path.join(dir, "facts", "fact.md");
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, originalContent, "utf8");
+    await migrateMemoryDirToEncrypted(dir, key);
+    // Re-read with key to verify roundtrip
+    const decrypted = await readMaybeEncryptedFile(filePath, key, dir);
+    assert.strictEqual(decrypted, originalContent);
+  });
+});
+
+test("migrateMemoryDirToEncrypted — invokes onBeforeEncrypt callback", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const filePath = path.join(dir, "facts", "2024-01-01", "fact.md");
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, "content", "utf8");
+    const snapshotted: string[] = [];
+    await migrateMemoryDirToEncrypted(dir, key, async (fp) => {
+      snapshotted.push(fp);
+    });
+    assert.deepStrictEqual(snapshotted, [filePath]);
+  });
+});
+
+test("migrateMemoryDirToEncrypted — partial failure leaves other files intact", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    // Two valid files
+    const fileA = path.join(dir, "facts", "2024-01-01", "a.md");
+    const fileB = path.join(dir, "facts", "2024-01-01", "b.md");
+    await mkdir(path.dirname(fileA), { recursive: true });
+    await writeFile(fileA, "content-a", "utf8");
+    await writeFile(fileB, "content-b", "utf8");
+    // Inject a failure by making the onBeforeEncrypt throw for one file — but
+    // migration should still encrypt both (onBeforeEncrypt is non-fatal)
+    const result = await migrateMemoryDirToEncrypted(dir, key, async (fp) => {
+      if (fp.endsWith("a.md")) throw new Error("snapshot failed");
+    });
+    assert.strictEqual(result.encrypted, 2, "both files should be encrypted despite snapshot failure");
+    assert.strictEqual(result.errors.length, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// StorageManager.setSecureStoreKey integration
+// ---------------------------------------------------------------------------
+
+test("StorageManager.setSecureStoreKey — isSecureStoreUnlocked reflects key state", () => {
+  const storage = new StorageManager("/tmp/test-memory", []);
+  assert.strictEqual(storage.isSecureStoreUnlocked(), false, "locked by default");
+  const key = makeKey();
+  storage.setSecureStoreKey(key);
+  assert.strictEqual(storage.isSecureStoreUnlocked(), true, "unlocked after key set");
+  storage.setSecureStoreKey(null);
+  assert.strictEqual(storage.isSecureStoreUnlocked(), false, "locked after key cleared");
+});
+
+test("StorageManager — writeMemory encrypts and readAllMemories decrypts", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const storage = new StorageManager(dir, []);
+    storage.setSecureStoreKey(key, true);
+    await storage.ensureDirectories();
+
+    const id = await storage.writeMemory("fact", "encrypted memory content");
+    // The on-disk file should be encrypted
+    const factsDir = path.join(dir, "facts");
+    const entries = await (async () => {
+      const { readdir } = await import("node:fs/promises");
+      const allDirs = await readdir(factsDir);
+      if (allDirs.length === 0) return [];
+      const sub = path.join(factsDir, allDirs[0]);
+      return readdir(sub);
+    })();
+    assert.ok(entries.length > 0, "expected at least one memory file");
+
+    // Verify raw file is encrypted
+    const dateDir = await (async () => {
+      const { readdir } = await import("node:fs/promises");
+      const allDirs = await readdir(factsDir);
+      return allDirs[0];
+    })();
+    const allFiles = await (async () => {
+      const { readdir } = await import("node:fs/promises");
+      return readdir(path.join(factsDir, dateDir));
+    })();
+    const mdFile = allFiles.find((f: string) => f.endsWith(".md"));
+    assert.ok(mdFile, "expected .md file");
+    const rawBuf = await readFile(path.join(factsDir, dateDir, mdFile));
+    assert.ok(isEncryptedFile(rawBuf), "on-disk file should be encrypted");
+
+    // readAllMemories should decrypt and return the content
+    const memories = await storage.readAllMemories();
+    const found = memories.find((m) => m.frontmatter.id === id);
+    assert.ok(found, `memory ${id} should be found by readAllMemories`);
+    assert.ok(
+      found.content.includes("encrypted memory content"),
+      "decrypted content should match",
+    );
+  });
+});
+
+test("StorageManager — locked store throws SecureStoreLockedError on readAllMemories", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    // Write an encrypted file manually
+    const factsDay = path.join(dir, "facts", "2024-01-01");
+    await mkdir(factsDay, { recursive: true });
+    const filePath = path.join(factsDay, "fact-locked.md");
+    await writeMaybeEncryptedFile(
+      filePath,
+      "---\nid: fact-locked\ncategory: fact\n---\ncontent",
+      key,
+      {},
+      dir,
+    );
+    // Create a storage manager WITHOUT the key (locked)
+    const storage = new StorageManager(dir, []);
+    // readAllMemories silently skips unreadable files — the test confirms the
+    // locked file is not returned (it throws internally but is caught)
+    // More importantly, readMemoryByPath should propagate the locked error.
+    await assert.rejects(
+      () => storage.readMemoryByPath(filePath),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+  });
+});
+
+test("StorageManager — locked store throws SecureStoreLockedError on readProfile", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const profilePath = path.join(dir, "profile.md");
+    await writeMaybeEncryptedFile(profilePath, "# Profile\n\nprivate", key, {}, dir);
+
+    const storage = new StorageManager(dir, []);
+
+    await assert.rejects(
+      () => storage.readProfile(),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+  });
+});

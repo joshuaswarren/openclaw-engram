@@ -4193,17 +4193,13 @@ export class EngramAccessService {
     // scoped storage dir while delegating everything else to the real
     // orchestrator (buffer, qmd, extraction queue, etc. are process-global
     // and don't require further namespace scoping for a read-only snapshot).
-    const orchestratorProxy = Object.create(this.orchestrator) as typeof this.orchestrator;
-    // `config` is declared readonly on the orchestrator class, but the proxy
-    // is a fresh object created from the prototype — assigning to its own
-    // property does not mutate the underlying orchestrator. Cast to a
-    // mutable shape locally so the readonly modifier doesn't reject the
-    // initial property write on the proxy. (Pre-existing typecheck issue
-    // surfaced after main's #688 PR landed; left otherwise unchanged.)
-    (orchestratorProxy as { config: PluginConfig }).config = {
-      ...this.orchestrator.config,
-      memoryDir: storage.dir,
-    };
+    const orchestratorProxy = Object.create(this.orchestrator, {
+      config: {
+        value: { ...this.orchestrator.config, memoryDir: storage.dir },
+        enumerable: true,
+        configurable: true,
+      },
+    }) as import("./console/state.js").ConsoleStateOrchestratorLike;
     return gatherConsoleState(orchestratorProxy);
   }
 
@@ -4330,6 +4326,41 @@ export class EngramAccessService {
     // the delete to an arbitrary `identity.md` outside `memoryDir`.
     const deleted = await peers.deletePeer(this.orchestrator.config.memoryDir, peerId);
     return { ok: true, deleted };
+  }
+
+  /**
+   * Destructively purge the entire peer directory for a given peerId —
+   * `identity.md`, `profile.md`, `interactions.log.md`, and any other
+   * files in `peers/{id}/`. Requires `confirm: "yes"` to prevent
+   * accidental invocation.
+   *
+   * This is the DESTRUCTIVE counterpart to `peerDelete`, which only
+   * removes `identity.md`. All companion files are permanently removed.
+   *
+   * Returns `{ ok: true, purged: true }` when the directory existed and
+   * was removed; `{ ok: true, purged: false }` when the directory did
+   * not exist (idempotent no-op).
+   */
+  async peerForget(
+    peerId: string,
+    opts: { confirm: string },
+  ): Promise<{ ok: true; purged: boolean }> {
+    const peers = await import("./peers/index.js");
+    const validateId: (id: unknown) => void = peers.assertValidPeerId;
+    try {
+      validateId(peerId);
+    } catch (err) {
+      throw new EngramAccessInputError((err as Error).message);
+    }
+    if (opts.confirm !== "yes") {
+      throw new EngramAccessInputError(
+        "peerForget requires confirm: 'yes' to prevent accidental data loss",
+      );
+    }
+    const result = await peers.forgetPeer(this.orchestrator.config.memoryDir, peerId, {
+      confirm: "yes",
+    });
+    return { ok: true, purged: result.purged };
   }
 
   /**

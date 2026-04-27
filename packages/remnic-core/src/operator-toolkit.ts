@@ -1150,21 +1150,30 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   });
 
   const agentAccessEnabled = config.agentAccessHttp?.enabled === true;
+  // A SecretRef object counts as "configured" (issue #757) — resolution
+  // happens at service-start time, not at doctor-time.  We only check that
+  // *something* is set; we never log the resolved value.
+  const rawAuthToken = config.agentAccessHttp?.authToken;
+  const authTokenConfigured =
+    (typeof rawAuthToken === "string" && rawAuthToken.length > 0) ||
+    (rawAuthToken !== null &&
+      typeof rawAuthToken === "object" &&
+      typeof (rawAuthToken as { source?: unknown }).source === "string");
   checks.push({
     key: "access_http_auth",
     status: !agentAccessEnabled
       ? "warn"
-      : config.agentAccessHttp?.authToken
+      : authTokenConfigured
       ? "ok"
       : "error",
     summary: !agentAccessEnabled
       ? "Agent access HTTP bridge is disabled."
-      : config.agentAccessHttp?.authToken
+      : authTokenConfigured
       ? "Agent access HTTP bridge has an auth token configured."
       : "Agent access HTTP bridge is enabled without an auth token.",
     remediation: !agentAccessEnabled
       ? "Ignore unless you plan to enable the HTTP bridge."
-      : config.agentAccessHttp?.authToken
+      : authTokenConfigured
       ? undefined
       : "Set `agentAccessHttp.authToken` before exposing the bridge.",
   });

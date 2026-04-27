@@ -96,10 +96,34 @@ The reasoner is **disabled by default** and must be opted in via
 
 ## Recall integration
 
-PR 3/5 wires the peer registry into the recall pipeline. When a
-`peer` field is included in a recall request, Remnic injects a brief
-excerpt from that peer's `profile.md` into the prompt context. Recall
-X-ray output annotates which profile excerpt was injected.
+PR 3/5 wires the peer registry into the recall pipeline. When a peer is
+registered for the active session (`orchestrator.setPeerIdForSession`),
+Remnic injects a brief excerpt from that peer's `profile.md` into the
+prompt context as a `## Peer Profile` section.
+
+### Recall X-ray annotation
+
+When `xrayCapture: true` is passed to recall, the resulting
+`RecallXraySnapshot` includes a `peerProfileInjection` field:
+
+```ts
+{
+  peerProfileInjection: {
+    peerId: "codex-agent",
+    fieldsInjected: 2        // number of fields after maxFields cap
+  } | null                   // null = no injection (disabled, no peer, no profile)
+}
+```
+
+- **Non-null** — peer profile was injected; `fieldsInjected` indicates
+  how many fields were included after the `peerProfileRecallMaxFields` cap.
+- **Explicit `null`** — feature was enabled and a peer was registered, but
+  no profile was found or it had no fields.
+- **Absent** (`undefined`) — `peerProfileRecallEnabled` was `false` or no
+  peer was registered for the session; the field is omitted entirely.
+
+This lets operators correlate recall-quality differences with peer-profile
+injection in the X-ray trace.
 
 ## CLI commands
 
@@ -110,6 +134,7 @@ remnic peer list [--json]
 remnic peer show <id> [--json]
 remnic peer set <id> [--kind <kind>] [--display-name <name>] [--notes <text>] [--json]
 remnic peer delete <id> [--json]
+remnic peer forget <id> --confirm yes [--json]
 remnic peer profile <id> [--json]
 remnic peer migrate [--dry-run] [--display-name <name>] [--json]
 ```
@@ -135,6 +160,68 @@ fields instead.
 Removes `peers/{id}/identity.md`. The peer directory and companion files
 (`profile.md`, `interactions.log.md`) are left in place. Idempotent:
 returns a no-op result when the peer does not exist.
+
+### `remnic peer forget <id> --confirm yes`
+
+**DESTRUCTIVE.** Purges the entire peer directory — `identity.md`,
+`profile.md`, `interactions.log.md`, and any other companion files under
+`peers/{id}/`. All data is permanently removed.
+
+```
+remnic peer forget <id> --confirm yes [--json]
+```
+
+Requires `--confirm yes` exactly. Any other value (or omitting the flag)
+aborts the command with a non-zero exit code and prints a usage error.
+
+**Properties:**
+
+- **Idempotent** — if the peer directory does not exist the command returns
+  a no-op result (`{ ok: true, purged: false }`) rather than erroring.
+- **Safe to run twice** — second call after a successful purge is a no-op.
+- **All-or-nothing** — uses `fs.rm({ recursive: true })` so the OS handles
+  partial-directory state atomically; no file-by-file manual cleanup.
+
+**Contrast with `peer delete`:** `peer delete` only removes `identity.md`
+and leaves the peer directory and companion files intact (useful when you
+want to de-register a peer identity without losing its interaction history).
+`peer forget` removes everything.
+
+**Example output:**
+
+```
+Purged all data for peer "codex-agent".
+```
+
+```
+Peer "codex-agent" directory not found (no-op).
+```
+
+The `--json` flag emits `{ "ok": true, "purged": true|false }`.
+
+#### HTTP surface
+
+```
+DELETE /engram/v1/peers/:id?forget=true
+Content-Type: application/json
+
+{ "confirm": "yes" }
+```
+
+Returns `200 { "ok": true, "purged": true|false }` on success.
+Returns `400 { "error": "confirm_required" }` when the body omits
+`{ "confirm": "yes" }`.
+
+#### MCP tool
+
+`engram.peer_forget` (also `remnic.peer_forget`):
+
+```json
+{ "id": "codex-agent", "confirm": "yes" }
+```
+
+Returns `{ "ok": true, "purged": true|false }`. Throws when `confirm` is
+absent or not `"yes"`.
 
 ### `remnic peer profile <id>`
 
@@ -189,8 +276,9 @@ PR 4/5 shipped the following HTTP endpoints and MCP tools:
 | List peers | `GET /engram/v1/peers` | `engram.peer_list` |
 | Get peer | `GET /engram/v1/peers/:id` | `engram.peer_get` |
 | Set peer | `PUT /engram/v1/peers/:id` | `engram.peer_set` |
-| Delete peer | `DELETE /engram/v1/peers/:id` | `engram.peer_delete` |
-| Get profile | `GET /engram/v1/peers/:id/profile` | `engram.peer_profile` |
+| Delete peer (identity only) | `DELETE /engram/v1/peers/:id` | `engram.peer_delete` |
+| Forget peer (full purge) | `DELETE /engram/v1/peers/:id?forget=true` (body: `{"confirm":"yes"}`) | `engram.peer_forget` |
+| Get profile | `GET /engram/v1/peers/:id/profile` | `engram.peer_profile_get` |
 
 ## Relationship to the legacy identity-anchor
 
@@ -224,8 +312,9 @@ mv ~/.remnic/identity/identity-anchor.md ~/.remnic/identity/identity-anchor.md.b
 - **Provenance everywhere.** Every profile field carries a list of
   `PeerProfileFieldProvenance` entries pointing back to the originating
   session/signal. You can audit exactly why a profile claim exists.
-- **Forget is destructive.** Use `remnic peer delete <id>` to remove the
-  identity kernel; peer directories and companion files are left for
-  manual cleanup.
+- **Forget is destructive.** Use `remnic peer forget <id> --confirm yes`
+  to permanently purge the full peer directory (identity, profile, and
+  interaction log). Use `remnic peer delete <id>` to remove only the
+  identity kernel while preserving companion files.
 - **Capsule export gating.** Capsule export (issue #676) does not
   include peer profiles unless explicitly opted in.

@@ -8,7 +8,11 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Message } from "../../../adapters/types.js";
-import { answerBenchmarkQuestion } from "../../../answering.js";
+import {
+  answerBenchmarkQuestion,
+  type BenchmarkAnswerFormat,
+} from "../../../answering.js";
+import { benchmarkRecallBudgetForSessionCount } from "../../../recall-budget.js";
 import type {
   BenchmarkDefinition,
   BenchmarkResult,
@@ -41,6 +45,27 @@ const SPLIT_ORDER: Record<string, number> = {
   "1M": 2,
   "10M": 3,
 };
+const SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN =
+  "(?:syntax highlight(?:ed|ing) code blocks?|code blocks? with syntax highlighting)";
+const SYNTAX_HIGHLIGHTING_WEAKENING_AFTER_PATTERN =
+  "\\b(?:(?:is|are|be|being)?\\s*(?:not required|not needed|optional|unnecessary)|(?:isn't|isnt|aren't|arent|wasn't|wasnt|weren't|werent)\\s+(?:required|needed|used|enabled|applied)|(?:is|are|be|being)?\\s*disabled|(?:must|should|do|does|is|are)?\\s*(?:not|never)\\s+(?:be\\s+)?(?:used|required|needed|enabled|applied))\\b";
+const SYNTAX_HIGHLIGHTING_DIRECT_NEGATED_BEFORE = new RegExp(
+  "\\b(?:do not|don't|dont|must not|should not|never)\\s+(?:\\w+\\s+){0,3}(?:use|include|format|write|return|provide|apply|enable)\\s+(?:\\w+\\s+){0,3}" +
+    SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN,
+);
+const SYNTAX_HIGHLIGHTING_SHORT_NEGATED_BEFORE = new RegExp(
+  "\\b(?:without|avoid|disable|no)\\s+(?:\\w+\\s+){0,3}" +
+    SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN,
+);
+const SYNTAX_HIGHLIGHTING_NEGATED_AFTER = new RegExp(
+  `${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}.{0,60}${SYNTAX_HIGHLIGHTING_WEAKENING_AFTER_PATTERN}`,
+);
+const SYNTAX_HIGHLIGHTING_NOT_OPTIONAL_AFTER = new RegExp(
+  `${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}.{0,60}\\b(?:is|are|be|being)?\\s*not\\s+optional\\b`,
+);
+const SYNTAX_HIGHLIGHTING_RUBRIC = new RegExp(
+  SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN,
+);
 
 export const beamDefinition: BenchmarkDefinition = {
   id: "beam",
@@ -72,6 +97,11 @@ interface BeamSession {
 interface BeamDatasetSource {
   totalTasks?: number;
   entries(): AsyncIterable<BeamDatasetEntry>;
+}
+
+interface SyntaxExtraTargetDetails {
+  normalized: string;
+  punctuatedTokens: string[];
 }
 
 export async function runBeamBenchmark(
@@ -109,12 +139,16 @@ export async function runBeamBenchmark(
       for (const probe of questions) {
         const taskResultId = `${entry.scale}-${entry.conversation.conversation_id}-${ability}-${taskIndex}`;
         const expected = buildExpectedAnswer(probe);
+        const answerFormat = answerFormatForAbility(ability);
         try {
           const rubricTargets = normalizeRubricTargets(probe.rubric);
           const { result: recalledText, durationMs } = await timed(async () => {
+            const recallBudget = benchmarkRecallBudgetForSessionCount(
+              sessionIds.length,
+            );
             const recalledSessions = await Promise.all(
               sessionIds.map((sessionId) =>
-                options.system.recall(sessionId, probe.question),
+                options.system.recall(sessionId, probe.question, recallBudget),
               ),
             );
             return recalledSessions.filter(Boolean).join("\n\n");
@@ -123,6 +157,8 @@ export async function runBeamBenchmark(
             question: probe.question,
             recalledText,
             responder: options.system.responder,
+            answerMode: "strict",
+            answerFormat,
           });
           const searchResults = await options.system.search(probe.question, 10);
           const judgeResult = await llmJudgeScoreDetailed(
@@ -168,6 +204,7 @@ export async function runBeamBenchmark(
               planReference: probe.plan_reference,
               sourceChatIds: probe.source_chat_ids,
               rubric: probe.rubric,
+              answerFormat,
               recalledLength: recalledText.length,
               answeredLength: answered.finalAnswer.length,
               recalledText,
@@ -357,6 +394,13 @@ async function* iterateDatasetFiles(
       break;
     }
   }
+}
+
+function answerFormatForAbility(ability: string): BenchmarkAnswerFormat {
+  if (ability === "instruction_following") {
+    return "instruction";
+  }
+  return "short-with-specifics";
 }
 
 async function* streamJsonDataset(
@@ -878,10 +922,132 @@ function computeRubricCoverage(actual: string, rubricTargets: string[]): number 
     return 0;
   }
 
-  const matches = rubricTargets.filter((target) =>
-    containsAnswer(actual, target) === 1,
-  ).length;
+  const matches = rubricTargets.filter((target) => rubricTargetMatches(actual, target)).length;
   return matches / rubricTargets.length;
+}
+
+function rubricTargetMatches(actual: string, target: string): boolean {
+  if (mentionsSyntaxHighlightingRequirement(target)) {
+    return syntaxHighlightingRubricMatches(actual, target);
+  }
+
+  if (containsAnswer(actual, target) === 1) {
+    return true;
+  }
+
+  return false;
+}
+
+function syntaxHighlightingRubricMatches(actual: string, target: string): boolean {
+  const targetNegatesSyntaxHighlighting = negatesSyntaxHighlighting(target);
+  const actualNegatesSyntaxHighlighting = negatesSyntaxHighlighting(actual);
+  const extraTargetDetails = syntaxHighlightingExtraTargetDetails(
+    target,
+    targetNegatesSyntaxHighlighting,
+  );
+  return (
+    mentionsSyntaxHighlightingRequirement(target) &&
+    mentionsSyntaxHighlightingRequirement(actual) &&
+    (targetNegatesSyntaxHighlighting
+      ? actualNegatesSyntaxHighlighting
+      : !actualNegatesSyntaxHighlighting) &&
+    (extraTargetDetails.normalized.length === 0 ||
+      rubricPhraseContains(actual, extraTargetDetails.normalized)) &&
+    extraTargetDetails.punctuatedTokens.every(
+      (token) => containsAnswer(actual, token) === 1,
+    )
+  );
+}
+
+function mentionsSyntaxHighlightingRequirement(value: string): boolean {
+  return SYNTAX_HIGHLIGHTING_RUBRIC.test(normalizeRubricPhrase(value));
+}
+
+function negatesSyntaxHighlighting(value: string): boolean {
+  return splitRubricClauses(value).some(
+    (clause) =>
+      !SYNTAX_HIGHLIGHTING_NOT_OPTIONAL_AFTER.test(clause) &&
+      (SYNTAX_HIGHLIGHTING_DIRECT_NEGATED_BEFORE.test(clause) ||
+        SYNTAX_HIGHLIGHTING_SHORT_NEGATED_BEFORE.test(clause) ||
+        SYNTAX_HIGHLIGHTING_NEGATED_AFTER.test(clause)),
+  );
+}
+
+function splitRubricClauses(value: string): string[] {
+  return value
+    .split(/[.,;:]+/)
+    .map(normalizeRubricPhrase)
+    .filter((clause) => clause.length > 0);
+}
+
+function syntaxHighlightingExtraTargetDetails(
+  target: string,
+  targetNegatesSyntaxHighlighting: boolean,
+): SyntaxExtraTargetDetails {
+  let normalized = normalizeRubricPhrase(target)
+    .replace(SYNTAX_HIGHLIGHTING_RUBRIC, " ")
+    .replace(/\b(?:e g|i e)\b/g, " ")
+    .replace(/\b(?:and|with|the|a|an)\b/g, " ");
+  if (targetNegatesSyntaxHighlighting) {
+    normalized = normalized.replace(
+      /\b(?:do not|don't|dont|must not|should not|never|avoid|disable|without|no|use|include|format|write|return|provide|apply|enable)\b/g,
+      " ",
+    );
+  }
+
+  return {
+    normalized: normalized
+      .replace(/\s+/g, " ")
+      .trim(),
+    punctuatedTokens: extractPunctuatedDetailTokens(target),
+  };
+}
+
+function extractPunctuatedDetailTokens(target: string): string[] {
+  const matches = target.match(
+    /(?:\.[a-z0-9]+|[a-z0-9]+(?:[+#]+|(?:\.[a-z0-9]+)+))/gi,
+  );
+  return [
+    ...new Set(
+      (matches ?? []).filter((token) => !isEditorialAbbreviationToken(token)),
+    ),
+  ];
+}
+
+function isEditorialAbbreviationToken(token: string): boolean {
+  return token.toLowerCase() === "e.g" || token.toLowerCase() === "i.e";
+}
+
+function rubricPhraseContains(actual: string, expected: string): boolean {
+  const actualTokens = tokenizeRubricPhrase(actual);
+  const expectedTokens = tokenizeRubricPhrase(expected);
+  if (expectedTokens.length === 0) {
+    return true;
+  }
+  if (expectedTokens.length > actualTokens.length) {
+    return false;
+  }
+
+  return actualTokens.some((_, index) =>
+    expectedTokens.every(
+      (token, offset) => actualTokens[index + offset] === token,
+    ),
+  );
+}
+
+function tokenizeRubricPhrase(value: string): string[] {
+  return normalizeRubricPhrase(value)
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+}
+
+function normalizeRubricPhrase(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[-_]+/g, " ")
+    .replace(/[^\w\s']/g, " ")
+    .replace(/\s+/g, " ");
 }
 
 function normalizeLimit(limit: number | undefined): number | undefined {

@@ -72,6 +72,47 @@ function coerceBooleanLike(value: unknown): boolean | undefined {
   return undefined;
 }
 
+/**
+ * Detect a SecretRef-shaped object (issue #757) without resolving it.
+ * SecretRefs are preserved verbatim through `parseConfig` and resolved at
+ * service-start time via `resolveAgentAccessAuthToken` (which delegates to
+ * OpenClaw's gateway resolver). Standalone Remnic does not resolve these.
+ */
+function isSecretRefShape(value: unknown): value is import("./types.js").SecretRef {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const obj = value as Record<string, unknown>;
+  return typeof obj.source === "string" && obj.source.trim().length > 0;
+}
+
+/**
+ * Parse the `agentAccessHttp.authToken` field. Accepts:
+ *   - `string` → env-expanded immediately (current behavior preserved)
+ *   - `SecretRef` object (`{source, ...}`) → preserved verbatim for runtime
+ *     resolution by OpenClaw's gateway secret resolver
+ *   - `undefined` / empty string → fall back to env var, then `undefined`
+ *   - Any other shape → throw with a clear, actionable error so operators can
+ *     debug rather than chasing a generic startup failure (issue #757).
+ */
+function parseAgentAccessAuthToken(raw: unknown): import("./types.js").AgentAccessAuthToken | undefined {
+  if (raw === undefined || raw === null) {
+    return readEnvVar("OPENCLAW_REMNIC_ACCESS_TOKEN") ?? readEnvVar("OPENCLAW_ENGRAM_ACCESS_TOKEN");
+  }
+  if (typeof raw === "string") {
+    if (raw.trim().length === 0) {
+      return readEnvVar("OPENCLAW_REMNIC_ACCESS_TOKEN") ?? readEnvVar("OPENCLAW_ENGRAM_ACCESS_TOKEN");
+    }
+    return resolveEnvVars(raw);
+  }
+  if (isSecretRefShape(raw)) {
+    return raw;
+  }
+  throw new Error(
+    "unsupported SecretRef shape for agentAccessHttp.authToken — " +
+      "expected a string or an object with a non-empty `source` field " +
+      "(see https://github.com/joshuaswarren/remnic/issues/757)",
+  );
+}
+
 function resolveEnvVars(value: string): string {
   const resolved = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, envVar: string) => {
     const envValue = readEnvVar(envVar);
@@ -1025,10 +1066,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof rawAgentAccessHttp?.port === "number"
         ? Math.max(0, Math.floor(rawAgentAccessHttp.port))
         : 4318,
-    authToken:
-      typeof rawAgentAccessHttp?.authToken === "string" && rawAgentAccessHttp.authToken.trim().length > 0
-        ? resolveEnvVars(rawAgentAccessHttp.authToken)
-        : readEnvVar("OPENCLAW_REMNIC_ACCESS_TOKEN") ?? readEnvVar("OPENCLAW_ENGRAM_ACCESS_TOKEN"),
+    authToken: parseAgentAccessAuthToken(rawAgentAccessHttp?.authToken),
     principal:
       typeof rawAgentAccessHttp?.principal === "string" && rawAgentAccessHttp.principal.trim().length > 0
         ? resolveEnvVars(rawAgentAccessHttp.principal)
@@ -1577,6 +1615,11 @@ export function parseConfig(raw: unknown): PluginConfig {
     dreaming,
     dreamsPhases,
     procedural,
+    // At-rest encryption (issue #690 PR 3/4)
+    // coerceBool handles CLI string inputs: `--config secureStoreEnabled=true`
+    // arrives as the string "true" which `=== true` would reject (CLAUDE.md #36).
+    secureStoreEnabled: coerceBool(cfg.secureStoreEnabled) === true,
+    secureStoreEncryptOnWrite: coerceBool(cfg.secureStoreEncryptOnWrite) !== false, // default: true
     codingMode,
     heartbeat,
     slotBehavior,

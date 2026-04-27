@@ -94,10 +94,17 @@ export function containsAnswer(
   predicted: string,
   expected: string | number | unknown,
 ): number {
-  const normalizedExpected = normalizeText(expected);
+  const normalizedExpected = normalizeTextForContainment(expected);
   if (normalizedExpected.length === 0) return 0;
 
-  return normalizeText(predicted).includes(normalizedExpected) ? 1 : 0;
+  const normalizedPredicted = normalizeTextForContainment(predicted);
+  if (isShortLexicalAnswer(normalizedExpected)) {
+    return containsShortLexicalAnswer(normalizedPredicted, normalizedExpected)
+      ? 1
+      : 0;
+  }
+
+  return normalizedPredicted.includes(normalizedExpected) ? 1 : 0;
 }
 
 export async function llmJudgeScore(
@@ -253,6 +260,56 @@ function summarizeMetricValues(values: number[]): AggregateMetrics[string] {
 
 function normalizeText(value: string | number | unknown): string {
   return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizeTextForContainment(value: string | number | unknown): string {
+  return trimTrailingSentencePunctuation(normalizeText(value).replace(/\s+/g, " "));
+}
+
+function isShortLexicalAnswer(value: string): boolean {
+  return (
+    value.length <= 3 &&
+    [...value].some((character) => isAsciiLetter(character)) &&
+    [...value].every((character) => isAsciiAlphaNumeric(character))
+  );
+}
+
+function containsShortLexicalAnswer(value: string, expected: string): boolean {
+  return value
+    .split(/[^a-z0-9]+/)
+    .some((token) => token === expected);
+}
+
+function isAsciiAlphaNumeric(value: string): boolean {
+  return (
+    isAsciiLetter(value) ||
+    (value >= "0" && value <= "9")
+  );
+}
+
+function isAsciiLetter(value: string): boolean {
+  return value >= "a" && value <= "z";
+}
+
+function trimTrailingSentencePunctuation(value: string): string {
+  let end = value.length;
+
+  while (end > 0 && isTerminalSentencePunctuation(value[end - 1]!)) {
+    end -= 1;
+  }
+
+  return value.slice(0, end);
+}
+
+function isTerminalSentencePunctuation(value: string): boolean {
+  return (
+    value === "." ||
+    value === "!" ||
+    value === "?" ||
+    value === "," ||
+    value === ";" ||
+    value === ":"
+  );
 }
 
 function tokenize(value: string | number | unknown): string[] {

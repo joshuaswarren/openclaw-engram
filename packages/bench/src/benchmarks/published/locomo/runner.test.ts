@@ -4,11 +4,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import type { Message } from "../../../adapters/types.js";
 import { locomoDefinition, runLoCoMoBenchmark } from "./runner.ts";
 
 test("LoCoMo normalizes numeric answers and adversarial-answer fallbacks from the official dataset", async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "remnic-locomo-"));
   const datasetPath = path.join(tempDir, "locomo10.json");
+  const storedMessages: Message[] = [];
+  const respondentQuestions: string[] = [];
 
   try {
     await writeFile(
@@ -52,7 +55,9 @@ test("LoCoMo normalizes numeric answers and adversarial-answer fallbacks from th
       mode: "full",
       datasetDir: tempDir,
       system: {
-        async store() {},
+        async store(_sessionId, messages) {
+          storedMessages.push(...messages);
+        },
         async recall(_sessionId, question) {
           if (question.includes("year")) {
             return "2022";
@@ -66,6 +71,17 @@ test("LoCoMo normalizes numeric answers and adversarial-answer fallbacks from th
         async destroy() {},
         async getStats() {
           return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: 0 };
+        },
+        responder: {
+          async respond(question) {
+            respondentQuestions.push(question);
+            return {
+              text: question.includes("jacket") ? "blue" : "2022",
+              tokens: { input: 1, output: 1 },
+              latencyMs: 1,
+              model: "locomo-test-responder",
+            };
+          },
         },
         judge: {
           async score() {
@@ -86,6 +102,15 @@ test("LoCoMo normalizes numeric answers and adversarial-answer fallbacks from th
     assert.equal(result.results.tasks.length, 2);
     assert.equal(result.results.tasks[0]?.expected, "2022");
     assert.equal(result.results.tasks[1]?.expected, "blue");
+    assert.equal(result.results.tasks[0]?.actual, "2022");
+    assert.equal(result.results.tasks[1]?.actual, "blue");
+    assert.equal(result.results.tasks[0]?.details.answerFormat, "short");
+    assert.ok(
+      respondentQuestions.every((question) =>
+        /shortest complete answer/.test(question),
+      ),
+    );
+    assert.equal(storedMessages[0]?.content, "[D1:1] Maya: I moved in 2022.");
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

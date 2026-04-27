@@ -27,6 +27,7 @@ export {
   readPeer,
   writePeer,
   deletePeer,
+  forgetPeer,
   listPeers,
   appendInteractionLog,
   readInteractionLogRaw,

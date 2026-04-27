@@ -273,6 +273,7 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.peer_set",
     "engram.peer_delete",
     "engram.peer_profile_get",
+    "engram.peer_forget",
     "engram.console_state",
   ];
   const canonicalListed = legacyListed.map((name) => name.replace(/^engram\./, "remnic."));

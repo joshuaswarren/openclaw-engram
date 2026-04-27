@@ -175,6 +175,28 @@ export interface RecallFilterTrace {
 }
 
 /**
+ * Peer-profile injection annotation (issue #679 completion).
+ *
+ * When `peerProfileRecallEnabled` is true and a peer is registered for
+ * the session, the orchestrator injects a `## Peer Profile` section into
+ * the recall context. This annotation records which peer was injected and
+ * how many profile fields were included so operators can correlate
+ * retrieval quality with peer-context enrichment.
+ *
+ * `null` means no peer profile was injected (peer not registered, feature
+ * disabled, or peer has no profile fields).
+ */
+export interface RecallXrayPeerProfileInjection {
+  /** The peer id whose profile was injected. */
+  peerId: string;
+  /**
+   * Number of profile fields included after the `peerProfileRecallMaxFields`
+   * cap was applied.  Zero means the profile existed but had no fields.
+   */
+  fieldsInjected: number;
+}
+
+/**
  * The unified X-ray snapshot.  CLI, HTTP, and MCP surfaces all render
  * this same shape through the shared renderer (CLAUDE.md rule 22).
  */
@@ -204,6 +226,13 @@ export interface RecallXraySnapshot {
   sessionKey?: string;
   namespace?: string;
   traceId?: string;
+  /**
+   * Peer-profile injection metadata (issue #679 completion).
+   * Non-null when `peerProfileRecallEnabled` is true and a peer profile
+   * was successfully injected into this recall's context. `null` (or
+   * absent) means no peer profile was injected.
+   */
+  peerProfileInjection?: RecallXrayPeerProfileInjection | null;
 }
 
 // ─── Builder ──────────────────────────────────────────────────────────────
@@ -217,6 +246,8 @@ export interface BuildXraySnapshotInput {
   sessionKey?: string;
   namespace?: string;
   traceId?: string;
+  /** Peer-profile injection metadata (issue #679 completion). */
+  peerProfileInjection?: RecallXrayPeerProfileInjection | null;
   /** Optional injected timestamp for deterministic tests. */
   now?: () => number;
   /** Optional injected id generator for deterministic tests. */
@@ -250,7 +281,24 @@ export function buildXraySnapshot(
       ? cloneTierExplain(input.tierExplain)
       : null;
 
-  return {
+  // Peer-profile injection annotation (issue #679 completion).
+  // Deep-copy via structuredClone so the caller can't mutate the snapshot
+  // after build. Accept null explicitly (no injection) or a valid object.
+  let peerProfileInjection: RecallXrayPeerProfileInjection | null | undefined;
+  if (input.peerProfileInjection && typeof input.peerProfileInjection === "object") {
+    const raw = input.peerProfileInjection;
+    const peerId = nonEmptyString(raw.peerId);
+    if (peerId !== undefined) {
+      peerProfileInjection = {
+        peerId,
+        fieldsInjected: nonNegativeInt(raw.fieldsInjected),
+      };
+    }
+  } else if (input.peerProfileInjection === null) {
+    peerProfileInjection = null;
+  }
+
+  const out: RecallXraySnapshot = {
     schemaVersion: "1",
     query: typeof input.query === "string" ? input.query : "",
     snapshotId: snapshotIdGenerator(),
@@ -263,6 +311,10 @@ export function buildXraySnapshot(
     namespace: nonEmptyString(input.namespace),
     traceId: nonEmptyString(input.traceId),
   };
+  if (peerProfileInjection !== undefined) {
+    out.peerProfileInjection = peerProfileInjection;
+  }
+  return out;
 }
 
 /**
@@ -281,6 +333,7 @@ export class RecallXrayBuilder {
   private readonly filters: RecallFilterTrace[] = [];
   private budgetChars = 0;
   private budgetUsed = 0;
+  private peerProfileInjection: RecallXrayPeerProfileInjection | null | undefined;
 
   constructor(opts: {
     query: string;
@@ -314,6 +367,17 @@ export class RecallXrayBuilder {
     this.budgetUsed = nonNegativeInt(budget.used);
   }
 
+  /**
+   * Record peer-profile injection metadata for this recall snapshot
+   * (issue #679 completion). Pass `null` to explicitly record that no
+   * injection happened (feature enabled but no peer / no profile fields).
+   */
+  setPeerProfileInjection(
+    injection: RecallXrayPeerProfileInjection | null,
+  ): void {
+    this.peerProfileInjection = injection;
+  }
+
   recordResult(result: RecallXrayResult): void {
     this.results.push(cloneResult(result));
   }
@@ -335,6 +399,7 @@ export class RecallXrayBuilder {
       sessionKey: this.sessionKey,
       namespace: this.namespace,
       traceId: this.traceId,
+      peerProfileInjection: this.peerProfileInjection,
       now: opts.now,
       snapshotIdGenerator: opts.snapshotIdGenerator,
     });
