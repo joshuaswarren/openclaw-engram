@@ -582,6 +582,11 @@ export {
   createGoogleDriveConnector,
   defaultGoogleDriveClientFactory,
   validateGoogleDriveConfig,
+  NOTION_CONNECTOR_ID,
+  NOTION_CURSOR_KIND,
+  NOTION_DEFAULT_POLL_INTERVAL_MS,
+  createNotionConnector,
+  validateNotionConfig,
   type ConnectorConfig,
   type ConnectorCursor,
   type ConnectorDocument,
@@ -598,7 +603,29 @@ export {
   type GoogleDriveClientFactory,
   type GoogleDriveConnectorConfig,
   type GoogleDriveSyncResult,
+  type NotionConnectorConfig,
 } from "./connectors/live/index.js";
+
+// ---------------------------------------------------------------------------
+// Live-connector CLI helpers (issue #683 PR 6/6)
+// ---------------------------------------------------------------------------
+
+export {
+  CONNECTORS_OUTPUT_FORMATS,
+  parseConnectorsFormat,
+  parseConnectorsListOptions,
+  parseConnectorsStatusOptions,
+  parseConnectorsRunName,
+  renderConnectorsList,
+  renderConnectorsRunResult,
+  runConnectorPollOnce,
+  type ConnectorRow,
+  type ConnectorRunResult,
+  type ConnectorsOutputFormat,
+  type ParsedConnectorsListOptions,
+  type ParsedConnectorsStatusOptions,
+  type RunConnectorPollOnceArgs,
+} from "./connectors-cli.js";
 
 // ---------------------------------------------------------------------------
 // Spaces + Collaboration
