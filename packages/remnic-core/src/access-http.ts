@@ -1483,18 +1483,27 @@ export class EngramAccessHttpServer {
     // matching the same protection applied to the REST write endpoints.
     // Pre-check ensures capacity; post-check skips counting dry runs and
     // idempotency replays, consistent with the REST handlers.
+    const toolName = typeof request.params?.name === "string" ? request.params.name : "";
+    const toolArgs = request.params?.arguments;
+    const dreamsRunDryRun =
+      (toolName === "engram.dreams_run" || toolName === "remnic.dreams_run") &&
+      toolArgs !== null &&
+      typeof toolArgs === "object" &&
+      !Array.isArray(toolArgs) &&
+      (toolArgs as { dryRun?: unknown }).dryRun === true;
     const isMcpWrite =
       request.method === "tools/call" &&
-      typeof request.params?.name === "string" &&
       (
-        request.params.name === "engram.memory_store" ||
-        request.params.name === "remnic.memory_store" ||
-        request.params.name === "engram.suggestion_submit" ||
-        request.params.name === "remnic.suggestion_submit" ||
-        request.params.name === "engram.observe" ||
-        request.params.name === "remnic.observe" ||
-        request.params.name === "engram.dreams_run" ||
-        request.params.name === "remnic.dreams_run"
+        toolName === "engram.memory_store" ||
+        toolName === "remnic.memory_store" ||
+        toolName === "engram.suggestion_submit" ||
+        toolName === "remnic.suggestion_submit" ||
+        toolName === "engram.observe" ||
+        toolName === "remnic.observe" ||
+        (
+          !dreamsRunDryRun &&
+          (toolName === "engram.dreams_run" || toolName === "remnic.dreams_run")
+        )
       );
     if (isMcpWrite) {
       this.ensureWriteRateLimitAvailable();

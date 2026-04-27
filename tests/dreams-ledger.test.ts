@@ -21,6 +21,12 @@ async function makeTmpDir(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), "engram-dreams-ledger-"));
 }
 
+async function writeText(baseDir: string, relPath: string, content: string): Promise<void> {
+  const fullPath = path.join(baseDir, relPath);
+  await mkdir(path.dirname(fullPath), { recursive: true });
+  await writeFile(fullPath, content, "utf-8");
+}
+
 function makeEntry(overrides: Partial<DreamsLedgerEntry> = {}): DreamsLedgerEntry {
   return {
     schemaVersion: 1,
@@ -324,6 +330,20 @@ test("runDreamsPhase deepSleep propagates governance failures without ledger ent
   );
 
   assert.deepEqual(await readDreamsLedgerEntries(memoryDir), []);
+});
+
+test("runDreamsPhase rem skips namespace subtrees when scanning default root", async () => {
+  const memoryDir = await makeTmpDir();
+  await writeText(memoryDir, "facts/root.md", "# root memory\n");
+  await writeText(memoryDir, "namespaces/team-a/facts/tenant.md", "# tenant memory\n");
+
+  const result = await runDreamsPhase({
+    memoryDir,
+    phase: "rem",
+    dryRun: true,
+  });
+
+  assert.equal(result.itemsProcessed, 1);
 });
 
 test("summarizeGovernanceResultForDreams does not double-count proposed actions", () => {

@@ -487,7 +487,12 @@ async function listMemoryFiles(memoryDir: string): Promise<string[]> {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         // Skip state/ and archive/ subdirs.
-        if (entry.name === "state" || entry.name === "archive" || entry.name === ".git") continue;
+        if (
+          entry.name === "state" ||
+          entry.name === "archive" ||
+          entry.name === "namespaces" ||
+          entry.name === ".git"
+        ) continue;
         await walk(full);
       } else if (entry.isFile() && entry.name.endsWith(".md")) {
         out.push(full);

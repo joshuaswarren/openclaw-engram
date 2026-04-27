@@ -1646,7 +1646,15 @@ test("access HTTP server exposes MCP JSON-RPC endpoint at /mcp", async () => {
 
 test("access HTTP server rate-limits MCP write tool calls", async () => {
   const server = new EngramAccessHttpServer({
-    service: createFakeService(),
+    service: {
+      ...createFakeService(),
+      dreamsRun: async ({ phase, dryRun }: { phase: string; dryRun?: boolean }) => ({
+        phase,
+        dryRun: dryRun === true,
+        durationMs: 1,
+        itemsProcessed: 1,
+      }),
+    } as unknown as EngramAccessService,
     host: "127.0.0.1",
     port: 0,
     authToken: "secret-token",
@@ -1694,6 +1702,25 @@ test("access HTTP server rate-limits MCP write tool calls", async () => {
       }),
     });
     assert.equal(limited.status, 429);
+
+    const previewDreamsRun = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1002,
+        method: "tools/call",
+        params: {
+          name: "engram.dreams_run",
+          arguments: { phase: "lightSleep", dryRun: true },
+        },
+      }),
+    });
+    assert.equal(previewDreamsRun.status, 200);
+    const previewPayload = await previewDreamsRun.json() as {
+      result: { structuredContent: { dryRun: boolean } };
+    };
+    assert.equal(previewPayload.result.structuredContent.dryRun, true);
 
     const limitedDreamsRun = await fetch(`${base}/mcp`, {
       method: "POST",
