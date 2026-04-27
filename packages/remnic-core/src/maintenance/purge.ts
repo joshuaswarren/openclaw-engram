@@ -92,7 +92,7 @@ async function logPurgeAudit(
   storage: StorageManager,
   candidates: PurgeCandidate[],
   now: Date,
-  event: "PURGE_HARD_DELETE_ATTEMPT" | "PURGE_HARD_DELETE" = "PURGE_HARD_DELETE",
+  event: "PURGE_DELETE_INTENT" | "PURGE_HARD_DELETE" = "PURGE_HARD_DELETE",
 ): Promise<void> {
   const ledgerDir = path.join(storage.dir, "state", "observation-ledger");
   await mkdir(ledgerDir, { recursive: true });
@@ -191,26 +191,27 @@ export async function purgeMemories(
     };
   }
 
-  await logPurgeAudit(storage, candidates, now, "PURGE_HARD_DELETE_ATTEMPT");
+  await logPurgeAudit(storage, candidates, now, "PURGE_DELETE_INTENT");
 
   // Hard-delete phase
   const errors: Array<{ id: string; path: string; error: string }> = [];
   const actuallyPurged: PurgeCandidate[] = [];
   const collectionsToUpdate = new Set<string>();
+  const addCollectionForCandidate = (candidate: PurgeCandidate) => {
+    collectionsToUpdate.add(candidate.tier === "cold" ? coldCollection : hotCollection);
+  };
 
   for (const candidate of candidates) {
     try {
       await unlink(candidate.path);
       actuallyPurged.push(candidate);
-      if (candidate.tier === "cold") {
-        collectionsToUpdate.add(coldCollection);
-      } else {
-        collectionsToUpdate.add(hotCollection);
-      }
+      addCollectionForCandidate(candidate);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // ENOENT is fine — already gone
-      if (!message.includes("ENOENT")) {
+      if (message.includes("ENOENT")) {
+        addCollectionForCandidate(candidate);
+      } else {
         errors.push({ id: candidate.id, path: candidate.path, error: message });
       }
     }

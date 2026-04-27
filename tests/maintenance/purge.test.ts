@@ -213,8 +213,12 @@ test("purgeMemories: dryRun=false (hard-delete) removes files and updates QMD", 
     const ledgerPath = path.join(dir, "state", "observation-ledger", "purge-audit.jsonl");
     const ledgerRaw = await readFile(ledgerPath, "utf-8");
     assert.ok(ledgerRaw.includes(id), "purge audit ledger should contain the purged memory id");
-    assert.ok(ledgerRaw.includes("PURGE_HARD_DELETE_ATTEMPT"), "purge audit ledger should contain an attempt event");
-    assert.ok(ledgerRaw.includes("PURGE_HARD_DELETE"), "purge audit ledger should contain a success event");
+    const events = ledgerRaw
+      .trim()
+      .split("\n")
+      .map((line) => (JSON.parse(line) as { event: string }).event);
+    assert.ok(events.includes("PURGE_DELETE_INTENT"), "purge audit ledger should contain an intent event");
+    assert.ok(events.includes("PURGE_HARD_DELETE"), "purge audit ledger should contain a success event");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -235,16 +239,20 @@ test("purgeMemories: failed unlink records attempt but not success", async () =>
       readArchivedMemories: async () => [],
       invalidateAllMemoriesCacheForDir: () => {},
     } as unknown as StorageManager;
+    const { updatedCollections, stub: qmd } = makeQmdStub();
 
     const result = await purgeMemories({
       storage: stub,
       olderThanMs: 365 * 86_400_000,
       tier: "cold",
       dryRun: false,
+      qmd: qmd as any,
+      coldCollection: "cold-test",
       now: () => new Date("2026-04-27T00:00:00.000Z"),
     });
 
     assert.equal(result.purgedCount, 0);
+    assert.deepEqual(updatedCollections, ["cold-test"]);
     const ledgerPath = path.join(dir, "state", "observation-ledger", "purge-audit.jsonl");
     const entries = (await readFile(ledgerPath, "utf-8"))
       .trim()
@@ -254,7 +262,7 @@ test("purgeMemories: failed unlink records attempt but not success", async () =>
         return { event: entry.event, memoryId: entry.memoryId };
       });
     assert.deepEqual(entries, [
-      { event: "PURGE_HARD_DELETE_ATTEMPT", memoryId: "missing-delete" },
+      { event: "PURGE_DELETE_INTENT", memoryId: "missing-delete" },
     ]);
   } finally {
     await rm(dir, { recursive: true, force: true });
