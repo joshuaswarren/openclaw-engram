@@ -5,11 +5,15 @@ import {
   GMAIL_CONNECTOR_ID,
   GMAIL_CURSOR_KIND,
   GMAIL_DEFAULT_POLL_INTERVAL_MS,
+  MAX_MESSAGES_PER_PASS,
+  SEEN_IDS_MAX,
+  SEEN_IDS_RETAIN,
   buildListQuery,
   createGmailConnector,
   internalDateToEpochSeconds,
   internalDateToIso,
   isTransientGmailError,
+  pruneSeenIds,
   validateGmailConfig,
   type GmailFetchFn,
   type GmailMessage,
@@ -1236,15 +1240,19 @@ test("skippedIds messages are not re-fetched on subsequent polls (Thread 2 stall
 });
 
 // ---------------------------------------------------------------------------
-// Thread 1 regression: after: query uses Math.ceil (exclusive boundary second)
+// Thread 1 regression: after: query uses Math.floor (inclusive of watermark second)
+// (Codex P1 PRRT_kwDORJXyws59sh5H)
 // ---------------------------------------------------------------------------
 
-test("after: query uses ceil(watermarkMs/1000) — exclusive of the boundary second (Thread 1 Codex P1)", async () => {
-  // Watermark at exactly 1745000001000 ms (a second boundary).
-  // ceil(1745000001000 / 1000) = 1745000001 (the next second).
-  // floor(1745000001000 / 1000) = 1745000001 as well — same for exact second.
-  // Use a sub-second watermark to distinguish ceil vs floor:
+test("after: query uses floor(watermarkMs/1000) — inclusive of the watermark second (Codex P1 PRRT_kwDORJXyws59sh5H)", async () => {
+  // Watermark at exactly 1745000001000 ms (a second boundary): both floor and
+  // ceil equal 1745000001. Use a sub-second watermark to distinguish them:
   // watermark = 1745000000500ms → floor = 1745000000, ceil = 1745000001.
+  //
+  // Floor is correct: Gmail's `after:N` matches internalDate > N*1000, so
+  // floor ensures messages at the watermark second are still queryable.
+  // Ceil would skip messages whose internalDate is exactly at the watermark
+  // second boundary (between floor and ceil), causing permanent data loss.
   const subSecondWatermark = "1745000000500";
 
   // Track what `after:` value is used in the list URL.
@@ -1275,12 +1283,12 @@ test("after: query uses ceil(watermarkMs/1000) — exclusive of the boundary sec
 
   await connector.syncIncremental({ cursor, config });
 
-  // With Math.ceil: ceil(1745000000500 / 1000) = 1745000001
-  // With Math.floor: floor(1745000000500 / 1000) = 1745000000
+  // With Math.floor: floor(1745000000500 / 1000) = 1745000000 ✓
+  // With Math.ceil:  ceil(1745000000500 / 1000)  = 1745000001 ✗ (misses boundary messages)
   assert.equal(
     capturedAfterValue,
-    "1745000001",
-    "after: must use Math.ceil (exclusive boundary second) to prevent boundary messages from being re-returned",
+    "1745000000",
+    "after: must use Math.floor so messages at the watermark second boundary are not missed",
   );
 });
 
@@ -1465,4 +1473,231 @@ test("isTransientGmailError delegates to isTransientHttpError with gmailStatus (
       `isTransientHttpError(${JSON.stringify(input)}, ["gmailStatus"]) should be ${expected}`,
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// pruneSeenIds — seenIds bounding and date-based pruning
+// (Codex P1 PRRT_kwDORJXyws59se73)
+// ---------------------------------------------------------------------------
+
+test("pruneSeenIds removes entries that cannot be returned by after:floor(watermarkMs/1000)", () => {
+  // watermarkMs = 1745000000500 → floorSecBoundaryMs = 1745000000000
+  // after:1745000000 returns messages with internalDate > 1745000000000
+  // So messages AT or BELOW the floor-second boundary are pruned; above are kept.
+  const seenIds: Record<string, string> = {
+    "msg-at-floor":  "1745000000000", // exactly at floor boundary → pruned (not strictly above)
+    "msg-above-1":   "1745000000100", // strictly above floor boundary → retained
+    "msg-above-2":   "1745000000300", // retained
+    "msg-at-wmark":  "1745000000500", // at watermark → retained
+    "msg-new-1":     "1745000000600", // retained
+    "msg-new-2":     "1745000000900", // retained
+  };
+  const result = pruneSeenIds(seenIds, 1745000000500);
+  assert.equal(result["msg-at-floor"], undefined, "entry at floor boundary must be pruned (not strictly above it)");
+  assert.equal(result["msg-above-1"], "1745000000100", "entry above floor boundary must be retained");
+  assert.equal(result["msg-above-2"], "1745000000300", "entry above floor boundary must be retained");
+  assert.equal(result["msg-at-wmark"], "1745000000500", "entry at watermark must be retained");
+  assert.equal(result["msg-new-1"], "1745000000600", "entry above watermark must be retained");
+  assert.equal(result["msg-new-2"], "1745000000900", "entry above watermark must be retained");
+  assert.equal(Object.keys(result).length, 5);
+});
+
+test("pruneSeenIds prunes entries from a previous second (different second boundary)", () => {
+  // watermarkMs = 1745000002500 → floorSecBoundaryMs = 1745000002000
+  // Messages in second 1745000001 (all <= 1745000002000) are pruned.
+  // Messages in second 1745000002 that are > 1745000002000 are kept.
+  const seenIds: Record<string, string> = {
+    "msg-prev-sec": "1745000001500", // second 1745000001 → pruned (< floor boundary)
+    "msg-at-sec2":  "1745000002000", // exactly at floor boundary → pruned
+    "msg-in-sec2":  "1745000002300", // in second 2, above floor → retained
+    "msg-at-wmark": "1745000002500", // at watermark → retained
+  };
+  const result = pruneSeenIds(seenIds, 1745000002500);
+  assert.equal(result["msg-prev-sec"], undefined, "message from previous second must be pruned");
+  assert.equal(result["msg-at-sec2"], undefined, "message exactly at floor boundary must be pruned");
+  assert.equal(result["msg-in-sec2"], "1745000002300", "message in current second above floor must be retained");
+  assert.equal(result["msg-at-wmark"], "1745000002500", "message at watermark must be retained");
+});
+
+test("pruneSeenIds with empty seenIds returns empty map", () => {
+  assert.deepEqual(pruneSeenIds({}, 1745000000000), {});
+});
+
+test("pruneSeenIds retains all entries when all are in the same floor-second as watermark", () => {
+  // watermarkMs = 1745000000500 → floorSec = 1745000000000
+  // All entries at 1745000000100+ are strictly above the floor boundary → retained.
+  const seenIds: Record<string, string> = {
+    "msg-a": "1745000000100",
+    "msg-b": "1745000000900",
+  };
+  assert.deepEqual(pruneSeenIds(seenIds, 1745000000500), seenIds);
+});
+
+test("pruneSeenIds enforces hard cap: evicts to SEEN_IDS_RETAIN when count exceeds SEEN_IDS_MAX", () => {
+  const seenIds: Record<string, string> = {};
+  for (let i = 0; i < SEEN_IDS_MAX + 10; i++) {
+    seenIds[`msg-cap-${i}`] = String(1_000_000 + i); // all >= watermark=0
+  }
+  const result = pruneSeenIds(seenIds, 0);
+  assert.equal(
+    Object.keys(result).length,
+    SEEN_IDS_RETAIN,
+    `after cap eviction, count must equal SEEN_IDS_RETAIN (${SEEN_IDS_RETAIN})`,
+  );
+});
+
+test("pruneSeenIds cap eviction retains the most recent entries (highest internalDate)", () => {
+  const seenIds: Record<string, string> = {};
+  const totalEntries = SEEN_IDS_MAX + 50;
+  for (let i = 0; i < totalEntries; i++) {
+    seenIds[`msg-cap-${i}`] = String(2_000_000 + i);
+  }
+  const result = pruneSeenIds(seenIds, 0);
+  assert.equal(Object.keys(result).length, SEEN_IDS_RETAIN);
+  const lowestRetained = 2_000_000 + (totalEntries - SEEN_IDS_RETAIN);
+  for (const [, dateMs] of Object.entries(result)) {
+    assert.ok(Number(dateMs) >= lowestRetained, `retained entry ${dateMs} must be >= ${lowestRetained}`);
+  }
+});
+
+test("pruneSeenIds does not evict when below cap", () => {
+  const seenIds: Record<string, string> = {};
+  const count = SEEN_IDS_MAX - 1;
+  for (let i = 0; i < count; i++) {
+    seenIds[`msg-small-${i}`] = String(1_000_000 + i);
+  }
+  const result = pruneSeenIds(seenIds, 0);
+  assert.equal(Object.keys(result).length, count, "no eviction when below cap");
+});
+
+// ---------------------------------------------------------------------------
+// Codex P1 PRRT_kwDORJXyws59sh5I + Cursor PRRT_kwDORJXyws59sji9:
+// Cap-hit mid-page must save the CURRENT page token, not the next page token.
+// ---------------------------------------------------------------------------
+
+test("cursor saves the CURRENT page token when cap is hit mid-page (not next page token)", async () => {
+  // Generate exactly MAX_MESSAGES_PER_PASS + 1 messages on one page so the
+  // cap fires mid-page. The response also advertises nextPageToken="next-page".
+  // With the fix, the saved cursor.pageToken must equal "current-page-token"
+  // (the token used to fetch this page), NOT "next-page" (the next page).
+  const baseMs = Number(T1);
+  const msgRefs: GmailMessageRef[] = [];
+  const msgMap: Record<string, GmailMessage> = {};
+  for (let i = 0; i < MAX_MESSAGES_PER_PASS; i++) {
+    const id = `msg-cpt-${i}`;
+    msgRefs.push({ id });
+    msgMap[id] = makeMessage(id, String(baseMs + i), `body ${i}`);
+  }
+  // One extra message to trigger the cap.
+  msgRefs.push({ id: "msg-cpt-extra" });
+  msgMap["msg-cpt-extra"] = makeMessage("msg-cpt-extra", String(baseMs + MAX_MESSAGES_PER_PASS), "extra");
+
+  const fetchFn = makeFetch([
+    tokenHandler(),
+    {
+      match: (url) => url.includes("/messages") && !url.includes("format=full"),
+      respond: () => ({
+        status: 200,
+        data: { messages: msgRefs, nextPageToken: "next-page" },
+      }),
+    },
+    getHandler(msgMap),
+  ]);
+
+  const connector = createGmailConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  // Cursor with a prior pageToken ("current-page-token").
+  const cursor: ConnectorCursor = {
+    kind: GMAIL_CURSOR_KIND,
+    value: JSON.stringify({
+      watermarkMs: String(Number(T1) - 1000),
+      skippedIds: {},
+      seenIds: {},
+      pageToken: "current-page-token",
+    }),
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  const result = await connector.syncIncremental({ cursor, config });
+  assert.equal(result.newDocs.length, MAX_MESSAGES_PER_PASS, "must process exactly MAX_MESSAGES_PER_PASS messages");
+
+  const payload = JSON.parse(result.nextCursor.value) as { pageToken?: string };
+  assert.equal(
+    payload.pageToken,
+    "current-page-token",
+    "when cap hits mid-page, cursor must save the CURRENT page token so next poll re-fetches this page",
+  );
+});
+
+test("cursor saves undefined pageToken when cap is hit on page 1 (no prior pageToken)", async () => {
+  const baseMs = Number(T1);
+  const msgRefs: GmailMessageRef[] = [];
+  const msgMap: Record<string, GmailMessage> = {};
+  for (let i = 0; i < MAX_MESSAGES_PER_PASS; i++) {
+    const id = `msg-p1cap-${i}`;
+    msgRefs.push({ id });
+    msgMap[id] = makeMessage(id, String(baseMs + i), `body ${i}`);
+  }
+  msgRefs.push({ id: "msg-p1cap-extra" });
+  msgMap["msg-p1cap-extra"] = makeMessage("msg-p1cap-extra", String(baseMs + MAX_MESSAGES_PER_PASS), "extra");
+
+  const fetchFn = makeFetch([
+    tokenHandler(),
+    {
+      match: (url) => url.includes("/messages") && !url.includes("format=full"),
+      respond: () => ({
+        status: 200,
+        data: { messages: msgRefs, nextPageToken: "hypothetical-next" },
+      }),
+    },
+    getHandler(msgMap),
+  ]);
+
+  const connector = createGmailConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  // No prior pageToken (page 1 from the start).
+  const cursor: ConnectorCursor = {
+    kind: GMAIL_CURSOR_KIND,
+    value: JSON.stringify({ watermarkMs: String(Number(T1) - 1000), skippedIds: {}, seenIds: {} }),
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  const result = await connector.syncIncremental({ cursor, config });
+  assert.equal(result.newDocs.length, MAX_MESSAGES_PER_PASS);
+
+  const payload = JSON.parse(result.nextCursor.value) as { pageToken?: string };
+  assert.equal(
+    payload.pageToken,
+    undefined,
+    "when cap hits on page 1, cursor pageToken must be undefined so next poll re-fetches from page 1",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Codex P2 PRRT_kwDORJXyws59se75: validateGmailConfig rejects NaN / non-numeric
+// Per CLAUDE.md gotcha #51: invalid values must throw, not silently default.
+// ---------------------------------------------------------------------------
+
+test("validateGmailConfig rejects non-numeric string pollIntervalMs (Codex P2)", () => {
+  assert.throws(
+    () => validateGmailConfig({ ...SYNTHETIC_CREDS, pollIntervalMs: "abc" }),
+    /pollIntervalMs/,
+    "non-numeric string pollIntervalMs must be rejected explicitly",
+  );
+});
+
+test("validateGmailConfig rejects NaN pollIntervalMs (Codex P2)", () => {
+  assert.throws(
+    () => validateGmailConfig({ ...SYNTHETIC_CREDS, pollIntervalMs: NaN }),
+    /pollIntervalMs/,
+    "NaN pollIntervalMs must be rejected explicitly",
+  );
+});
+
+test("validateGmailConfig rejects Infinity pollIntervalMs (Codex P2)", () => {
+  assert.throws(
+    () => validateGmailConfig({ ...SYNTHETIC_CREDS, pollIntervalMs: Infinity }),
+    /pollIntervalMs/,
+    "Infinity pollIntervalMs must be rejected explicitly",
+  );
 });

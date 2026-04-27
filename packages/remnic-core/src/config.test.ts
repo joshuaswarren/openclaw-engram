@@ -651,3 +651,72 @@ test("parseConfig rejects malformed folderIds", () => {
     /folderIds entries must be strings/,
   );
 });
+
+// ── #683 PR 4/6: connectors.gmail.pollIntervalMs validation (Codex P2 PRRT_kwDORJXyws59se75)
+// Per CLAUDE.md gotcha #51: invalid values must throw, not silently default.
+
+test("parseConfig connectors.gmail accepts default pollIntervalMs when omitted", () => {
+  const result = parseConfig({ openaiApiKey: "sk-test" });
+  assert.equal(result.connectors.gmail.pollIntervalMs, 300_000, "default gmail pollIntervalMs must be 300000");
+});
+
+test("parseConfig connectors.gmail accepts valid pollIntervalMs", () => {
+  const result = parseConfig({
+    openaiApiKey: "sk-test",
+    connectors: { gmail: { pollIntervalMs: 60_000 } },
+  });
+  assert.equal(result.connectors.gmail.pollIntervalMs, 60_000);
+});
+
+test("parseConfig rejects connectors.gmail.pollIntervalMs = 0 (must be positive)", () => {
+  assert.throws(
+    () => parseConfig({ openaiApiKey: "sk-test", connectors: { gmail: { pollIntervalMs: 0 } } }),
+    /positive/,
+    "zero pollIntervalMs must be rejected",
+  );
+});
+
+test("parseConfig rejects connectors.gmail.pollIntervalMs < 0 (negative)", () => {
+  assert.throws(
+    () => parseConfig({ openaiApiKey: "sk-test", connectors: { gmail: { pollIntervalMs: -1 } } }),
+    /positive/,
+  );
+});
+
+test("parseConfig rejects connectors.gmail.pollIntervalMs as NaN (Codex P2)", () => {
+  assert.throws(
+    () => parseConfig({ openaiApiKey: "sk-test", connectors: { gmail: { pollIntervalMs: NaN } } }),
+    /finite/,
+    "NaN pollIntervalMs must be rejected with a message mentioning finite",
+  );
+});
+
+test("parseConfig rejects connectors.gmail.pollIntervalMs as non-numeric string (Codex P2)", () => {
+  assert.throws(
+    () => parseConfig({ openaiApiKey: "sk-test", connectors: { gmail: { pollIntervalMs: "not-a-number" } } }),
+    /finite/,
+    "non-numeric string pollIntervalMs must be rejected",
+  );
+});
+
+test("parseConfig rejects connectors.gmail.pollIntervalMs as Infinity (Codex P2)", () => {
+  assert.throws(
+    () => parseConfig({ openaiApiKey: "sk-test", connectors: { gmail: { pollIntervalMs: Infinity } } }),
+    /finite/,
+    "Infinity pollIntervalMs must be rejected",
+  );
+});
+
+test("parseConfig rejects connectors.gmail.pollIntervalMs below minimum (50ms)", () => {
+  assert.throws(
+    () => parseConfig({ openaiApiKey: "sk-test", connectors: { gmail: { pollIntervalMs: 50 } } }),
+    /pollIntervalMs/,
+  );
+});
+
+test("parseConfig rejects connectors.gmail.pollIntervalMs above maximum (25h)", () => {
+  assert.throws(
+    () => parseConfig({ openaiApiKey: "sk-test", connectors: { gmail: { pollIntervalMs: 25 * 60 * 60 * 1000 } } }),
+    /pollIntervalMs/,
+  );
+});

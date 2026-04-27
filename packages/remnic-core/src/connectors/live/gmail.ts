@@ -105,13 +105,31 @@ const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 /**
  * Maximum number of messages we process in a single `syncIncremental` pass.
  * Prevents one runaway pass from monopolising the scheduler.
+ * Exported for test access.
  */
-const MAX_MESSAGES_PER_PASS = 200;
+export const MAX_MESSAGES_PER_PASS = 200;
 
 /**
  * Maximum page size for `users.messages.list`. Gmail API maximum is 500.
  */
 const LIST_PAGE_SIZE = 100;
+
+/**
+ * Hard cap on the number of entries allowed in the `seenIds` map stored in the
+ * cursor. Without this, a heavily-active inbox causes `seenIds` to grow without
+ * bound, eventually blowing the cursor JSON size limit.
+ *
+ * When the entry count reaches this threshold, we prune down to
+ * SEEN_IDS_RETAIN by dropping the oldest entries (lowest internalDate).
+ */
+export const SEEN_IDS_MAX = 1_000;
+
+/**
+ * Target entry count after a seenIds eviction. We retain the most recently
+ * seen messages (highest internalDate) so that sub-second dedup continues to
+ * work for the active second window.
+ */
+export const SEEN_IDS_RETAIN = 500;
 
 /** Gmail API base URL. */
 const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
@@ -453,6 +471,53 @@ function internalDateToIso(internalDate: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// seenIds cap / pruning (Codex P1 PRRT_kwDORJXyws59se73)
+// ---------------------------------------------------------------------------
+
+/**
+ * Prune `seenIds` to remove entries that can no longer be returned by the next
+ * `after:` query. Gmail's `after:N` matches messages with `internalDate > N*1000`,
+ * where `N = Math.floor(watermarkMs / 1000)`. So any message with
+ * `internalDate <= floor(watermarkMs/1000) * 1000` cannot appear in the next
+ * query and can be safely dropped. Messages in the same floor-second as the
+ * watermark (i.e. `internalDate > floor(watermarkMs/1000)*1000`) must be
+ * retained so seenIds can suppress them if Gmail re-returns them.
+ *
+ * Additionally enforce a hard size cap: if after date-pruning the map still
+ * exceeds SEEN_IDS_MAX, retain only the SEEN_IDS_RETAIN most recent entries
+ * (by internalDate value) to prevent unbounded cursor growth.
+ */
+export function pruneSeenIds(
+  seenIds: Record<string, string>,
+  watermarkMs: number,
+): Record<string, string> {
+  // Step 1: drop entries whose internalDate falls at or before the floor-second
+  // boundary. These messages cannot be returned by after:floor(watermarkMs/1000).
+  const floorSecBoundaryMs = Math.floor(watermarkMs / 1000) * 1000;
+  let pruned: Record<string, string> = {};
+  for (const [id, dateMs] of Object.entries(seenIds)) {
+    if (Number(dateMs) > floorSecBoundaryMs) {
+      pruned[id] = dateMs;
+    }
+  }
+
+  // Step 2: enforce hard cap — keep only the SEEN_IDS_RETAIN most recent.
+  const entries = Object.entries(pruned);
+  if (entries.length > SEEN_IDS_MAX) {
+    // Sort descending by internalDate (most recent first), retain top N.
+    entries.sort((a, b) => {
+      const diff = Number(b[1]) - Number(a[1]);
+      // Stable tie-break by id (CLAUDE.md gotcha #19).
+      return diff !== 0 ? diff : a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+    });
+    const retained = entries.slice(0, SEEN_IDS_RETAIN);
+    pruned = Object.fromEntries(retained);
+  }
+
+  return pruned;
+}
+
+// ---------------------------------------------------------------------------
 // Cooperative cancellation
 // ---------------------------------------------------------------------------
 
@@ -787,16 +852,16 @@ async function incrementalSync(
     const ms = Number(cursorPayload.watermarkMs);
     if (Number.isFinite(ms) && ms > 0) {
       currentWatermarkMs = ms;
-      // Thread 1 fix (Codex P1 PRRT_kwDORJXyws59sctC): use Math.ceil so the
-      // `after:` query is exclusive of the boundary second. Floor truncation
-      // caused messages whose `internalDate` falls in the same second as the
-      // watermark to be re-returned by Gmail on every subsequent poll.
-      // Math.ceil makes the query start from the NEXT second, so only genuinely
-      // new messages are returned. The `seenIds` map still guards against any
-      // same-second duplicates that Gmail returns (e.g. messages with
-      // internalDate exactly equal to watermarkMs after ceil rounds up to
-      // the same second boundary).
-      afterEpochSec = Math.ceil(ms / 1000);
+      // Fix (Codex P1 PRRT_kwDORJXyws59sh5H): use Math.floor so the `after:`
+      // query is inclusive of the watermark second. Gmail's `after:N` operator
+      // matches messages with internalDate > N*1000 (strictly after N seconds),
+      // so floor is the correct pairing: messages in the same second as the
+      // watermark may be re-returned by Gmail, but seenIds deduplication
+      // suppresses them without re-importing. Math.ceil was wrong: it rounds
+      // UP to the next second, which causes messages with internalDate exactly
+      // at the watermark second boundary to never be queried — they fall between
+      // floor and ceil and are permanently missed.
+      afterEpochSec = Math.floor(ms / 1000);
     }
   }
 
@@ -934,14 +999,19 @@ async function incrementalSync(
     const resolvedNextPageToken = hasNextPage ? listPage.nextPageToken : undefined;
 
     if (capHitMidPage) {
-      // Thread 2 fix (Codex P1 PRRT_kwDORJXyws59sctD): cap was hit while
-      // iterating this page. Persist the next-page token (if any) so the next
-      // poll resumes from the following page rather than restarting at page 1.
-      // If there is no next page, `capHitPageToken` stays undefined and the
-      // next poll will restart from the beginning of the `after:` window —
-      // which is correct, since we've exhausted all pages in this window.
+      // Cap-hit mid-page fix (Codex P1 PRRT_kwDORJXyws59sh5I + Cursor
+      // PRRT_kwDORJXyws59sji9): when the cap is hit while iterating this page,
+      // persist the CURRENT page's token (the one used to fetch this page) so
+      // the next poll re-fetches the same page and continues where we left off.
+      // Messages already processed are in seenIds and will be skipped on
+      // re-fetch. If pageToken is undefined we are on page 1, so the next poll
+      // restarts from the beginning of the `after:` window — also correct.
+      //
+      // Previously we saved resolvedNextPageToken (the NEXT page's token),
+      // which skipped all messages remaining on the current page — those
+      // messages would never be processed.
       capHit = true;
-      capHitPageToken = resolvedNextPageToken;
+      capHitPageToken = pageToken;
       break;
     }
 
@@ -962,10 +1032,15 @@ async function incrementalSync(
   // abort). Compare against the exact ms watermark (not the truncated
   // afterEpochSec * 1000) to prevent backward regression on clock skew.
   //
-  // When the watermark advances into a new second (floor(highWaterMs/1000) >
-  // floor(currentWatermarkMs/1000)), clear seenIds — those sub-second entries
-  // are no longer relevant since the new `after:` query will use a higher
-  // epoch-second and won't return those old messages anymore.
+  // seenIds pruning (Codex P1 PRRT_kwDORJXyws59se73): after every pass, prune
+  // seenIds via pruneSeenIds(seenIds, nextWatermarkMs). This replaces the
+  // previous "clear seenIds when crossing a second boundary" approach, which
+  // was incorrect — messages within the current watermark second can still
+  // appear in the next `after:floor(watermarkMs/1000)` query, so clearing
+  // seenIds caused re-imports. Instead we prune entries strictly below the
+  // new watermark and enforce a hard size cap (SEEN_IDS_MAX / SEEN_IDS_RETAIN)
+  // to bound cursor growth regardless of how many messages share the active
+  // second window.
   //
   // Thread 2: pageToken in the next cursor is set only when the cap was hit
   // mid-page. It is cleared (not included) when the list is fully drained.
@@ -975,24 +1050,22 @@ async function incrementalSync(
 
   if (listFullyDrained && !capHit && highWaterMs > currentWatermarkMs) {
     nextWatermarkMs = String(highWaterMs);
-    // Clear seenIds if the watermark crossed a second boundary; otherwise
-    // carry forward the updated seenIds (still needed for sub-second dedup).
-    const prevSec = Math.floor(currentWatermarkMs / 1000);
-    const newSec = Math.floor(highWaterMs / 1000);
-    nextSeenIds = newSec > prevSec ? {} : seenIds;
+    // Prune seenIds to new watermark and enforce size cap.
+    nextSeenIds = pruneSeenIds(seenIds, highWaterMs);
     // Window fully drained — clear the page token.
     nextPageToken = undefined;
   } else if (capHit) {
-    // Cap hit mid-page: keep watermark and seenIds unchanged; persist the
-    // page token so the next poll resumes where we stopped (Thread 2).
+    // Cap hit mid-page: keep watermark; prune seenIds to current watermark
+    // and enforce size cap; persist the current page token (Thread 2 / fix
+    // PRRT_kwDORJXyws59sh5I).
     nextWatermarkMs = cursorPayload.watermarkMs;
-    nextSeenIds = seenIds;
+    nextSeenIds = pruneSeenIds(seenIds, currentWatermarkMs);
     nextPageToken = capHitPageToken;
   } else {
     // Watermark unchanged (list drained but no new messages, or aborted) —
-    // keep exact ms string and carry seenIds forward; no page token.
+    // keep exact ms string; prune seenIds to current watermark; no page token.
     nextWatermarkMs = cursorPayload.watermarkMs;
-    nextSeenIds = seenIds;
+    nextSeenIds = pruneSeenIds(seenIds, currentWatermarkMs);
     nextPageToken = undefined;
   }
 

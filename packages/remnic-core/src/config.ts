@@ -2684,9 +2684,22 @@ export function parseConfig(raw: unknown): PluginConfig {
         typeof rawGmail.query === "string" ? rawGmail.query : "in:inbox";
       const gmailPollCoerced = coerceNumber(rawGmail.pollIntervalMs);
       let gmailPollIntervalMs = 300_000;
-      if (gmailPollCoerced !== undefined) {
+      if (rawGmail.pollIntervalMs !== undefined) {
+        // CLAUDE.md gotcha #51: reject invalid values explicitly rather than
+        // silently coercing to a default. Non-numeric strings, NaN, and
+        // ±Infinity all cause coerceNumber to return undefined — treat that as
+        // a configuration error rather than a quiet fallback.
+        if (gmailPollCoerced === undefined) {
+          throw new Error(
+            `connectors.gmail.pollIntervalMs must be a finite number; got ${JSON.stringify(rawGmail.pollIntervalMs)}`,
+          );
+        }
+        if (gmailPollCoerced <= 0) {
+          throw new Error(
+            `connectors.gmail.pollIntervalMs must be positive; got ${JSON.stringify(rawGmail.pollIntervalMs)}`,
+          );
+        }
         if (
-          !Number.isFinite(gmailPollCoerced) ||
           !Number.isInteger(gmailPollCoerced) ||
           gmailPollCoerced < 1_000 ||
           gmailPollCoerced > 86_400_000
