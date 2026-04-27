@@ -12903,26 +12903,30 @@ export class Orchestrator {
     // v8.3 Compression guideline learning pass (default off, fail-open).
     await this.runCompressionGuidelineLearningPass();
 
-    const deepSleepStartedAt = new Date().toISOString();
-    await this.runTierMigrationCycle(this.storage, "maintenance");
-    allMemories = await this.storage.readAllMemories();
+    try {
+      const deepSleepStartedAt = new Date().toISOString();
+      await this.runTierMigrationCycle(this.storage, "maintenance");
+      allMemories = await this.storage.readAllMemories();
 
-    // Fact archival pass (v6.0) — move old, low-importance, rarely-accessed facts to archive/
-    if (this.config.factArchivalEnabled) {
-      const archived = await this.runFactArchival(allMemories);
-      if (archived > 0) {
-        log.info(`archived ${archived} old low-importance facts`);
+      // Fact archival pass (v6.0) — move old, low-importance, rarely-accessed facts to archive/
+      if (this.config.factArchivalEnabled) {
+        const archived = await this.runFactArchival(allMemories);
+        if (archived > 0) {
+          log.info(`archived ${archived} old low-importance facts`);
+        }
       }
+      await this.recordScheduledDreamsPhaseRun(
+        "deepSleep",
+        allMemories.length,
+        `scheduled deep-sleep maintenance assessed ${allMemories.length} memories`,
+        {
+          startedAt: deepSleepStartedAt,
+          completedAt: new Date().toISOString(),
+        },
+      );
+    } catch (err) {
+      log.warn(`deep-sleep maintenance pass failed (ignored): ${err}`);
     }
-    await this.recordScheduledDreamsPhaseRun(
-      "deepSleep",
-      allMemories.length,
-      `scheduled deep-sleep maintenance assessed ${allMemories.length} memories`,
-      {
-        startedAt: deepSleepStartedAt,
-        completedAt: new Date().toISOString(),
-      },
-    );
 
     // Semantic consolidation pass — find similar memories, synthesize canonical versions
     if (this.config.semanticConsolidationEnabled) {

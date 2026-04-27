@@ -8304,6 +8304,8 @@ export function registerCli(
         .description("Show per-phase Dreams telemetry for the last N hours")
         .option("--window-hours <n>", "Look-back window in hours (default 24)", "24")
         .option("--format <fmt>", "Output format: text, json, markdown (default text)", "text")
+        .option("--namespace <ns>", "Namespace to inspect (default: current default namespace)")
+        .option("--principal <principal>", "Trusted principal for namespace ACLs (defaults to config/env)")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, string>;
           const fmt = options.format ?? "text";
@@ -8311,7 +8313,7 @@ export function registerCli(
             console.error(`Invalid --format '${fmt}'. Must be one of: text, json, markdown`);
             process.exit(1);
           }
-          const { getDreamsStatus, normalizeDreamsStatusWindowHours } = await import("./maintenance/dreams-ledger.js");
+          const { normalizeDreamsStatusWindowHours } = await import("./maintenance/dreams-ledger.js");
           let windowHours: number;
           try {
             windowHours = normalizeDreamsStatusWindowHours(Number(options.windowHours ?? "24"));
@@ -8319,7 +8321,15 @@ export function registerCli(
             console.error("--window-hours must be a positive integer");
             process.exit(1);
           }
-          const result = await getDreamsStatus(orchestrator.config.memoryDir, windowHours);
+          const accessService = new EngramAccessService(orchestrator);
+          const result = await accessService.dreamsStatus({
+            windowHours,
+            namespace: typeof options.namespace === "string" ? options.namespace : undefined,
+            principal: resolveAccessPrincipalOverride(
+              options.principal,
+              orchestrator.config.agentAccessHttp.principal,
+            ),
+          });
 
           if (fmt === "json") {
             console.log(JSON.stringify(result, null, 2));
@@ -8368,10 +8378,20 @@ export function registerCli(
         .requiredOption("--phase <phase>", "Phase to run: light-sleep, rem, deep-sleep")
         .option("--dry-run", "Preview without committing writes")
         .option("--format <fmt>", "Output format: text, json (default text)", "text")
+        .option("--namespace <ns>", "Namespace to run in (default: current default namespace)")
+        .option("--principal <principal>", "Trusted principal for namespace ACLs (defaults to config/env)")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, string | boolean>;
           const phaseInput = typeof options.phase === "string" ? options.phase : "";
-          const dryRun = options.dryRun === true || options.dryRun === "true";
+          if (
+            "dryRun" in options &&
+            options.dryRun !== undefined &&
+            typeof options.dryRun !== "boolean"
+          ) {
+            console.error("--dry-run must be a boolean flag");
+            process.exit(1);
+          }
+          const dryRun = options.dryRun === true;
           const fmt = typeof options.format === "string" ? options.format : "text";
 
           if (fmt !== "text" && fmt !== "json") {
@@ -8398,26 +8418,19 @@ export function registerCli(
             process.exit(1);
           }
 
-          const { runDreamsPhase, deepSleepGovernanceRunner } = await import("./maintenance/dreams-ledger.js");
-          const deepSleep = orchestrator.config.dreamsPhases.deepSleep;
-          if (
-            phase === "deepSleep" &&
-            deepSleep.enabled === false &&
-            deepSleep.enabledExplicitlySet === true
-          ) {
-            throw new Error("memory governance is disabled by dreams.phases.deepSleep.enabled=false");
-          }
-          const result = await runDreamsPhase(
-            { memoryDir: orchestrator.config.memoryDir, phase, dryRun },
-            phase === "deepSleep" ? deepSleepGovernanceRunner : undefined,
-          );
+          const accessService = new EngramAccessService(orchestrator);
+          const result = await accessService.dreamsRun({
+            phase,
+            dryRun,
+            namespace: typeof options.namespace === "string" ? options.namespace : undefined,
+            authenticatedPrincipal: resolveAccessPrincipalOverride(
+              options.principal,
+              orchestrator.config.agentAccessHttp.principal,
+            ),
+          });
 
           if (fmt === "json") {
-            // Omit the internal ledgerEntry field — the public shape matches
-            // the HTTP and MCP surfaces (types.ts::DreamsRunResult).
-            const { ledgerEntry: _discarded, ...publicResult } = result;
-            void _discarded;
-            console.log(JSON.stringify(publicResult, null, 2));
+            console.log(JSON.stringify(result, null, 2));
             return;
           }
 
