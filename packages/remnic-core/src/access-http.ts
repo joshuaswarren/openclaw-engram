@@ -1348,12 +1348,18 @@ export class EngramAccessHttpServer {
         return;
       }
       const dryRun = body.dryRun === true;
+      if (!dryRun) {
+        this.ensureWriteRateLimitAvailable();
+      }
       const result = await this.service.dreamsRun({
         phase: phase as import("./types.js").DreamsPhase,
         dryRun,
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
       });
+      if (this.shouldCountWriteRateLimit(result as { dryRun?: boolean; idempotencyReplay?: boolean })) {
+        this.recordWriteRateLimitHit();
+      }
       this.respondJson(res, 200, result);
       return;
     }
@@ -1480,7 +1486,16 @@ export class EngramAccessHttpServer {
     const isMcpWrite =
       request.method === "tools/call" &&
       typeof request.params?.name === "string" &&
-      (request.params.name === "engram.memory_store" || request.params.name === "engram.suggestion_submit" || request.params.name === "engram.observe");
+      (
+        request.params.name === "engram.memory_store" ||
+        request.params.name === "remnic.memory_store" ||
+        request.params.name === "engram.suggestion_submit" ||
+        request.params.name === "remnic.suggestion_submit" ||
+        request.params.name === "engram.observe" ||
+        request.params.name === "remnic.observe" ||
+        request.params.name === "engram.dreams_run" ||
+        request.params.name === "remnic.dreams_run"
+      );
     if (isMcpWrite) {
       this.ensureWriteRateLimitAvailable();
     }
