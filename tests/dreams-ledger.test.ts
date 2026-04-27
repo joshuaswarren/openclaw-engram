@@ -346,6 +346,29 @@ test("runDreamsPhase rem skips namespace subtrees when scanning default root", a
   assert.equal(result.itemsProcessed, 1);
 });
 
+test("runDreamsPhase live lightSleep requires a real phase runner", async () => {
+  const memoryDir = await makeTmpDir();
+
+  await assert.rejects(
+    () => runDreamsPhase({ memoryDir, phase: "lightSleep", dryRun: false }),
+    /light-sleep manual runs require a phase runner/,
+  );
+});
+
+test("runDreamsPhase live rem records phase runner telemetry", async () => {
+  const memoryDir = await makeTmpDir();
+  const result = await runDreamsPhase(
+    { memoryDir, phase: "rem", dryRun: false },
+    undefined,
+    async () => ({ itemsProcessed: 4, notes: "REM consolidation found 2 clusters" }),
+  );
+
+  assert.equal(result.itemsProcessed, 4);
+  assert.equal(result.notes, "REM consolidation found 2 clusters");
+  const entries = await readDreamsLedgerEntries(memoryDir);
+  assert.equal(entries[0]?.itemsProcessed, 4);
+});
+
 test("summarizeGovernanceResultForDreams does not double-count proposed actions", () => {
   const result = summarizeGovernanceResultForDreams(
     {

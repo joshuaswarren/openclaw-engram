@@ -313,6 +313,7 @@ export async function recordDreamsPhaseRun(options: {
 export async function runDreamsPhase(
   options: DreamsRunOptions,
   governanceRunner?: (opts: { memoryDir: string; dryRun: boolean }) => Promise<{ scannedMemories: number; appliedActionCount: number; notes?: string }>,
+  phaseRunner?: (opts: { memoryDir: string; phase: Exclude<DreamsPhase, "deepSleep"> }) => Promise<{ itemsProcessed: number; notes?: string }>,
 ): Promise<DreamsRunResultInternal> {
   const { memoryDir, phase, dryRun = false } = options;
   const startedAt = new Date().toISOString();
@@ -321,6 +322,17 @@ export async function runDreamsPhase(
   let notes: string | undefined;
 
   if (phase === "lightSleep") {
+    // Dry-run light sleep counts recent observation entries as a preview.
+    // Live runs must be backed by the orchestrator phase runner so the command
+    // never reports success without executing the phase.
+    if (!dryRun) {
+      if (!phaseRunner) {
+        throw new Error("light-sleep manual runs require a phase runner");
+      }
+      const result = await phaseRunner({ memoryDir, phase });
+      itemsProcessed = Math.max(0, Math.floor(result.itemsProcessed));
+      notes = result.notes ?? `scored ${itemsProcessed} memories`;
+    } else {
     // Light sleep: count observation ledger entries from the last 24h as a
     // proxy for "items scored".  The full value-scoring pass runs in the
     // orchestrator maintenance cycle; this surface reports what's queued.
@@ -358,7 +370,16 @@ export async function runDreamsPhase(
     } catch (err) {
       throw new Error(`light-sleep scan failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+    }
   } else if (phase === "rem") {
+    if (!dryRun) {
+      if (!phaseRunner) {
+        throw new Error("REM manual runs require a phase runner");
+      }
+      const result = await phaseRunner({ memoryDir, phase });
+      itemsProcessed = Math.max(0, Math.floor(result.itemsProcessed));
+      notes = result.notes ?? `REM pass assessed ${itemsProcessed} memories`;
+    } else {
     // REM: count memories eligible for consolidation by reading the
     // semantic-consolidation state and estimating the cluster candidates.
     try {
@@ -381,6 +402,7 @@ export async function runDreamsPhase(
       }
     } catch (err) {
       throw new Error(`REM scan failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
     }
   } else {
     // deep sleep

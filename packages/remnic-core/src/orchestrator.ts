@@ -13541,8 +13541,9 @@ export class Orchestrator {
   ): Promise<void> {
     try {
       const { recordDreamsPhaseRun } = await import("./maintenance/dreams-ledger.js");
+      const dreamsStorage = await this.getStorage(this.config.defaultNamespace);
       await recordDreamsPhaseRun({
-        memoryDir: this.config.memoryDir,
+        memoryDir: dreamsStorage.dir,
         phase,
         trigger: "scheduled",
         itemsProcessed,
@@ -13553,6 +13554,12 @@ export class Orchestrator {
     } catch (error) {
       log.debug(`dreams ledger scheduled ${phase} write failed (non-fatal): ${error}`);
     }
+  }
+
+  async runLifecyclePolicyNow(): Promise<{ memoriesAssessed: number }> {
+    const lifecycleCorpus = await this.storage.readAllMemories();
+    await this.runLifecyclePolicyPass(lifecycleCorpus);
+    return { memoriesAssessed: lifecycleCorpus.length };
   }
 
   private async runLifecyclePolicyPass(

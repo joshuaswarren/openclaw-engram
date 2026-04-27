@@ -4527,9 +4527,27 @@ export class EngramAccessService {
     );
     const storage = await this.orchestrator.getStorage(resolvedNamespace);
     const memoryDir = storage.dir;
+    const phaseRunner = dryRun || options.phase === "deepSleep"
+      ? undefined
+      : async (_opts: { memoryDir: string; phase: "lightSleep" | "rem" }) => {
+          if (_opts.phase === "lightSleep") {
+            const result = await this.orchestrator.runLifecyclePolicyNow();
+            return {
+              itemsProcessed: result.memoriesAssessed,
+              notes: `scored ${result.memoriesAssessed} memories`,
+            };
+          }
+          const result = await this.orchestrator.runSemanticConsolidationNow({ dryRun: false });
+          const memFiles = await storage.readAllMemories();
+          return {
+            itemsProcessed: memFiles.length,
+            notes: `REM consolidation found ${result.clustersFound} clusters`,
+          };
+        };
     const result = await runDreamsPhase(
       { memoryDir, phase: options.phase, dryRun },
       options.phase === "deepSleep" ? deepSleepGovernanceRunner : undefined,
+      phaseRunner,
     );
     return {
       phase: result.phase,
