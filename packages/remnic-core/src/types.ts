@@ -223,11 +223,35 @@ export interface NativeKnowledgeOpenClawWorkspaceConfig {
   sharedSafeGlobs: string[];
 }
 
+/**
+ * OpenClaw SecretRef shape (issue #757).
+ *
+ * OpenClaw resolves these at runtime via its built-in secret resolver
+ * (e.g. exec providers like `kc_*` for macOS Keychain). Plugins receive
+ * the raw object in `pluginConfig` and must call the gateway's resolver
+ * before using the value. Standalone Remnic does NOT resolve SecretRefs;
+ * operators must use plain strings or `${ENV_VAR}` expansion instead.
+ */
+export interface SecretRef {
+  source: string;
+  provider?: string;
+  id?: string;
+  command?: unknown;
+  [key: string]: unknown;
+}
+
+export type AgentAccessAuthToken = string | SecretRef;
+
 export interface AgentAccessHttpConfig {
   enabled: boolean;
   host: string;
   port: number;
-  authToken?: string;
+  /**
+   * Bearer token. Either a literal string (env-expanded) or an unresolved
+   * SecretRef object preserved verbatim from openclaw.json — resolved at
+   * service-start time via {@link resolveAgentAccessAuthToken}.
+   */
+  authToken?: AgentAccessAuthToken;
   principal?: string;
   maxBodyBytes: number;
 }
@@ -698,6 +722,21 @@ export interface PluginConfig {
   activeRecallAllowChainedActiveMemory: boolean;
   dreaming: DreamingConfig;
   procedural: ProceduralConfig;
+  /**
+   * At-rest encryption configuration (issue #690 PR 3/4).
+   *
+   * When `secureStoreEnabled` is true, `StorageManager` reads and
+   * writes memory files through the `secure-fs` encryption layer.
+   * The store must be unlocked via `remnic secure-store unlock` before
+   * any recall or store operations will succeed.
+   *
+   * When `secureStoreEncryptOnWrite` is true (the default when enabled),
+   * every new memory write is encrypted. Set to false to pause new
+   * encryptions while still being able to decrypt existing files.
+   */
+  secureStoreEnabled: boolean;
+  /** Encrypt new writes when the secure-store is unlocked. Default true. */
+  secureStoreEncryptOnWrite: boolean;
   // Coding-agent project/branch scoping (issue #569)
   codingMode: CodingModeConfig;
   heartbeat: HeartbeatConfig;

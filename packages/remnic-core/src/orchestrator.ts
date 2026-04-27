@@ -307,6 +307,7 @@ import {
   dedupeBehaviorSignalsByMemoryAndHash,
 } from "./behavior-signals.js";
 import { ProfilingCollector } from "./profiling.js";
+import { keyring, secureStoreDir } from "./secure-store/index.js";
 import type {
   AccessTrackingEntry,
   BehaviorLoopPolicyState,
@@ -1739,6 +1740,23 @@ export class Orchestrator {
       maxVersionsPerPage: config.versioningMaxPerPage,
       sidecarDir: config.versioningSidecarDir,
     });
+    // Wire at-rest encryption (issue #690 PR 3/4).
+    // If secureStoreEnabled, check whether the keyring already holds a key
+    // for this memory dir (e.g. operator unlocked before daemon restart).
+    if (config.secureStoreEnabled) {
+      // Mark the store as required so writes throw SecureStoreLockedError
+      // instead of silently falling back to plaintext when locked (P1 finding
+      // from Cursor review of PR #767).
+      this.storage.setSecureStoreRequired(true);
+      const storeId = secureStoreDir(config.memoryDir);
+      const existingKey = keyring.getKey(storeId);
+      if (existingKey) {
+        this.storage.setSecureStoreKey(existingKey, config.secureStoreEncryptOnWrite);
+      }
+      // If no key is present the store remains locked until `remnic secure-store unlock`
+      // is run — reads of encrypted files will throw SecureStoreLockedError,
+      // and writes will throw SecureStoreLockedError via resolveWriteKey().
+    }
     this.qmd = createSearchBackend(config);
     const conversationIndexRuntime = createConversationIndexRuntime(config, {
       getQmd: () => this.conversationQmd,
@@ -4521,6 +4539,19 @@ export class Orchestrator {
       }
     }
 
+    // Secure-store lock gate (issue #690 PR 3/4).
+    // If secure-store is enabled but the keyring holds no key for this
+    // memory directory, reject recall with a clear human-readable error
+    // rather than surfacing a cryptic SecureStoreLockedError from deep
+    // inside the storage layer.
+    if (this.config.secureStoreEnabled && !this.storage.isSecureStoreUnlocked()) {
+      const lockedMsg =
+        "[secure-store locked] Memory store is encrypted and locked. " +
+        "Run `remnic secure-store unlock` then restart the daemon to decrypt.";
+      log.warn("recall blocked: secure-store is locked");
+      return lockedMsg;
+    }
+
     // Keep outer recall timeout above worst-case serialized hybrid search:
     // QMD subprocess BM25 (30s) + vector (30s) can consume ~60s under contention.
     try {
@@ -5631,14 +5662,19 @@ export class Orchestrator {
     sectionBuckets: Map<string, string[]>,
     sectionId: string,
     content: string,
-  ): void {
-    if (!this.isRecallSectionEnabled(sectionId)) return;
+  ): boolean {
+    // Returns true when the section was actually appended to sectionBuckets,
+    // false when it was dropped (disabled, empty, or maxChars===0). Callers
+    // that need to know whether injection occurred (e.g. xray annotation for
+    // peer-profile) must gate on this return value rather than on whether the
+    // section text was computed (Codex P2 finding, PR #764).
+    if (!this.isRecallSectionEnabled(sectionId)) return false;
     const trimmed = content.trim();
-    if (trimmed.length === 0) return;
+    if (trimmed.length === 0) return false;
 
     const maxChars = this.getRecallSectionMaxChars(sectionId);
     let finalContent = trimmed;
-    if (maxChars === 0) return;
+    if (maxChars === 0) return false;
     if (typeof maxChars === "number" && finalContent.length > maxChars) {
       finalContent = `${finalContent.slice(0, maxChars)}\n\n...(trimmed)\n`;
     }
@@ -5646,6 +5682,7 @@ export class Orchestrator {
     const existing = sectionBuckets.get(sectionId) ?? [];
     existing.push(finalContent);
     sectionBuckets.set(sectionId, existing);
+    return true;
   }
 
   private truncateRecallSectionToBudget(
@@ -6402,6 +6439,27 @@ export class Orchestrator {
     // true AND `peerProfileRecallMaxFields` must be > 0 AND a peer ID
     // must be registered for this session (rule 30 — new
     // filters/transforms must have configuration gates).
+    //
+    // Issue #679 completion: side-channel annotation for recall X-ray.
+    // We capture the peer id and injected-field count separately from
+    // the promise result string so the xray snapshot builder can record
+    // them without re-parsing the rendered section text.
+    //
+    // Three-state semantics (mirrors docs/peers.md X-ray contract):
+    //   undefined — feature off, no peer registered, or maxFields=0 (field
+    //               absent from snapshot — peerProfileInjection not set).
+    //   null      — feature enabled + peer registered, but no profile or no
+    //               fields found (snapshot carries explicit null).
+    //   object    — injection occurred (snapshot carries { peerId, fieldsInjected }).
+    //
+    // Cursor Bugbot (PR #764): must start as `undefined` so early-return
+    // paths that never enter the feature-enabled branch leave the annotation
+    // absent. Starting as `null` incorrectly sets peerProfileInjection:null
+    // on the snapshot even when peerProfileRecallEnabled is false.
+    let peerProfileXrayAnnotation:
+      | { peerId: string; fieldsInjected: number }
+      | null
+      | undefined = undefined;
     const peerProfileRecallPromise = (async (): Promise<string | null> => {
       if (!this.config.peerProfileRecallEnabled) return null;
       if (this.config.peerProfileRecallMaxFields <= 0) return null;
@@ -6419,9 +6477,18 @@ export class Orchestrator {
           source: "fresh",
           success: true,
         });
-        if (!peerProfile) return null;
+        if (!peerProfile) {
+          // Feature on + peer registered, but no profile written yet.
+          // Three-state contract: explicit null = "enabled but no profile".
+          peerProfileXrayAnnotation = null;
+          return null;
+        }
         const allFields = Object.entries(peerProfile.fields);
-        if (allFields.length === 0) return null;
+        if (allFields.length === 0) {
+          // Profile exists but has no fields — same semantic as no profile.
+          peerProfileXrayAnnotation = null;
+          return null;
+        }
         // Select the top-N most-recently-updated fields by consulting
         // provenance. Fields without provenance get epoch-0 ms so they
         // sort last (least recent).
@@ -6460,6 +6527,8 @@ export class Orchestrator {
           });
         const capped = fieldsByRecency.slice(0, this.config.peerProfileRecallMaxFields);
         const lines = capped.map(({ key, value }) => `**${key}**: ${value}`);
+        // Record xray annotation: peerId + how many fields were injected.
+        peerProfileXrayAnnotation = { peerId, fieldsInjected: capped.length };
         return `## Peer Profile\n\n${lines.join("\n\n")}`;
       } catch (err) {
         recordRecallSectionMetric({
@@ -8215,12 +8284,22 @@ export class Orchestrator {
       );
 
     // 1p. Peer profile (issue #679 PR 3/5)
-    if (peerProfileSection)
-      this.appendRecallSection(
+    // Codex P2 (PR #764): only finalize the xray annotation when the section
+    // was actually appended — appendRecallSection may drop it (disabled,
+    // maxChars===0). We clear the annotation when the section is dropped so
+    // the xray snapshot never reports injection that didn't happen.
+    if (peerProfileSection) {
+      const peerSectionAppended = this.appendRecallSection(
         sectionBuckets,
         "peer-profile",
         peerProfileSection,
       );
+      if (!peerSectionAppended) {
+        // Section was gated out — treat as null (feature on + peer registered,
+        // but no context actually injected).
+        peerProfileXrayAnnotation = null;
+      }
+    }
 
     // 1-pre. Calibration rules (injected early so model sees adjustments first)
     if (calibrationSection) {
@@ -9507,6 +9586,13 @@ export class Orchestrator {
           sessionKey,
           namespace: selfNamespace,
           traceId,
+          // Issue #679 completion: record peer-profile injection in the
+          // xray snapshot. peerProfileXrayAnnotation is set inside
+          // peerProfileRecallPromise when injection actually occurred,
+          // and stays null otherwise. By the time xray capture runs,
+          // phase-1 parallel work is complete so the annotation is
+          // guaranteed to be populated.
+          peerProfileInjection: peerProfileXrayAnnotation,
         });
       } catch (err) {
         // Capture is a best-effort side channel: a capture failure

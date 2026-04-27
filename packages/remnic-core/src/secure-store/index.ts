@@ -106,3 +106,22 @@ export {
 } from "./cli-renderer.js";
 
 export { createPassphraseReader } from "./passphrase-reader.js";
+
+// PR 3/4 — transparent storage-layer encryption
+export {
+  FILE_FORMAT_FLAGS,
+  FILE_FORMAT_VERSION,
+  MAGIC_BYTES,
+  MAGIC_HEADER_SIZE,
+  SecureStoreDecryptError,
+  SecureStoreLockedError,
+  decryptFileBody,
+  encryptFileBody,
+  filePathAad,
+  isEncryptedFile,
+  migrateMemoryDirToEncrypted,
+  readMaybeEncryptedFile,
+  writeMaybeEncryptedFile,
+  type MigrateResult,
+  type WriteMaybeEncryptedFileOptions,
+} from "./secure-fs.js";

@@ -5,6 +5,7 @@ import path from "node:path";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { parseConfig } from "../src/config.js";
 import { registerCli } from "../src/cli.js";
+import { clearAuthTokenSecretCache } from "../packages/remnic-core/src/resolve-auth-token.js";
 import type { OperatorToolkitOrchestrator } from "../src/operator-toolkit.js";
 
 class MockCommand {
@@ -53,7 +54,10 @@ function openclawConfigDocument(pluginConfig: Record<string, unknown>): string {
   }, null, 2);
 }
 
-async function makeFixture(overrides: Record<string, unknown> = {}): Promise<{
+async function makeFixture(
+  overrides: Record<string, unknown> = {},
+  registerOptions: Parameters<typeof registerCli>[2] = {},
+): Promise<{
   configPath: string;
   orchestrator: OperatorToolkitOrchestrator;
   root: MockCommand;
@@ -97,6 +101,7 @@ async function makeFixture(overrides: Record<string, unknown> = {}): Promise<{
         return config.qmdEnabled ? "available" : "disabled";
       },
     },
+    async initialize() {},
     async getConversationIndexHealth() {
       return {
         enabled: false,
@@ -115,7 +120,7 @@ async function makeFixture(overrides: Record<string, unknown> = {}): Promise<{
         rebuilt: false,
       };
     },
-  };
+  } as OperatorToolkitOrchestrator;
 
   const root = new MockCommand("root");
   registerCli(
@@ -125,6 +130,7 @@ async function makeFixture(overrides: Record<string, unknown> = {}): Promise<{
       },
     },
     orchestrator as never,
+    registerOptions,
   );
 
   return { configPath, orchestrator, root };
@@ -186,6 +192,90 @@ test("operator toolkit JSON commands emit parseable JSON without trailing OK", a
     }
   } finally {
     delete process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+  }
+});
+
+test("access http-serve CLI resolves SecretRef authToken through injected host resolver", async () => {
+  const authToken = {
+    source: "exec",
+    provider: "kc_openclaw_remnic_token",
+    id: "http-serve-cli",
+  };
+  let resolverCalls = 0;
+  clearAuthTokenSecretCache();
+
+  const fixture = await makeFixture(
+    {
+      agentAccessHttp: {
+        enabled: true,
+        authToken,
+      },
+    },
+    {
+      loadResolveSecretRef: async () => {
+        return async (ref) => {
+          resolverCalls += 1;
+          assert.deepEqual(ref, authToken);
+          return " cli-secret-token\n";
+        };
+      },
+    },
+  );
+  const serve = getAction(fixture.root, ["engram", "access", "http-serve"]);
+  const stop = getAction(fixture.root, ["engram", "access", "http-stop"]);
+
+  try {
+    const result = await captureAction(serve, {
+      host: "127.0.0.1",
+      port: "0",
+    });
+    const status = JSON.parse(result.output.replace(/\nOK$/, "")) as {
+      running: boolean;
+      port: number;
+    };
+
+    assert.equal(result.exitCode, undefined);
+    assert.equal(status.running, true);
+    assert.equal(status.port > 0, true);
+    assert.equal(resolverCalls, 1);
+  } finally {
+    await captureAction(stop, {});
+    clearAuthTokenSecretCache();
+  }
+});
+
+test("access http-serve CLI reports missing SecretRef resolver distinctly", async () => {
+  clearAuthTokenSecretCache();
+  const fixture = await makeFixture(
+    {
+      agentAccessHttp: {
+        enabled: true,
+        authToken: {
+          source: "exec",
+          provider: "kc_openclaw_remnic_token",
+          id: "missing-resolver",
+        },
+      },
+    },
+    {
+      loadResolveSecretRef: async () => null,
+    },
+  );
+  const serve = getAction(fixture.root, ["engram", "access", "http-serve"]);
+
+  try {
+    await assert.rejects(
+      () =>
+        Promise.resolve(
+          serve({
+            host: "127.0.0.1",
+            port: "0",
+          }),
+        ),
+      /SecretRef resolver was not provided/,
+    );
+  } finally {
+    clearAuthTokenSecretCache();
   }
 });
 

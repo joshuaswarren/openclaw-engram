@@ -47,7 +47,7 @@ Backward compatibility note:
 | `agentAccessHttp.enabled` | `false` | Start a local authenticated Remnic HTTP API during plugin startup |
 | `agentAccessHttp.host` | `127.0.0.1` | Loopback bind host for the Remnic HTTP API |
 | `agentAccessHttp.port` | `4318` | Bind port for the Remnic HTTP API (`0` = ephemeral port) |
-| `agentAccessHttp.authToken` | `OPENCLAW_ENGRAM_ACCESS_TOKEN` | Bearer token for the local HTTP API; supports `${ENV_VAR}` references |
+| `agentAccessHttp.authToken` | `OPENCLAW_REMNIC_ACCESS_TOKEN` / `OPENCLAW_ENGRAM_ACCESS_TOKEN` | Bearer token for the local HTTP API. Accepts a literal string (with `${ENV_VAR}` expansion) or — under OpenClaw — a SecretRef object such as `{"source":"exec","provider":"kc_openclaw_remnic_token","id":"value"}` resolved at startup via the gateway secret resolver (issue #757). Standalone Remnic accepts strings only. |
 | `agentAccessHttp.maxBodyBytes` | `131072` | Maximum accepted JSON request body size |
 
 When `agentAccessHttp.enabled` is on (or `openclaw engram access http-serve` is running), the same loopback server also serves the browser-based admin console shell at `/engram/ui/`. The shell is static, ships with packaged plugin builds, and still requires the configured bearer token over `/engram/v1/...` for memory data and operator actions.
@@ -969,6 +969,32 @@ of truth for similarity logic across read-time and write-time code paths.
 | `binaryLifecycleBackendType` | `"none"` | Storage backend: `"none"`, `"filesystem"`, `"s3"` |
 | `binaryLifecycleBackendPath` | `""` | Base path for filesystem backend |
 
+## Peer registry (issue #679)
+
+Manages the multi-peer schema (self, human, agent, integration). Full narrative: [peers.md](peers.md).
+
+### Profile reasoner
+
+The async profile reasoner derives structured `profile.md` fields from interaction-log signals.
+It runs inside the Dreams REM phase and is **disabled by default**.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `peerProfileReasonerEnabled` | `false` | Master gate for the async peer profile reasoner. Set to `true` to opt in. Least-privileged default per CLAUDE.md rules #30/#48. |
+| `peerProfileReasonerModel` | `"auto"` | Model routing alias used for reasoner LLM calls. `"auto"` uses the platform routing default; operators can pin to a specific model identifier. |
+| `peerProfileReasonerMinInteractions` | `5` | Minimum interaction-log entries required before the reasoner processes a peer. **`0` disables the minimum** (process every peer regardless of log depth). |
+| `peerProfileReasonerMaxFieldsPerRun` | `8` | Maximum profile fields the reasoner may write per peer per run. **`0` disables field writes** while still allowing the reasoner to run its analysis. |
+
+### Recall injection
+
+Injects a `## Peer Profile` section from the peer registered for the active session.
+**Disabled by default.**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `peerProfileRecallEnabled` | `false` | Gate for peer-profile injection into recall context. Set to `true` to inject the active session's peer profile into every recall. |
+| `peerProfileRecallMaxFields` | `5` | Maximum number of profile fields injected per recall. Fields are selected by most-recently-updated provenance timestamp. **`0` disables injection** even when `peerProfileRecallEnabled` is `true`. |
+
 ## Procedural memory (issue #519)
 
 Stored as `category: procedure` markdown under `memoryDir/procedures/`. Narrative overview: [procedural-memory.md](procedural-memory.md).
@@ -983,6 +1009,20 @@ Stored as `category: procedure` markdown under `memoryDir/procedures/`. Narrativ
 | `procedural.lookbackDays` | `14` | Trajectory lookback window for mining (days). Lowered from `30` in issue #567 PR 3/5. |
 | `procedural.proceduralMiningCronAutoRegister` | `false` | When `true`, installer may register the nightly procedural mining cron entry. |
 | `procedural.recallMaxProcedures` | `2` | Max procedure previews injected on task-initiation recall (`1`–`10`). Lowered from `3` in issue #567 PR 3/5 so procedural injection does not crowd other recall sections. |
+
+## Pattern reinforcement (issue #687)
+
+Cross-session pattern detection: clusters memories by normalized content, reinforces recurring primitives with `reinforcement_count` + `last_reinforced_at`, and optionally boosts their recall score. Narrative overview: [pattern-reinforcement.md](pattern-reinforcement.md).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `patternReinforcementEnabled` | `false` | Master gate. Set to `true` to enable the maintenance job that detects and reinforces recurring memory patterns across sessions. Default `false` (opt-in). |
+| `patternReinforcementCadenceMs` | `604800000` | Minimum milliseconds between pattern-reinforcement runs (default 7 days). Set to `0` to disable cadence gating and allow the job to run on every MCP/cron invocation. |
+| `patternReinforcementMinCount` | `3` | Minimum cluster size before a canonical memory is promoted and reinforced. Clamped to `[2, 1000]`; clusters of 1 are degenerate. |
+| `patternReinforcementCategories` | `["preference", "fact", "decision"]` | Memory categories the job considers. Set to `[]` to process no categories. Procedure memories are intentionally excluded from the default list to avoid interference with the procedural miner. |
+| `reinforcementRecallBoostEnabled` | `false` | When `true`, memories with `reinforcement_count > 0` receive an additive score boost during recall. Default `false` (opt-in). Requires `patternReinforcementEnabled: true` upstream to populate reinforcement counts. |
+| `reinforcementRecallBoostWeight` | `0.05` | Per-unit score bonus applied per `reinforcement_count`. Raw boost is `weight × reinforcement_count`, then clipped at `reinforcementRecallBoostMax`. Range `[0, 1]`. |
+| `reinforcementRecallBoostMax` | `0.3` | Maximum additive reinforcement boost per recall result. Range `[0, 1]`. Raw boost formula: `min(reinforcementRecallBoostMax, reinforcementRecallBoostWeight × reinforcement_count)`. |
 
 ## Codex Marketplace (issue #418)
 
@@ -1446,6 +1486,13 @@ This appendix is flattened from the runtime config schema and the live `parseCon
 | `procedural.lookbackDays` | `14` | `14` (lowered from `30` in issue #567 PR 3/5) |
 | `procedural.proceduralMiningCronAutoRegister` | `false` | `false` unless you intentionally want installer cron registration |
 | `procedural.recallMaxProcedures` | `2` | `2` (lowered from `3` in issue #567 PR 3/5) |
+| `patternReinforcementEnabled` | `false` | `false` until you have enough cross-session data to observe clustering benefits. See [pattern-reinforcement.md](pattern-reinforcement.md). |
+| `patternReinforcementCadenceMs` | `604800000` | `604800000` (7 days). Lower to `86400000` (1 day) for faster iteration during evaluation; set to `0` to disable cadence gating entirely. |
+| `patternReinforcementMinCount` | `3` | `3` (minimum meaningful pattern; clusters of 2 are allowed but `3` reduces false positives on small corpora) |
+| `patternReinforcementCategories` | `["preference", "fact", "decision"]` | `["preference", "fact", "decision"]` (procedure excluded intentionally — procedural miner handles that category) |
+| `reinforcementRecallBoostEnabled` | `false` | `false` until you confirm pattern reinforcement is producing high-quality canonicals. Enable recall boost only after observing `remnic patterns list` output. |
+| `reinforcementRecallBoostWeight` | `0.05` | `0.05` (per-unit score bonus per `reinforcement_count`; raise cautiously and pair with a lower `reinforcementRecallBoostMax` if you want fast saturation) |
+| `reinforcementRecallBoostMax` | `0.3` | `0.3` (a 30-point maximum additive boost; lower to `0.1`–`0.15` for conservative uplift) |
 | `proactiveExtractionEnabled` | `false` | `false` until you validate the second pass in your environment |
 | `contextCompressionActionsEnabled` | `false` | `false` unless you are validating action-policy flows |
 | `compressionGuidelineLearningEnabled` | `false` | `false` unless action-policy telemetry is already stable |

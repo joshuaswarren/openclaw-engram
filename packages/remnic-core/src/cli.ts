@@ -89,6 +89,10 @@ import { WebDavServer } from "./network/webdav.js";
 import { GraphDashboardServer, type DashboardStatus } from "./dashboard-runtime.js";
 import { EngramAccessService } from "./access-service.js";
 import { EngramAccessHttpServer } from "./access-http.js";
+import {
+  resolveAgentAccessAuthToken,
+  type ResolveSecretRefFn,
+} from "./resolve-auth-token.js";
 import { EngramMcpServer } from "./access-mcp.js";
 import { runCompatChecks } from "./compat/checks.js";
 import { parseConfig } from "./config.js";
@@ -239,6 +243,15 @@ interface CliApi {
     options: { commands: string[] },
   ): void;
 }
+
+type RegisterCliOptions = {
+  resolveSecretRef?: ResolveSecretRefFn | null;
+  loadResolveSecretRef?: () =>
+    | Promise<ResolveSecretRefFn | null | undefined>
+    | ResolveSecretRefFn
+    | null
+    | undefined;
+};
 
 interface CliProgram {
   command(name: string): CliCommand;
@@ -3455,7 +3468,11 @@ function buildConversationIndexRebuildAction(orchestrator: Orchestrator) {
   };
 }
 
-export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
+export function registerCli(
+  api: CliApi,
+  orchestrator: Orchestrator,
+  registerOptions: RegisterCliOptions = {},
+): void {
   api.registerCli(
     ({ program }) => {
       const cmd = program
@@ -6771,15 +6788,29 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           // that arrive during warmup still work — orchestrator.recall() awaits
           // its internal init gate (15s timeout) so callers get a correct (if
           // slightly delayed) response rather than "connection refused".
+          // Resolve SecretRef authToken if config carries one (issue #757).
+          // The CLI flag override (--token) wins; otherwise, resolve config.
+          const cliTokenOverride =
+            typeof options.token === "string" && options.token.trim().length > 0
+              ? options.token
+              : undefined;
+          const resolveSecretRef =
+            registerOptions.resolveSecretRef ??
+            (registerOptions.loadResolveSecretRef
+              ? await registerOptions.loadResolveSecretRef()
+              : null);
+          const resolvedConfigAuthToken = cliTokenOverride
+            ? undefined
+            : await resolveAgentAccessAuthToken(
+                orchestrator.config.agentAccessHttp.authToken,
+                { resolveSecretRef },
+              );
           const status = await runAccessHttpServeCliCommand({
             service: accessService,
             enabled: true,
             host: typeof options.host === "string" ? options.host : "127.0.0.1",
             port: Number.isFinite(portRaw) ? portRaw : 4318,
-            authToken:
-              typeof options.token === "string" && options.token.trim().length > 0
-                ? options.token
-                : orchestrator.config.agentAccessHttp.authToken,
+            authToken: cliTokenOverride ?? resolvedConfigAuthToken,
             principal: resolveAccessPrincipalOverride(options.principal, orchestrator.config.agentAccessHttp.principal),
             maxBodyBytes: Number.isFinite(maxBodyBytesRaw) ? maxBodyBytesRaw : 131072,
             trustPrincipalHeader: options.trustPrincipalHeader === true,
@@ -8692,6 +8723,57 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             console.log(result.deleted ? `Deleted peer "${id}".` : `Peer "${id}" not found (no-op).`);
           } catch (err) {
             console.error(`Failed to delete peer: ${(err as Error).message}`);
+            process.exit(1);
+          }
+        });
+
+      // ── peer forget (issue #679 completion) ────────────────────────────
+      peerCmd
+        .command("forget <id>")
+        .description(
+          "DESTRUCTIVELY purge the entire peer directory (identity.md + profile.md + " +
+          "interactions.log.md and any other companion files). Requires --confirm yes. " +
+          "Idempotent: safe to run twice.",
+        )
+        .option(
+          "--confirm <value>",
+          'Confirmation guard — must be exactly "yes" to proceed',
+        )
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const id = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!id) {
+            console.error("peer id is required");
+            process.exit(1);
+          }
+          // Gotcha #14 — validate --confirm argument exists and equals "yes"
+          // exactly. An absent or non-"yes" value must refuse the operation
+          // rather than silently proceeding or defaulting.
+          const confirm = typeof options.confirm === "string" ? options.confirm : "";
+          if (confirm !== "yes") {
+            console.error(
+              `peer forget: refuses to run without --confirm yes (got ${
+                confirm.length > 0 ? JSON.stringify(confirm) : "<not provided>"
+              }). ` +
+              "This operation permanently removes all peer data.",
+            );
+            process.exit(1);
+          }
+          const peerForgetService = new EngramAccessService(orchestrator);
+          try {
+            const result = await peerForgetService.peerForget(id, { confirm: "yes" });
+            if (options.json === true) {
+              console.log(JSON.stringify(result, null, 2));
+              return;
+            }
+            console.log(
+              result.purged
+                ? `Purged all data for peer "${id}".`
+                : `Peer "${id}" directory not found (no-op).`,
+            );
+          } catch (err) {
+            console.error(`Failed to forget peer: ${(err as Error).message}`);
             process.exit(1);
           }
         });
