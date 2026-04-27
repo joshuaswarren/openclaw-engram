@@ -131,6 +131,18 @@ export const SEEN_IDS_MAX = 1_000;
  */
 export const SEEN_IDS_RETAIN = 500;
 
+/**
+ * Hard cap on the number of entries in the `skippedIds` map.
+ * When exceeded, the oldest entries (lowest internalDate) are evicted first.
+ * Inaccessible messages whose internalDate is unknown are stored as "0" and
+ * are evicted last (they sort highest when negated, so they sort lowest
+ * when ascending — we keep them until the cap forces eviction).
+ */
+export const SKIPPED_IDS_MAX = 5_000;
+
+/** Target entry count after a skippedIds eviction. */
+export const SKIPPED_IDS_RETAIN = 2_500;
+
 /** Gmail API base URL. */
 const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
 
@@ -362,9 +374,11 @@ interface GmailCursorPayload {
   /**
    * Set of message ids permanently skipped due to empty body, oversize, or
    * inaccessibility. Never re-fetched regardless of watermark state.
-   * Stored as a plain object (map<id, true>) for JSON round-trip safety.
+   * Maps id → internalDate ms string (or "0" when the date is unknown, e.g.
+   * inaccessible messages). Pruned on every cursor write via pruneSkippedIds
+   * to prevent unbounded growth. (Codex P2 PRRT_kwDORJXyws59z612)
    */
-  skippedIds: Record<string, true>;
+  skippedIds: Record<string, string>;
   /**
    * Sub-second dedup map: message id → internalDate ms string for messages
    * processed within the same second as the current watermark. Used to skip
@@ -433,9 +447,15 @@ function parseCursorPayload(cursor: ConnectorCursor): GmailCursorPayload {
   }
 
   // skippedIds: tolerate missing key (old cursors lack it).
-  let skippedIds: Record<string, true> = {};
+  // Backward compat: old cursors stored `true` as the value; new cursors store
+  // the internalDate ms string (or "0" for unknown-date entries). Coerce any
+  // `true` value to "0" on first read so the type is always Record<string,string>.
+  let skippedIds: Record<string, string> = {};
   if (typeof p.skippedIds === "object" && p.skippedIds !== null && !Array.isArray(p.skippedIds)) {
-    skippedIds = p.skippedIds as Record<string, true>;
+    const raw = p.skippedIds as Record<string, unknown>;
+    for (const [id, val] of Object.entries(raw)) {
+      skippedIds[id] = typeof val === "string" ? val : "0";
+    }
   }
 
   // seenIds: tolerate missing key (old cursors lack it).
@@ -511,6 +531,52 @@ export function pruneSeenIds(
       return diff !== 0 ? diff : a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
     });
     const retained = entries.slice(0, SEEN_IDS_RETAIN);
+    pruned = Object.fromEntries(retained);
+  }
+
+  return pruned;
+}
+
+/**
+ * Prune the `skippedIds` map to prevent unbounded cursor growth.
+ * (Codex P2 PRRT_kwDORJXyws59z612)
+ *
+ * `skippedIds` maps message id → internalDate ms string (or "0" when the
+ * internalDate is unknown, e.g. inaccessible messages that never returned a
+ * body). Entries whose internalDate is strictly below the current watermark
+ * are eligible for pruning: Gmail's `after:floor(watermarkMs/1000)` query
+ * will never re-return them, so there is nothing left to suppress.
+ *
+ * Entries stored as "0" (unknown date) are retained unless the hard cap
+ * forces eviction, at which point they are treated as date=0 and evicted
+ * first (oldest-first ordering).
+ *
+ * After date-based pruning, if the entry count still exceeds SKIPPED_IDS_MAX
+ * we evict down to SKIPPED_IDS_RETAIN, keeping the most recent entries.
+ */
+export function pruneSkippedIds(
+  skippedIds: Record<string, string>,
+  watermarkMs: number,
+): Record<string, string> {
+  // Step 1: drop entries whose internalDate is strictly below the watermark.
+  // "0" entries are unknown-date (inaccessible) — keep them.
+  let pruned: Record<string, string> = {};
+  for (const [id, dateMs] of Object.entries(skippedIds)) {
+    const ms = Number(dateMs);
+    if (ms === 0 || ms >= watermarkMs) {
+      pruned[id] = dateMs;
+    }
+  }
+
+  // Step 2: enforce hard cap — keep only the SKIPPED_IDS_RETAIN most recent.
+  const entries = Object.entries(pruned);
+  if (entries.length > SKIPPED_IDS_MAX) {
+    // Sort descending by date (most recent first); "0" sorts last (evicted first).
+    entries.sort((a, b) => {
+      const diff = Number(b[1]) - Number(a[1]);
+      return diff !== 0 ? diff : a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+    });
+    const retained = entries.slice(0, SKIPPED_IDS_RETAIN);
     pruned = Object.fromEntries(retained);
   }
 
@@ -879,7 +945,7 @@ async function incrementalSync(
   // messages that were empty, too-large, or inaccessible. They will never
   // become processable (Gmail messages are immutable), so we bypass them
   // without counting them toward the pass cap or stalling the watermark.
-  const skippedIds: Record<string, true> = { ...cursorPayload.skippedIds };
+  const skippedIds: Record<string, string> = { ...cursorPayload.skippedIds };
 
   // Track the highest internalDate seen (in ms) across all non-skipped
   // messages. Initialized to the current watermark so it only ever advances.
@@ -911,7 +977,30 @@ async function incrementalSync(
       listPath += `&pageToken=${encodeURIComponent(pageToken)}`;
     }
 
-    const listData = await gmailGet(fetchFn, accessToken, listPath, signal);
+    // Fetch the page. If a persisted pageToken is invalid/expired (Gmail
+    // returns 400), clear it and retry from the beginning of the `after:`
+    // window for this pass — otherwise the connector stalls forever retrying
+    // the same bad token. (Codex P1 PRRT_kwDORJXyws59z610)
+    let listData: unknown;
+    try {
+      listData = await gmailGet(fetchFn, accessToken, listPath, signal);
+    } catch (listErr) {
+      const listErrObj = listErr as { gmailStatus?: unknown } | null;
+      if (
+        pageToken !== undefined &&
+        listErrObj !== null &&
+        typeof listErrObj === "object" &&
+        listErrObj.gmailStatus === 400
+      ) {
+        // The persisted pageToken is stale or invalid. Clear it and restart
+        // from the beginning of the `after:` window for this pass.
+        pageToken = undefined;
+        listPath = `/users/${encodeURIComponent(config.userId)}/messages?maxResults=${LIST_PAGE_SIZE}&q=${encodeURIComponent(listQuery)}`;
+        listData = await gmailGet(fetchFn, accessToken, listPath, signal);
+      } else {
+        throw listErr;
+      }
+    }
     throwIfAborted(signal);
 
     const listPage = listData as {
@@ -964,15 +1053,20 @@ async function incrementalSync(
         skippedInaccessible++;
         // Terminal: don't re-fetch this id. Record it in skippedIds so future
         // polls bypass it without hitting the API again (Thread 2 fix).
-        skippedIds[ref.id] = true;
+        // Store "0" as the date — we have no internalDate for inaccessible
+        // messages; pruneSkippedIds treats "0" as unknown and evicts last.
+        skippedIds[ref.id] = "0";
       } else if (doc !== null && typeof doc === "object" && "kind" in doc) {
         // SkippedWithDate: empty or too-large. Gmail messages are immutable,
         // so record the id in skippedIds (Thread 2 fix) to prevent re-fetching
         // on every subsequent poll, AND update highWaterMs with the message's
         // internalDate so the watermark can advance past it when fully drained.
+        // Store the internalDate so pruneSkippedIds can evict this entry once
+        // the watermark advances past it. (Codex P2 PRRT_kwDORJXyws59z612)
         if (doc.kind === "empty") skippedEmpty++;
         else skippedTooLarge++;
-        skippedIds[ref.id] = true;
+        skippedIds[ref.id] =
+          doc.internalDate.length > 0 ? doc.internalDate : "0";
         const skippedMs = Number(doc.internalDate);
         if (Number.isFinite(skippedMs) && skippedMs > highWaterMs) {
           highWaterMs = skippedMs;
@@ -1046,12 +1140,15 @@ async function incrementalSync(
   // mid-page. It is cleared (not included) when the list is fully drained.
   let nextWatermarkMs: string;
   let nextSeenIds: Record<string, string>;
+  let nextSkippedIds: Record<string, string>;
   let nextPageToken: string | undefined;
 
   if (listFullyDrained && !capHit && highWaterMs > currentWatermarkMs) {
     nextWatermarkMs = String(highWaterMs);
     // Prune seenIds to new watermark and enforce size cap.
     nextSeenIds = pruneSeenIds(seenIds, highWaterMs);
+    // Prune skippedIds to new watermark. (Codex P2 PRRT_kwDORJXyws59z612)
+    nextSkippedIds = pruneSkippedIds(skippedIds, highWaterMs);
     // Window fully drained — clear the page token.
     nextPageToken = undefined;
   } else if (capHit) {
@@ -1060,18 +1157,20 @@ async function incrementalSync(
     // PRRT_kwDORJXyws59sh5I).
     nextWatermarkMs = cursorPayload.watermarkMs;
     nextSeenIds = pruneSeenIds(seenIds, currentWatermarkMs);
+    nextSkippedIds = pruneSkippedIds(skippedIds, currentWatermarkMs);
     nextPageToken = capHitPageToken;
   } else {
     // Watermark unchanged (list drained but no new messages, or aborted) —
     // keep exact ms string; prune seenIds to current watermark; no page token.
     nextWatermarkMs = cursorPayload.watermarkMs;
     nextSeenIds = pruneSeenIds(seenIds, currentWatermarkMs);
+    nextSkippedIds = pruneSkippedIds(skippedIds, currentWatermarkMs);
     nextPageToken = undefined;
   }
 
   const nextCursor = makeCursor({
     watermarkMs: nextWatermarkMs,
-    skippedIds,
+    skippedIds: nextSkippedIds,
     seenIds: nextSeenIds,
     ...(nextPageToken !== undefined ? { pageToken: nextPageToken } : {}),
   });
@@ -1131,6 +1230,18 @@ async function fetchMessageDocument(
   } catch (err) {
     if (isTransientGmailError(err)) {
       // Transient: re-throw to stop the pass without advancing the cursor.
+      throw err;
+    }
+    // 401 Unauthorized on a per-message fetch is also transient: the access
+    // token may have expired mid-pass. Re-throwing prevents the message from
+    // being permanently blacklisted in skippedIds when credentials are
+    // temporarily invalid. The next poll will re-fetch a fresh token and retry.
+    // (Codex P1 PRRT_kwDORJXyws59z61w)
+    if (
+      err !== null &&
+      typeof err === "object" &&
+      (err as { gmailStatus?: unknown }).gmailStatus === 401
+    ) {
       throw err;
     }
     // Terminal (404 / 403 / 400): skip this message.

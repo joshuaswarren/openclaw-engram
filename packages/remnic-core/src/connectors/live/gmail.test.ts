@@ -1131,8 +1131,9 @@ test("empty message id is recorded in skippedIds (Thread 2)", async () => {
   // The cursor must record the empty message id in skippedIds.
   const nextPayload = JSON.parse(result.nextCursor.value) as { skippedIds: Record<string, unknown> };
   assert.ok(
-    nextPayload.skippedIds["msg-empty-skip"] === true,
-    "empty message id must be in skippedIds",
+    typeof nextPayload.skippedIds["msg-empty-skip"] === "string" &&
+      nextPayload.skippedIds["msg-empty-skip"].length > 0,
+    "empty message id must be in skippedIds with an internalDate string",
   );
 });
 
@@ -1166,8 +1167,9 @@ test("too-large message id is recorded in skippedIds (Thread 2)", async () => {
 
   const nextPayload = JSON.parse(result.nextCursor.value) as { skippedIds: Record<string, unknown> };
   assert.ok(
-    nextPayload.skippedIds["msg-toolarge-skip"] === true,
-    "too-large message id must be in skippedIds",
+    typeof nextPayload.skippedIds["msg-toolarge-skip"] === "string" &&
+      nextPayload.skippedIds["msg-toolarge-skip"].length > 0,
+    "too-large message id must be in skippedIds with an internalDate string",
   );
 });
 
@@ -1190,8 +1192,9 @@ test("inaccessible (404) message id is recorded in skippedIds (Thread 2)", async
 
   const nextPayload = JSON.parse(result.nextCursor.value) as { skippedIds: Record<string, unknown> };
   assert.ok(
-    nextPayload.skippedIds["msg-404-skip"] === true,
-    "inaccessible message id must be in skippedIds",
+    typeof nextPayload.skippedIds["msg-404-skip"] === "string" &&
+      nextPayload.skippedIds["msg-404-skip"].length > 0,
+    "inaccessible message id must be in skippedIds with a date string",
   );
 });
 
