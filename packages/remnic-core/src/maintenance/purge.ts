@@ -211,7 +211,11 @@ export async function purgeMemories(
   const alreadyAbsent: PurgeCandidate[] = [];
   const collectionsToUpdate = new Set<string>();
   const addCollectionForCandidate = (candidate: PurgeCandidate) => {
-    collectionsToUpdate.add(candidate.tier === "cold" ? coldCollection : hotCollection);
+    if (candidate.tier === "cold") {
+      collectionsToUpdate.add(coldCollection);
+    } else if (candidate.tier === "hot") {
+      collectionsToUpdate.add(hotCollection);
+    }
   };
 
   for (const candidate of candidates) {

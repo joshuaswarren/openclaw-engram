@@ -286,7 +286,7 @@ export async function runFirstStartMigration(
   if (signal?.aborted) {
     return abortedResult(candidateCount, demotedCount, failureCount);
   }
-  if (candidateCount === 0 && qmd && await qmdRefreshPendingExists(config.memoryDir)) {
+  if (qmd && await qmdRefreshPendingExists(config.memoryDir)) {
     try {
       await qmd.updateCollection(coldCollection);
       await clearQmdRefreshPending(config.memoryDir);

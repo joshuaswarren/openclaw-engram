@@ -240,11 +240,17 @@ function stripCitationMarkersForHashRemoval(value: string, template: string): st
       result += value.slice(cursor);
       break;
     }
+    const boundedEnd = first.startsWith("[") ? value.indexOf("]", markerStart + first.length) : -1;
+    if (first.startsWith("[") && boundedEnd === -1) {
+      result += value.slice(cursor);
+      break;
+    }
+    const searchLimit = boundedEnd === -1 ? value.length : boundedEnd + 1;
     let markerEnd = markerStart + first.length;
     let matched = true;
     for (let i = 1; i < lowerParts.length; i += 1) {
       const partIndex = lowerValue.indexOf(lowerParts[i]!, markerEnd);
-      if (partIndex === -1) {
+      if (partIndex === -1 || partIndex + parts[i]!.length > searchLimit) {
         matched = false;
         break;
       }
