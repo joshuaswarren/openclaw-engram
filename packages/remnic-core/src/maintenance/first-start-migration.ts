@@ -257,12 +257,9 @@ export async function runFirstStartMigration(
       }
       demotedCount += 1;
     } catch {
-      const current = await storage.getMemoryById(memory.frontmatter.id).catch(() => null);
-      const movedToCold =
-        current?.path.includes(`${path.sep}cold${path.sep}`) === true ||
-        (await storage.readAllColdMemories().catch(() => [])).some(
-          (candidate) => candidate.frontmatter.id === memory.frontmatter.id,
-        );
+      const movedToCold = (await storage.readAllColdMemories().catch(() => [])).some(
+        (candidate) => candidate.frontmatter.id === memory.frontmatter.id,
+      );
       if (movedToCold && qmd) {
         try {
           await qmd.updateCollection(coldCollection);
