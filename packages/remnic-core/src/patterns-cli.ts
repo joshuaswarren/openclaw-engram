@@ -325,7 +325,13 @@ export function explainPatternMemory(
     (ref) => {
       const lastColon = ref.lastIndexOf(":");
       if (lastColon < 0) {
-        return { ref, path: ref, version: null };
+        const looksPathLike = ref.includes("/") || ref.includes(".");
+        return {
+          ref,
+          path: ref,
+          version: null,
+          ...(looksPathLike ? { malformed: true } : {}),
+        };
       }
       if (lastColon === 0 || lastColon === ref.length - 1) {
         return { ref, path: ref, version: null, malformed: true };

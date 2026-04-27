@@ -415,6 +415,7 @@ test("explainPatternMemory parses derived_from source ids and legacy path versio
         "mem-source-id",
         "facts/2026-01-01/mem.md:5",
         "facts/2026-01-01/also-bad:notanumber",
+        "facts/2026-01-01/missing-version.md",
       ],
     }),
   ];
@@ -426,6 +427,9 @@ test("explainPatternMemory parses derived_from source ids and legacy path versio
   assert.equal(detail.derivedFrom[1].version, 5);
   assert.equal(detail.derivedFrom[2].version, null);
   assert.equal(detail.derivedFrom[2].malformed, true);
+  assert.equal(detail.derivedFrom[3].path, "facts/2026-01-01/missing-version.md");
+  assert.equal(detail.derivedFrom[3].version, null);
+  assert.equal(detail.derivedFrom[3].malformed, true);
 });
 
 test("explainPatternMemory collects cluster members sorted supersededAt desc then id asc", () => {
