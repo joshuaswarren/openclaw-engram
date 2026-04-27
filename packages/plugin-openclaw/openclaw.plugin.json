@@ -428,6 +428,16 @@
           }
         }
       },
+      "secureStoreEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable at-rest AES-256-GCM encryption for memory files (issue #690). When true, the daemon reads and writes memory files through the secure-fs layer. The store must be unlocked via `remnic secure-store unlock` after each daemon start. Default false."
+      },
+      "secureStoreEncryptOnWrite": {
+        "type": "boolean",
+        "default": true,
+        "description": "When secureStoreEnabled is true, encrypt new memory writes. Set to false to pause new encryptions while still decrypting existing encrypted files (useful during incremental migration). Default true."
+      },
       "slotBehavior": {
         "type": "object",
         "additionalProperties": false,

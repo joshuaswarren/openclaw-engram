@@ -1447,6 +1447,11 @@ export function parseConfig(raw: unknown): PluginConfig {
       cfg.activeRecallAllowChainedActiveMemory === true,
     dreaming,
     procedural,
+    // At-rest encryption (issue #690 PR 3/4)
+    // coerceBool handles CLI string inputs: `--config secureStoreEnabled=true`
+    // arrives as the string "true" which `=== true` would reject (CLAUDE.md #36).
+    secureStoreEnabled: coerceBool(cfg.secureStoreEnabled) === true,
+    secureStoreEncryptOnWrite: coerceBool(cfg.secureStoreEncryptOnWrite) !== false, // default: true
     codingMode,
     heartbeat,
     slotBehavior,

@@ -307,6 +307,7 @@ import {
   dedupeBehaviorSignalsByMemoryAndHash,
 } from "./behavior-signals.js";
 import { ProfilingCollector } from "./profiling.js";
+import { keyring, secureStoreDir } from "./secure-store/index.js";
 import type {
   AccessTrackingEntry,
   BehaviorLoopPolicyState,
@@ -1739,6 +1740,23 @@ export class Orchestrator {
       maxVersionsPerPage: config.versioningMaxPerPage,
       sidecarDir: config.versioningSidecarDir,
     });
+    // Wire at-rest encryption (issue #690 PR 3/4).
+    // If secureStoreEnabled, check whether the keyring already holds a key
+    // for this memory dir (e.g. operator unlocked before daemon restart).
+    if (config.secureStoreEnabled) {
+      // Mark the store as required so writes throw SecureStoreLockedError
+      // instead of silently falling back to plaintext when locked (P1 finding
+      // from Cursor review of PR #767).
+      this.storage.setSecureStoreRequired(true);
+      const storeId = secureStoreDir(config.memoryDir);
+      const existingKey = keyring.getKey(storeId);
+      if (existingKey) {
+        this.storage.setSecureStoreKey(existingKey, config.secureStoreEncryptOnWrite);
+      }
+      // If no key is present the store remains locked until `remnic secure-store unlock`
+      // is run — reads of encrypted files will throw SecureStoreLockedError,
+      // and writes will throw SecureStoreLockedError via resolveWriteKey().
+    }
     this.qmd = createSearchBackend(config);
     const conversationIndexRuntime = createConversationIndexRuntime(config, {
       getQmd: () => this.conversationQmd,
@@ -4493,6 +4511,19 @@ export class Orchestrator {
       if (gateResult === "timeout") {
         log.warn("recall: init gate timed out — proceeding without full init");
       }
+    }
+
+    // Secure-store lock gate (issue #690 PR 3/4).
+    // If secure-store is enabled but the keyring holds no key for this
+    // memory directory, reject recall with a clear human-readable error
+    // rather than surfacing a cryptic SecureStoreLockedError from deep
+    // inside the storage layer.
+    if (this.config.secureStoreEnabled && !this.storage.isSecureStoreUnlocked()) {
+      const lockedMsg =
+        "[secure-store locked] Memory store is encrypted and locked. " +
+        "Run `remnic secure-store unlock` then restart the daemon to decrypt.";
+      log.warn("recall blocked: secure-store is locked");
+      return lockedMsg;
     }
 
     // Keep outer recall timeout above worst-case serialized hybrid search:

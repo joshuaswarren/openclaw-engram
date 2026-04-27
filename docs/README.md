@@ -33,6 +33,7 @@
 
 ## Feature Guides
 
+- [At-Rest Encryption](encryption.md) — AES-256-GCM transparent storage encryption, secure-store CLI, threat model (issue #690)
 - [Advanced Retrieval](advanced-retrieval.md) — Reranking, query expansion, feedback loop
 - [Pattern Reinforcement](pattern-reinforcement.md) — Cross-session pattern detection: reinforced primitives, `remnic patterns list/explain` CLI, recall boost (issue #687)
 - [Recall X-ray](xray.md) — Per-result retrieval attribution: which tier served each memory and why (issue #570)
