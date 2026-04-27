@@ -106,6 +106,74 @@ test("parseConfig supports explicit local HTTP access config and env fallback", 
   }
 });
 
+test("parseConfig preserves SecretRef authToken object verbatim (issue #757)", () => {
+  const originalRemnic = process.env.OPENCLAW_REMNIC_ACCESS_TOKEN;
+  const original = process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN;
+  delete process.env.OPENCLAW_REMNIC_ACCESS_TOKEN;
+  delete process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN;
+  try {
+    const secretRef = {
+      source: "exec",
+      provider: "kc_openclaw_remnic_token",
+      id: "value",
+    };
+    const cfg = parseConfig({
+      openaiApiKey: "sk-test",
+      agentAccessHttp: {
+        enabled: true,
+        authToken: secretRef,
+      },
+    });
+    // SecretRef must NOT be coerced or stringified — runtime resolution
+    // happens inside resolveAgentAccessAuthToken() at service-start time.
+    assert.deepEqual(cfg.agentAccessHttp.authToken, secretRef);
+  } finally {
+    if (originalRemnic === undefined) {
+      delete process.env.OPENCLAW_REMNIC_ACCESS_TOKEN;
+    } else {
+      process.env.OPENCLAW_REMNIC_ACCESS_TOKEN = originalRemnic;
+    }
+    if (original === undefined) {
+      delete process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN;
+    } else {
+      process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN = original;
+    }
+  }
+});
+
+test("parseConfig rejects non-string non-SecretRef authToken shapes (issue #757)", () => {
+  assert.throws(
+    () =>
+      parseConfig({
+        openaiApiKey: "sk-test",
+        agentAccessHttp: { enabled: true, authToken: 12345 as unknown as string },
+      }),
+    /unsupported SecretRef shape/,
+  );
+  assert.throws(
+    () =>
+      parseConfig({
+        openaiApiKey: "sk-test",
+        agentAccessHttp: {
+          enabled: true,
+          authToken: { provider: "no-source-field" } as unknown as string,
+        },
+      }),
+    /unsupported SecretRef shape/,
+  );
+  assert.throws(
+    () =>
+      parseConfig({
+        openaiApiKey: "sk-test",
+        agentAccessHttp: {
+          enabled: true,
+          authToken: ["not", "an", "object"] as unknown as string,
+        },
+      }),
+    /unsupported SecretRef shape/,
+  );
+});
+
 test("parseConfig preserves small explicit HTTP body limits", () => {
   const cfg = parseConfig({
     openaiApiKey: "sk-test",

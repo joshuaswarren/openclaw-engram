@@ -105,12 +105,21 @@ async function getGatewayResolver(): Promise<ResolveApiKeyFn | null> {
  * Uses require.resolve to find the openclaw package regardless of install method.
  */
 async function findRuntimeModules(): Promise<string[]> {
+  return findGatewayRuntimeModules("runtime-model-auth.runtime-");
+}
+
+/**
+ * Discover gateway runtime module files matching the given filename prefix.
+ *
+ * Reused by adjacent SecretRef resolution code (`resolve-auth-token.ts`,
+ * issue #757). Walks the same dist-dir candidates as the model-auth path
+ * so callers don't reimplement install-method discovery.
+ */
+export async function findGatewayRuntimeModules(filePrefix: string): Promise<string[]> {
   const { accessSync, constants, readdirSync, realpathSync, statSync } = await import("node:fs");
   const { createRequire } = await import("node:module");
   const candidates: string[] = [];
 
-  // Discover the openclaw dist directory from the installed package,
-  // regardless of how it was installed (Homebrew, npm global, local, etc.)
   const distDirs: string[] = [];
   const pushDistDirs = (entryPath: string): void => {
     const resolvedEntryDir = path.dirname(entryPath);
@@ -128,7 +137,6 @@ async function findRuntimeModules(): Promise<string[]> {
   };
 
   try {
-    // require.resolve finds the package from the current process context
     const req = createRequire(import.meta.url);
     const openclawMain = req.resolve("openclaw");
     pushDistDirs(openclawMain);
@@ -136,8 +144,6 @@ async function findRuntimeModules(): Promise<string[]> {
     // openclaw not resolvable from plugin context — try alternate paths
   }
 
-  // Fallback: infer from the running process (gateway runs from its own dist/)
-  // Use fs.realpathSync to resolve symlinks (e.g., /usr/local/bin/openclaw → actual path)
   try {
     const mainScript = process.argv[1];
     if (mainScript) {
@@ -150,9 +156,6 @@ async function findRuntimeModules(): Promise<string[]> {
     // Silent
   }
 
-  // Fallback: inspect the installed openclaw binary on PATH (Homebrew/global npm)
-  // without spawning `which`. OpenClaw's plugin installer blocks process-launch
-  // patterns in packaged plugins.
   try {
     const openclawBin = findExecutableOnPath("openclaw", accessSync, statSync, constants.X_OK);
     if (openclawBin) {
@@ -166,7 +169,7 @@ async function findRuntimeModules(): Promise<string[]> {
     try {
       const files = readdirSync(dir);
       for (const f of files) {
-        if (f.startsWith("runtime-model-auth.runtime-") && f.endsWith(".js")) {
+        if (f.startsWith(filePrefix) && f.endsWith(".js")) {
           candidates.push(path.join(dir, f));
         }
       }

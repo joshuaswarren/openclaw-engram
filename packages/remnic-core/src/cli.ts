@@ -89,6 +89,7 @@ import { WebDavServer } from "./network/webdav.js";
 import { GraphDashboardServer, type DashboardStatus } from "./dashboard-runtime.js";
 import { EngramAccessService } from "./access-service.js";
 import { EngramAccessHttpServer } from "./access-http.js";
+import { resolveAgentAccessAuthToken } from "./resolve-auth-token.js";
 import { EngramMcpServer } from "./access-mcp.js";
 import { runCompatChecks } from "./compat/checks.js";
 import { parseConfig } from "./config.js";
@@ -6583,15 +6584,23 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           // that arrive during warmup still work — orchestrator.recall() awaits
           // its internal init gate (15s timeout) so callers get a correct (if
           // slightly delayed) response rather than "connection refused".
+          // Resolve SecretRef authToken if config carries one (issue #757).
+          // The CLI flag override (--token) wins; otherwise, resolve config.
+          const cliTokenOverride =
+            typeof options.token === "string" && options.token.trim().length > 0
+              ? options.token
+              : undefined;
+          const resolvedConfigAuthToken = cliTokenOverride
+            ? undefined
+            : await resolveAgentAccessAuthToken(
+                orchestrator.config.agentAccessHttp.authToken,
+              );
           const status = await runAccessHttpServeCliCommand({
             service: accessService,
             enabled: true,
             host: typeof options.host === "string" ? options.host : "127.0.0.1",
             port: Number.isFinite(portRaw) ? portRaw : 4318,
-            authToken:
-              typeof options.token === "string" && options.token.trim().length > 0
-                ? options.token
-                : orchestrator.config.agentAccessHttp.authToken,
+            authToken: cliTokenOverride ?? resolvedConfigAuthToken,
             principal: resolveAccessPrincipalOverride(options.principal, orchestrator.config.agentAccessHttp.principal),
             maxBodyBytes: Number.isFinite(maxBodyBytesRaw) ? maxBodyBytesRaw : 131072,
             trustPrincipalHeader: options.trustPrincipalHeader === true,

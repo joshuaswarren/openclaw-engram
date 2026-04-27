@@ -231,6 +231,18 @@ export { EngramAccessService, EngramAccessInputError } from "./access-service.js
 export { EngramAccessHttpServer } from "./access-http.js";
 export { EngramMcpServer } from "./access-mcp.js";
 
+// agentAccessHttp.authToken SecretRef resolution (issue #757). Exposed so
+// host-specific bootstrap code (the OpenClaw plugin in `src/index.ts`, the
+// standalone server, the CLI) can resolve a SecretRef to a literal bearer
+// token before constructing the HTTP server.
+export {
+  resolveAgentAccessAuthToken,
+  isAgentAccessSecretRef,
+  clearAuthTokenSecretCache,
+  __setSecretRefResolverForTest,
+} from "./resolve-auth-token.js";
+export type { SecretRef, AgentAccessAuthToken } from "./types.js";
+
 // Recall X-ray CLI helpers (issue #570).  Exported so the standalone
 // `@remnic/cli` binary can wire the `remnic xray` command without
 // reimporting core-internal modules by relative path (CLAUDE.md rule 26).

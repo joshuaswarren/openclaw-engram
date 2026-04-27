@@ -47,7 +47,7 @@ Backward compatibility note:
 | `agentAccessHttp.enabled` | `false` | Start a local authenticated Remnic HTTP API during plugin startup |
 | `agentAccessHttp.host` | `127.0.0.1` | Loopback bind host for the Remnic HTTP API |
 | `agentAccessHttp.port` | `4318` | Bind port for the Remnic HTTP API (`0` = ephemeral port) |
-| `agentAccessHttp.authToken` | `OPENCLAW_ENGRAM_ACCESS_TOKEN` | Bearer token for the local HTTP API; supports `${ENV_VAR}` references |
+| `agentAccessHttp.authToken` | `OPENCLAW_REMNIC_ACCESS_TOKEN` / `OPENCLAW_ENGRAM_ACCESS_TOKEN` | Bearer token for the local HTTP API. Accepts a literal string (with `${ENV_VAR}` expansion) or — under OpenClaw — a SecretRef object such as `{"source":"exec","provider":"kc_openclaw_remnic_token","id":"value"}` resolved at startup via the gateway secret resolver (issue #757). Standalone Remnic accepts strings only. |
 | `agentAccessHttp.maxBodyBytes` | `131072` | Maximum accepted JSON request body size |
 
 When `agentAccessHttp.enabled` is on (or `openclaw engram access http-serve` is running), the same loopback server also serves the browser-based admin console shell at `/engram/ui/`. The shell is static, ships with packaged plugin builds, and still requires the configured bearer token over `/engram/v1/...` for memory data and operator actions.

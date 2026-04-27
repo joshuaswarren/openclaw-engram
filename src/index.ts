@@ -70,7 +70,7 @@ import {
   resolveCodexSessionIdentity,
 } from "./codex-compat.js";
 import { planRecallMode } from "../packages/remnic-core/src/intent.js";
-import { resolvePrincipal } from "@remnic/core";
+import { resolvePrincipal, resolveAgentAccessAuthToken } from "@remnic/core";
 import { createDreamsSurface } from "../packages/remnic-core/src/surfaces/dreams.js";
 import { createHeartbeatSurface, type HeartbeatEntry } from "../packages/remnic-core/src/surfaces/heartbeat.js";
 import type { ConsolidationObservation } from "../packages/remnic-core/src/types.js";
@@ -593,6 +593,29 @@ const pluginDefinition = {
         : new EngramAccessService(orchestrator);
     (globalThis as any)[keys.ACCESS_SERVICE] = accessService;
 
+    // ── agentAccessHttp.authToken SecretRef wiring (issue #757) ──────────
+    //
+    // `parseConfig` preserves SecretRef objects verbatim; resolution must
+    // happen before any request validation runs. Two construction paths:
+    //
+    //   1. String authToken (the pre-#757 shape): pass through unchanged.
+    //
+    //   2. SecretRef authToken: construct the server with `authToken:
+    //      undefined` and route the resolved value through
+    //      `authTokensGetter`, which is already the mechanism used for
+    //      dynamic tokens. The closure starts empty (rejects all requests)
+    //      and is populated by `registerService.start()` *before* the HTTP
+    //      listener is opened — so there is no window in which the bridge
+    //      accepts connections without an auth token. Resolution failure
+    //      (missing OpenClaw resolver, empty value) throws inside start()
+    //      and aborts the listener entirely.
+    const rawAuthToken = cfg.agentAccessHttp.authToken;
+    const authTokenIsSecretRef =
+      rawAuthToken !== undefined && typeof rawAuthToken !== "string";
+    let resolvedSecretRefAuthToken: string | undefined;
+    const authTokensFromSecretRef = (): string[] =>
+      resolvedSecretRefAuthToken ? [resolvedSecretRefAuthToken] : [];
+
     const existingAccessHttpServer = (globalThis as any)[
       keys.ACCESS_HTTP_SERVER
     ] as EngramAccessHttpServer | undefined;
@@ -604,7 +627,12 @@ const pluginDefinition = {
             service: accessService,
             host: cfg.agentAccessHttp.host,
             port: cfg.agentAccessHttp.port,
-            authToken: cfg.agentAccessHttp.authToken,
+            authToken: authTokenIsSecretRef
+              ? undefined
+              : (rawAuthToken as string | undefined),
+            authTokensGetter: authTokenIsSecretRef
+              ? authTokensFromSecretRef
+              : undefined,
             principal: cfg.agentAccessHttp.principal,
             maxBodyBytes: cfg.agentAccessHttp.maxBodyBytes,
             citationsEnabled: cfg.citationsEnabled,
@@ -3769,6 +3797,28 @@ const pluginDefinition = {
             if (cfg.agentAccessHttp.enabled) {
               // Abort if stop() was called before starting the HTTP server.
               if (!didCountStart) return;
+              // Resolve agentAccessHttp.authToken SecretRef (issue #757).
+              // This MUST run before accessHttpServer.start() so the listener
+              // never opens with an empty auth set. A resolution failure is
+              // fatal — log loudly and skip starting the bridge entirely.
+              if (authTokenIsSecretRef) {
+                try {
+                  const resolved = await resolveAgentAccessAuthToken(rawAuthToken);
+                  if (!resolved) {
+                    log.error(
+                      "agentAccessHttp.authToken SecretRef resolved to empty value — refusing to start the HTTP bridge",
+                    );
+                    return;
+                  }
+                  resolvedSecretRefAuthToken = resolved;
+                } catch (err) {
+                  log.error(
+                    "failed to resolve agentAccessHttp.authToken SecretRef — HTTP bridge will not start",
+                    err,
+                  );
+                  return;
+                }
+              }
               try {
                 const status = await accessHttpServer.start();
                 log.info(
