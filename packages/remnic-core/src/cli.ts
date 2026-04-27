@@ -8508,6 +8508,57 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           }
         });
 
+      // ── peer forget (issue #679 completion) ────────────────────────────
+      peerCmd
+        .command("forget <id>")
+        .description(
+          "DESTRUCTIVELY purge the entire peer directory (identity.md + profile.md + " +
+          "interactions.log.md and any other companion files). Requires --confirm yes. " +
+          "Idempotent: safe to run twice.",
+        )
+        .option(
+          "--confirm <value>",
+          'Confirmation guard — must be exactly "yes" to proceed',
+        )
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const id = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!id) {
+            console.error("peer id is required");
+            process.exit(1);
+          }
+          // Gotcha #14 — validate --confirm argument exists and equals "yes"
+          // exactly. An absent or non-"yes" value must refuse the operation
+          // rather than silently proceeding or defaulting.
+          const confirm = typeof options.confirm === "string" ? options.confirm : "";
+          if (confirm !== "yes") {
+            console.error(
+              `peer forget: refuses to run without --confirm yes (got ${
+                confirm.length > 0 ? JSON.stringify(confirm) : "<not provided>"
+              }). ` +
+              "This operation permanently removes all peer data.",
+            );
+            process.exit(1);
+          }
+          const peerForgetService = new EngramAccessService(orchestrator);
+          try {
+            const result = await peerForgetService.peerForget(id, { confirm: "yes" });
+            if (options.json === true) {
+              console.log(JSON.stringify(result, null, 2));
+              return;
+            }
+            console.log(
+              result.purged
+                ? `Purged all data for peer "${id}".`
+                : `Peer "${id}" directory not found (no-op).`,
+            );
+          } catch (err) {
+            console.error(`Failed to forget peer: ${(err as Error).message}`);
+            process.exit(1);
+          }
+        });
+
       peerCmd
         .command("profile <id>")
         .description("Show the evolving cognitive profile for a peer")
