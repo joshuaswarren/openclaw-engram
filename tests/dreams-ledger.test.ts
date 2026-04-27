@@ -307,6 +307,7 @@ test("runDreamsPhase lightSleep counts recent observation ts entries only", asyn
   });
 
   assert.equal(result.itemsProcessed, 1);
+  assert.equal(result.durationMs, result.ledgerEntry.durationMs);
 });
 
 test("runDreamsPhase deepSleep propagates governance failures without ledger entry", async () => {

@@ -1316,7 +1316,13 @@ export class EngramAccessHttpServer {
         this.respondJson(res, 400, { error: "windowHours must be a positive integer" });
         return;
       }
-      const result = await this.service.dreamsStatus({ windowHours });
+      const namespaceParam = parsed.searchParams.get("namespace");
+      const namespace = namespaceParam && namespaceParam.length > 0 ? namespaceParam : undefined;
+      const result = await this.service.dreamsStatus({
+        windowHours,
+        namespace,
+        principal: this.resolveRequestPrincipal(req),
+      });
       this.respondJson(res, 200, result);
       return;
     }
@@ -1345,6 +1351,8 @@ export class EngramAccessHttpServer {
       const result = await this.service.dreamsRun({
         phase: phase as import("./types.js").DreamsPhase,
         dryRun,
+        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+        authenticatedPrincipal: this.resolveRequestPrincipal(req),
       });
       this.respondJson(res, 200, result);
       return;

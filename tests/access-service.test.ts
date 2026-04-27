@@ -75,6 +75,7 @@ function createService(dreamsPhases = dreamsPhasesConfig()) {
       getMostRecent: () => null,
     },
     getStorage: async () => ({
+      dir: "/tmp/engram",
       getMemoryById: async () => null,
       getMemoryTimeline: async () => [],
     }),
@@ -90,6 +91,33 @@ test("dreamsRun rejects deepSleep when the phase is explicitly disabled", async 
     (err: unknown) =>
       err instanceof EngramAccessInputError &&
       /dreams\.phases\.deepSleep\.enabled=false/.test(err.message),
+  );
+});
+
+test("dreamsStatus enforces readable namespace before loading telemetry", async () => {
+  const service = createService();
+
+  await assert.rejects(
+    () => service.dreamsStatus({ windowHours: 1, namespace: "project-x" }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /authentication required/.test(err.message),
+  );
+});
+
+test("dreamsRun enforces writable namespace before running phases", async () => {
+  const service = createService();
+
+  await assert.rejects(
+    () => service.dreamsRun({
+      phase: "lightSleep",
+      dryRun: true,
+      namespace: "project-x",
+      authenticatedPrincipal: "secret-team",
+    }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /namespace is not writable: project-x/.test(err.message),
   );
 });
 

@@ -316,7 +316,6 @@ export async function runDreamsPhase(
 ): Promise<DreamsRunResultInternal> {
   const { memoryDir, phase, dryRun = false } = options;
   const startedAt = new Date().toISOString();
-  const startMs = Date.now();
 
   let itemsProcessed = 0;
   let notes: string | undefined;
@@ -357,7 +356,7 @@ export async function runDreamsPhase(
         notes = `scored ${itemsProcessed} recent observation entries`;
       }
     } catch (err) {
-      notes = `light-sleep scan failed: ${err}`;
+      throw new Error(`light-sleep scan failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   } else if (phase === "rem") {
     // REM: count memories eligible for consolidation by reading the
@@ -381,7 +380,7 @@ export async function runDreamsPhase(
         notes = `REM pass assessed ${itemsProcessed} memories${lastRunAt ? `; last scheduled run: ${lastRunAt}` : ""}`;
       }
     } catch (err) {
-      notes = `REM scan failed: ${err}`;
+      throw new Error(`REM scan failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   } else {
     // deep sleep
@@ -404,7 +403,6 @@ export async function runDreamsPhase(
   }
 
   const completedAt = new Date().toISOString();
-  const durationMs = Date.now() - startMs;
 
   const ledgerEntry = await recordDreamsPhaseRun({
     memoryDir,
@@ -420,7 +418,7 @@ export async function runDreamsPhase(
   return {
     phase,
     dryRun,
-    durationMs,
+    durationMs: ledgerEntry.durationMs,
     itemsProcessed,
     notes,
     ledgerEntry,

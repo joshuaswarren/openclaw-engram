@@ -1120,6 +1120,10 @@ export class EngramMcpServer {
               type: "number",
               description: "How many hours to look back (default 24, minimum 1).",
             },
+            namespace: {
+              type: "string",
+              description: "Optional namespace to read Dreams telemetry from.",
+            },
           },
           additionalProperties: false,
         },
@@ -1139,6 +1143,10 @@ export class EngramMcpServer {
             dryRun: {
               type: "boolean",
               description: "When true, report what would change without committing writes (default false).",
+            },
+            namespace: {
+              type: "string",
+              description: "Optional namespace to run the phase in.",
             },
           },
           required: ["phase"],
@@ -2214,7 +2222,11 @@ export class EngramMcpServer {
             `engram.dreams_status: windowHours must be a positive integer (e.g. 24). Got: ${String(args.windowHours)}`,
           );
         }
-        return this.service.dreamsStatus({ windowHours });
+        return this.service.dreamsStatus({
+          windowHours,
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
+        });
       }
       case "engram.dreams_run":
       case "remnic.dreams_run": {
@@ -2236,6 +2248,8 @@ export class EngramMcpServer {
         return this.service.dreamsRun({
           phase: phase as import("./types.js").DreamsPhase,
           dryRun,
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          authenticatedPrincipal: effectivePrincipal,
         });
       }
       default:

@@ -4474,6 +4474,8 @@ export class EngramAccessService {
    */
   async dreamsStatus(options?: {
     windowHours?: number;
+    namespace?: string;
+    principal?: string;
   }): Promise<import("./types.js").DreamsStatusResult> {
     const { getDreamsStatus, normalizeDreamsStatusWindowHours } = await import("./maintenance/dreams-ledger.js");
     let windowHours: number;
@@ -4482,7 +4484,9 @@ export class EngramAccessService {
     } catch (error) {
       throw new EngramAccessInputError(error instanceof Error ? error.message : String(error));
     }
-    return getDreamsStatus(this.orchestrator.config.memoryDir, windowHours);
+    const resolvedNamespace = this.resolveReadableNamespace(options?.namespace, options?.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    return getDreamsStatus(storage.dir, windowHours);
   }
 
   /**
@@ -4495,6 +4499,8 @@ export class EngramAccessService {
   async dreamsRun(options: {
     phase: import("./types.js").DreamsPhase;
     dryRun?: boolean;
+    namespace?: string;
+    authenticatedPrincipal?: string;
   }): Promise<import("./types.js").DreamsRunResult> {
     const { runDreamsPhase, deepSleepGovernanceRunner } = await import("./maintenance/dreams-ledger.js");
     const validPhases = ["lightSleep", "rem", "deepSleep"];
@@ -4514,7 +4520,13 @@ export class EngramAccessService {
       );
     }
     const dryRun = options.dryRun === true;
-    const memoryDir = this.orchestrator.config.memoryDir;
+    const resolvedNamespace = this.resolveWritableNamespace(
+      options.namespace,
+      undefined,
+      options.authenticatedPrincipal,
+    );
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const memoryDir = storage.dir;
     const result = await runDreamsPhase(
       { memoryDir, phase: options.phase, dryRun },
       options.phase === "deepSleep" ? deepSleepGovernanceRunner : undefined,
