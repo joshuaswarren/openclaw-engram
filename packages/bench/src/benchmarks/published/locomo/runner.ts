@@ -69,7 +69,7 @@ function buildMessages(
 ): Message[] {
   return turns.map((turn) => ({
     role: turn.speaker === speakerA ? "user" : "assistant",
-    content: turn.text,
+    content: `[${turn.dia_id}] ${turn.speaker}: ${turn.text}`,
   }));
 }
 

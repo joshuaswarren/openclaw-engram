@@ -7,6 +7,7 @@ import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Message } from "../../../adapters/types.js";
 import { answerBenchmarkQuestion } from "../../../answering.js";
+import { benchmarkRecallBudgetForSessionCount } from "../../../recall-budget.js";
 import {
   MEMORY_AGENT_BENCH_SMOKE_FIXTURE,
   type MemoryAgentBenchCompetency,
@@ -159,9 +160,12 @@ export async function runMemoryAgentBenchBenchmark(
         protocol = getProtocolForSource(item.metadata.source);
         const officialQuestion = buildOfficialQuery(protocol, question);
         const { result: recalledText, durationMs } = await timed(async () => {
+          const recallBudget = benchmarkRecallBudgetForSessionCount(
+            sessionIds.length,
+          );
           const recalledSessions = await Promise.all(
             sessionIds.map((sessionId) =>
-              options.system.recall(sessionId, question),
+              options.system.recall(sessionId, question, recallBudget),
             ),
           );
           return recalledSessions.filter(Boolean).join("\n\n");
@@ -170,6 +174,7 @@ export async function runMemoryAgentBenchBenchmark(
           question: officialQuestion,
           recalledText,
           responder: options.system.responder,
+          answerMode: "strict",
         });
         if (protocol === "recsys_redial" && !recsysMappingLoaded) {
           recsysMapping = await loadRecSysEntityMapping(options.datasetDir);
