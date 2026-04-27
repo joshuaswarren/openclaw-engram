@@ -47,6 +47,7 @@ import type {
   PluginConfig,
 } from "./types.js";
 import { reportBufferSurpriseDistribution } from "./buffer-surprise-report.js";
+import { readJudgeVerdictStats } from "./extraction-judge-telemetry.js";
 
 interface QmdRuntimeLike {
   probe(): Promise<boolean>;
@@ -1222,6 +1223,15 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // mitigations are enabled and surfaces config values for operator review.
   checks.push(summarizeSecurityMitigations(config));
 
+  // Observation throughput + judge acceptance rate (issue #685).
+  // Surfaces the total verdict count, accept/reject/defer breakdown, and the
+  // most recent `observedAt` timestamp from the extraction-judge telemetry
+  // ledger.  This closes the *(future)* item deferred in
+  // `docs/trace-to-primitive.md`.  The check is purely informational — it
+  // always resolves to `ok`; an empty ledger is the expected cold-install
+  // state and is never an error.
+  checks.push(await summarizeObservationThroughput(config.memoryDir));
+
   const summary = checks.reduce(
     (acc, check) => {
       acc[check.status] += 1;
@@ -1605,6 +1615,61 @@ function summarizeSecurityMitigations(
     summary: `Memory-extraction mitigation config enabled: ${budgetEnabled ? "budget" : ""}${budgetEnabled && anomalyEnabled ? ", " : ""}${anomalyEnabled ? "anomaly detection" : ""}.`,
     details: { ...details, configOnly: true },
   };
+}
+
+/**
+ * Observation throughput check for `remnic doctor` (issue #685).
+ *
+ * Reads the extraction-judge verdict ledger to surface:
+ *  - total observations (verdicts) recorded
+ *  - accept / reject / defer breakdown
+ *  - most-recent `observedAt` timestamp
+ *
+ * The check is purely informational (always `ok`): a missing or empty
+ * ledger is the expected state on a fresh install and is never an error.
+ * This closes the `*(future)*` item deferred in `docs/trace-to-primitive.md`.
+ */
+export async function summarizeObservationThroughput(
+  memoryDir: string,
+): Promise<OperatorDoctorCheck> {
+  try {
+    const stats = await readJudgeVerdictStats(memoryDir);
+    if (stats.total === 0) {
+      return {
+        key: "observations",
+        status: "ok",
+        summary: "No observations recorded yet (extraction-judge telemetry ledger is empty or missing).",
+        details: { total: 0, accept: 0, reject: 0, defer: 0, lastObservedAt: null },
+      };
+    }
+    const acceptPct = ((stats.accept / stats.total) * 100).toFixed(1);
+    const rejectPct = ((stats.reject / stats.total) * 100).toFixed(1);
+    const deferPct = ((stats.defer / stats.total) * 100).toFixed(1);
+    return {
+      key: "observations",
+      status: "ok",
+      summary: `${stats.total} observations recorded: accept=${acceptPct}%, reject=${rejectPct}%, defer=${deferPct}%. Last observed: ${stats.lastTs ?? "unknown"}.`,
+      details: {
+        total: stats.total,
+        accept: stats.accept,
+        reject: stats.reject,
+        defer: stats.defer,
+        deferCapTriggered: stats.deferCapTriggered,
+        deferRate: stats.deferRate,
+        meanElapsedMs: stats.meanElapsedMs,
+        firstObservedAt: stats.firstTs ?? null,
+        lastObservedAt: stats.lastTs ?? null,
+      },
+    };
+  } catch (err) {
+    return {
+      key: "observations",
+      status: "warn",
+      summary: "Could not read observation telemetry ledger.",
+      remediation: "Retry `remnic doctor` after ensuring the memory state directory is readable.",
+      details: { error: String(err) },
+    };
+  }
 }
 
 export async function summarizeConsolidationProvenance(

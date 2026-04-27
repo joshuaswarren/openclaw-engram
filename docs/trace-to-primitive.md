@@ -133,7 +133,7 @@ The trace is noise. The primitive is the product.
 | Surface | What you'll see |
 |---------|-----------------|
 | `@remnic/core` types | The `MemoryObservation` interface ships in the public types so callers can read post-extraction state without reaching into `extraction.ts`. |
-| `remnic doctor` | *(future)* Will report observation throughput, judge acceptance rate, and the most recent `observedAt`. Today these signals live in the separate observation-ledger / judge stats paths; surfacing them in `doctor` is tracked as a follow-up. |
+| `remnic doctor` | Reports observation throughput, judge accept/reject/defer breakdown, and the most recent `observedAt` via the `observations` check (issue #685). Reads from `state/observation-ledger/extraction-judge-verdicts.jsonl`. |
 | `recall` responses | `<oai-mem-citation>` blocks point at the primitive ids that came out the other end of the pipeline. |
 | `remnic tier list` / `tier explain` | Inspect what happened to primitives after they were written (issue #686). |
 | `observation-ledger` | A separate concept: a JSONL telemetry directory (`state/observation-ledger/`) capturing turn-count aggregates (`maintenance/rebuild-observations.ts`) and judge verdict events (`extraction-judge-telemetry.ts`). Operator-observability data, distinct from the lifecycle-event ledger and from the `MemoryObservation` type — see the naming note below. |

@@ -4164,6 +4164,37 @@ export class EngramAccessService {
     return { submitted: memoryIds.length, matched: matchedIds.length };
   }
 
+  // ── Operator Console state (issue #688 PR 2/3) ────────────────────────────
+
+  /**
+   * Gather a point-in-time `ConsoleStateSnapshot` from the orchestrator.
+   *
+   * Principal-aware: `resolveReadableNamespace` enforces ACL before the
+   * snapshot is gathered, so callers cannot read a namespace they don't
+   * have read access to (CLAUDE.md rule 42).  The resolved namespace's
+   * storage directory is forwarded as `config.memoryDir` so the ledger-
+   * tail reader in `gatherConsoleState` scans the correct namespace root
+   * rather than the global root.  Read-only — never mutates orchestrator state.
+   */
+  async consoleState(
+    namespace?: string,
+    principal?: string,
+  ): Promise<import("./console/state.js").ConsoleStateSnapshot> {
+    // Enforce namespace ACL — throws EngramAccessInputError if unauthorized.
+    const resolvedNamespace = this.resolveReadableNamespace(namespace, principal);
+    // Resolve the storage dir for the namespace so the ledger-tail reader
+    // scans the right directory tree.
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const { gatherConsoleState } = await import("./console/state.js");
+    // Pass a thin proxy that overrides config.memoryDir with the namespace-
+    // scoped storage dir while delegating everything else to the real
+    // orchestrator (buffer, qmd, extraction queue, etc. are process-global
+    // and don't require further namespace scoping for a read-only snapshot).
+    const orchestratorProxy = Object.create(this.orchestrator) as typeof this.orchestrator;
+    orchestratorProxy.config = { ...this.orchestrator.config, memoryDir: storage.dir };
+    return gatherConsoleState(orchestratorProxy);
+  }
+
   // ── Peer Registry surfaces (issue #679 PR 4/5) ────────────────────────────
 
   /**
