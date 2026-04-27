@@ -4190,12 +4190,13 @@ export class EngramAccessService {
     // scoped storage dir while delegating everything else to the real
     // orchestrator (buffer, qmd, extraction queue, etc. are process-global
     // and don't require further namespace scoping for a read-only snapshot).
-    const orchestratorProxy = Object.create(this.orchestrator) as typeof this.orchestrator;
-    Object.defineProperty(orchestratorProxy, "config", {
-      value: { ...this.orchestrator.config, memoryDir: storage.dir },
-      configurable: true,
-      enumerable: true,
-    });
+    const orchestratorProxy = Object.create(this.orchestrator, {
+      config: {
+        value: { ...this.orchestrator.config, memoryDir: storage.dir },
+        enumerable: true,
+        configurable: true,
+      },
+    }) as import("./console/state.js").ConsoleStateOrchestratorLike;
     return gatherConsoleState(orchestratorProxy);
   }
 

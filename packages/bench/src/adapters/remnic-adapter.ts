@@ -5,7 +5,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Orchestrator, parseConfig } from "@remnic/core";
+import { buildEvidencePack, Orchestrator, parseConfig } from "@remnic/core";
 import type {
   BenchJudge,
   BenchMemoryAdapter,
@@ -14,6 +14,7 @@ import type {
   Message,
   SearchResult,
 } from "./types.js";
+import { DEFAULT_BENCH_RECALL_BUDGET_CHARS } from "../recall-budget.js";
 
 export interface RemnicAdapterOptions {
   configOverrides?: Record<string, unknown>;
@@ -259,16 +260,32 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
 
       async recall(sessionId: string, query: string, budgetChars?: number): Promise<string> {
         const engine = getEngine();
-        const budget = budgetChars ?? 32_000;
+        const budget = budgetChars ?? DEFAULT_BENCH_RECALL_BUDGET_CHARS;
+        if (budget <= 0) {
+          return "";
+        }
+
         const sections: string[] = [];
+        let usedChars = 0;
 
         if (query) {
-          const searchResults = await engine.searchContextFull(query, 20, sessionId);
+          const searchBudget = Math.max(0, Math.floor(budget * 0.7));
+          const searchLimit = Math.max(4, Math.min(12, Math.floor(budget / 3_000)));
+          const searchResults = await engine.searchContextFull(
+            query,
+            searchLimit,
+            sessionId,
+          );
           if (searchResults.length > 0) {
-            const expandedByTurn = new Map<
-              string,
-              { sessionId: string; turn_index: number; role: string; content: string }
-            >();
+            const evidenceItems: Array<{
+              id: string;
+              sessionId: string;
+              turnIndex: number;
+              role: string;
+              content: string;
+              score?: number;
+            }> = [];
+            const seenTurns = new Set<string>();
 
             for (const result of searchResults) {
               const fromTurn = Math.max(0, result.turn_index - 1);
@@ -277,46 +294,59 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
                 result.session_id,
                 fromTurn,
                 toTurn,
-                800,
+                600,
               );
 
               if (expanded.length === 0) {
-                expandedByTurn.set(`${result.session_id}:${result.turn_index}`, {
-                  sessionId: result.session_id,
-                  turn_index: result.turn_index,
-                  role: result.role,
-                  content: result.content,
-                });
+                const id = `${result.session_id}:${result.turn_index}`;
+                if (!seenTurns.has(id)) {
+                  seenTurns.add(id);
+                  evidenceItems.push({
+                    id,
+                    sessionId: result.session_id,
+                    turnIndex: result.turn_index,
+                    role: result.role,
+                    content: result.content,
+                    ...(typeof result.score === "number"
+                      ? { score: result.score }
+                      : {}),
+                  });
+                }
                 continue;
               }
 
               for (const message of expanded) {
-                expandedByTurn.set(`${result.session_id}:${message.turn_index}`, {
+                const id = `${result.session_id}:${message.turn_index}`;
+                if (seenTurns.has(id)) continue;
+                seenTurns.add(id);
+                evidenceItems.push({
+                  id,
                   sessionId: result.session_id,
-                  ...message,
+                  turnIndex: message.turn_index,
+                  role: message.role,
+                  content: message.content,
+                  ...(message.turn_index === result.turn_index &&
+                  typeof result.score === "number"
+                    ? { score: result.score }
+                    : {}),
                 });
               }
             }
 
-            const expandedResults = [...expandedByTurn.values()].sort((a, b) => {
-              if (a.sessionId !== b.sessionId) {
-                return a.sessionId.localeCompare(b.sessionId);
-              }
-              return a.turn_index - b.turn_index;
+            const searchEvidence = buildEvidencePack(evidenceItems, {
+              title: "Search evidence",
+              maxChars: searchBudget,
+              maxItemChars: 900,
             });
-
-            sections.push(
-              `## Search results\n${expandedResults
-                .map(
-                  (result) =>
-                    `[${result.sessionId} turn ${result.turn_index}, ${result.role}]: ${result.content}`,
-                )
-                .join("\n\n")}`,
-            );
+            if (searchEvidence) {
+              sections.push(searchEvidence);
+              usedChars += searchEvidence.length;
+            }
           }
         }
 
-        const recallText = await engine.assembleRecall(sessionId, budget);
+        const summaryBudget = Math.max(0, budget - usedChars - 4);
+        const recallText = await engine.assembleRecall(sessionId, summaryBudget);
         if (recallText) {
           sections.push(recallText);
         }

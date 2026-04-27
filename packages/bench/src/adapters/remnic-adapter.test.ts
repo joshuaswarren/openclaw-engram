@@ -146,7 +146,8 @@ test("direct adapter recall expands search hits with adjacent stored results", a
     );
 
     assert.match(recalled, /Environment result: trail mix/);
-    assert.match(recalled, /\[arena-session turn 1, assistant\]/);
+    assert.match(recalled, /\[arena-session, turn 1, assistant/);
+    assert.ok(recalled.length <= 24_000);
   } finally {
     await adapter.destroy();
   }

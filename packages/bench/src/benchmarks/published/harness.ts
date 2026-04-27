@@ -28,6 +28,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Message } from "../../adapters/types.js";
 import { answerBenchmarkQuestion } from "../../answering.js";
+import { benchmarkRecallBudgetForSessionCount } from "../../recall-budget.js";
 import { getGitSha, getRemnicVersion } from "../../reporter.js";
 import {
   aggregateTaskScores,
@@ -258,9 +259,12 @@ async function executeTrial(
   trial: HarnessTrial,
 ): Promise<TaskResult> {
   const { result: recalledText, durationMs } = await timed(async () => {
+    const recallBudget = benchmarkRecallBudgetForSessionCount(
+      trial.recallSessionIds.length,
+    );
     const recalledSessions = await Promise.all(
       trial.recallSessionIds.map((sessionId) =>
-        ctx.options.system.recall(sessionId, trial.question),
+        ctx.options.system.recall(sessionId, trial.question, recallBudget),
       ),
     );
     return recalledSessions.filter(Boolean).join("\n\n");
@@ -269,6 +273,7 @@ async function executeTrial(
     question: trial.question,
     recalledText,
     responder: ctx.options.system.responder,
+    answerMode: "strict",
   });
 
   // Post-answer hook runs before the judge so dataset-specific signals
