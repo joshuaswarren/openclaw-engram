@@ -193,6 +193,20 @@ test("BEAM rubric coverage catches disabled syntax highlighting", async () => {
   );
 });
 
+test("BEAM rubric coverage supports negated syntax rubric targets", async () => {
+  const compliantResult = await runBeamWithCustomRubricAnswer(
+    "LLM response should contain: do not use code blocks with syntax highlighting",
+    "Do not use code blocks with syntax highlighting.",
+  );
+  const nonCompliantResult = await runBeamWithCustomRubricAnswer(
+    "LLM response should contain: do not use code blocks with syntax highlighting",
+    "Always use code blocks with syntax highlighting.",
+  );
+
+  assert.equal(compliantResult.results.tasks[0]?.scores.rubric_coverage, 1);
+  assert.equal(nonCompliantResult.results.tasks[0]?.scores.rubric_coverage, 0);
+});
+
 test("BEAM rubric coverage requires code blocks for syntax highlighting rubric", async () => {
   const result = await runBeamWithInstructionAnswer(
     "Syntax highlighting is useful for implementation help.",

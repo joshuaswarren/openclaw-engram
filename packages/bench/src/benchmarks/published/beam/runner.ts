@@ -936,11 +936,18 @@ function rubricTargetMatches(actual: string, target: string): boolean {
 }
 
 function syntaxHighlightingRubricMatches(actual: string, target: string): boolean {
-  const extraTargetDetails = syntaxHighlightingExtraTargetDetails(target);
+  const targetNegatesSyntaxHighlighting = negatesSyntaxHighlighting(target);
+  const actualNegatesSyntaxHighlighting = negatesSyntaxHighlighting(actual);
+  const extraTargetDetails = syntaxHighlightingExtraTargetDetails(
+    target,
+    targetNegatesSyntaxHighlighting,
+  );
   return (
     mentionsSyntaxHighlightingRequirement(target) &&
     mentionsSyntaxHighlightingRequirement(actual) &&
-    !negatesSyntaxHighlighting(actual) &&
+    (targetNegatesSyntaxHighlighting
+      ? actualNegatesSyntaxHighlighting
+      : !actualNegatesSyntaxHighlighting) &&
     (extraTargetDetails.normalized.length === 0 ||
       rubricPhraseContains(actual, extraTargetDetails.normalized)) &&
     extraTargetDetails.punctuatedTokens.every(
@@ -969,12 +976,23 @@ function splitRubricClauses(value: string): string[] {
     .filter((clause) => clause.length > 0);
 }
 
-function syntaxHighlightingExtraTargetDetails(target: string): SyntaxExtraTargetDetails {
+function syntaxHighlightingExtraTargetDetails(
+  target: string,
+  targetNegatesSyntaxHighlighting: boolean,
+): SyntaxExtraTargetDetails {
+  let normalized = normalizeRubricPhrase(target)
+    .replace(SYNTAX_HIGHLIGHTING_RUBRIC, " ")
+    .replace(/\b(?:e g|i e)\b/g, " ")
+    .replace(/\b(?:and|with|the|a|an)\b/g, " ");
+  if (targetNegatesSyntaxHighlighting) {
+    normalized = normalized.replace(
+      /\b(?:do not|don't|dont|must not|should not|never|avoid|disable|without|no|use|include|format|write|return|provide|apply|enable)\b/g,
+      " ",
+    );
+  }
+
   return {
-    normalized: normalizeRubricPhrase(target)
-      .replace(SYNTAX_HIGHLIGHTING_RUBRIC, " ")
-      .replace(/\b(?:e g|i e)\b/g, " ")
-      .replace(/\b(?:and|with|the|a|an)\b/g, " ")
+    normalized: normalized
       .replace(/\s+/g, " ")
       .trim(),
     punctuatedTokens: extractPunctuatedDetailTokens(target),

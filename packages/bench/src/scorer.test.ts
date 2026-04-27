@@ -75,3 +75,8 @@ test("containsAnswer does not match short labels inside unrelated words", () => 
   assert.equal(containsAnswer("No, that was not discussed.", "No."), 1);
   assert.equal(containsAnswer("The answer is yes.", "Yes."), 1);
 });
+
+test("containsAnswer allows short numeric answers with attached units", () => {
+  assert.equal(containsAnswer("250ms", "250"), 1);
+  assert.equal(containsAnswer("$50", "50"), 1);
+});

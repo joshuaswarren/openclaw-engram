@@ -269,6 +269,7 @@ function normalizeTextForContainment(value: string | number | unknown): string {
 function isShortLexicalAnswer(value: string): boolean {
   return (
     value.length <= 3 &&
+    [...value].some((character) => isAsciiLetter(character)) &&
     [...value].every((character) => isAsciiAlphaNumeric(character))
   );
 }
@@ -281,9 +282,13 @@ function containsShortLexicalAnswer(value: string, expected: string): boolean {
 
 function isAsciiAlphaNumeric(value: string): boolean {
   return (
-    (value >= "a" && value <= "z") ||
+    isAsciiLetter(value) ||
     (value >= "0" && value <= "9")
   );
+}
+
+function isAsciiLetter(value: string): boolean {
+  return value >= "a" && value <= "z";
 }
 
 function trimTrailingSentencePunctuation(value: string): string {
