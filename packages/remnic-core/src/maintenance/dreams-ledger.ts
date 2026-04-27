@@ -436,25 +436,7 @@ export async function runDreamsPhase(
   };
 }
 
-// ── Shared governance runner (used by access-service.ts + cli.ts) ────────────
-
-/**
- * Deep-sleep governance runner callback that can be passed to `runDreamsPhase`.
- *
- * Extracted here so both the CLI and HTTP/MCP surfaces share identical
- * behavior without copy-pasting the mapping logic.
- */
-export async function deepSleepGovernanceRunner(opts: {
-  memoryDir: string;
-  dryRun: boolean;
-}): Promise<{ scannedMemories: number; appliedActionCount: number; notes?: string }> {
-  const { runMemoryGovernance } = await import("./memory-governance.js");
-  const govResult = await runMemoryGovernance({
-    memoryDir: opts.memoryDir,
-    mode: opts.dryRun ? "shadow" : "apply",
-  });
-  return summarizeGovernanceResultForDreams(govResult, opts.dryRun);
-}
+// ── Shared governance result mapping ──────────────────────────────────────────
 
 export function summarizeGovernanceResultForDreams(
   govResult: {
