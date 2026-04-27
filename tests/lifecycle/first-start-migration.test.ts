@@ -509,6 +509,51 @@ test("first-start migration: stale QMD pending marker for another collection doe
   }
 });
 
+test("first-start migration: retries QMD refresh in-run when pending marker write fails", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-fsm-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    const config = makeConfig(dir, {
+      qmdTierDemotionMinAgeDays: 1,
+      qmdTierDemotionValueThreshold: 0.99,
+      qmdColdCollection: "cold-test",
+    });
+
+    const id = await storage.writeMemory("fact", "Old low-value fact.", { source: "test" });
+    const memory = await storage.getMemoryById(id);
+    assert.ok(memory, "expected memory to exist");
+    await storage.writeMemoryFrontmatter(memory, {
+      updated: "2020-01-01T00:00:00.000Z",
+      created: "2020-01-01T00:00:00.000Z",
+      confidence: 0.01,
+    });
+
+    const pendingMarkerPath = path.join(dir, "state", ".lifecycle-qmd-refresh-pending");
+    await mkdir(pendingMarkerPath, { recursive: true });
+
+    let attempts = 0;
+    const result = await runFirstStartMigration({
+      storage,
+      config,
+      qmd: {
+        updateCollection: async () => {
+          attempts += 1;
+          if (attempts < 3) throw new Error("qmd unavailable");
+        },
+        embedCollection: async () => {},
+      } as any,
+    });
+
+    assert.equal(attempts, 3);
+    assert.equal(result.demotedCount, 1);
+    assert.equal(result.failureCount, 0);
+    await access(path.join(dir, "state", LIFECYCLE_INIT_DONE_MARKER));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("first-start migration: abort signal stops demotions before writing marker", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-fsm-"));
   try {

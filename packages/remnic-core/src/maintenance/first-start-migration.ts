@@ -270,6 +270,7 @@ export async function runFirstStartMigration(
 
   let demotedCount = 0;
   let failureCount = 0;
+  let qmdRefreshPendingForRun = false;
   const executor = qmd
     ? new TierMigrationExecutor({
         storage,
@@ -310,7 +311,13 @@ export async function runFirstStartMigration(
           demotedCount += 1;
           continue;
         } catch {
-          await writeQmdRefreshPending(config.memoryDir, now, coldCollection);
+          qmdRefreshPendingForRun = true;
+          try {
+            await writeQmdRefreshPending(config.memoryDir, now, coldCollection);
+          } catch {
+            // The end-of-run retry below still gets a chance to repair the QMD
+            // state before we decide whether the init marker is safe to write.
+          }
           demotedCount += 1;
           continue;
         }
@@ -328,7 +335,8 @@ export async function runFirstStartMigration(
   if (signal?.aborted) {
     return abortedResult(candidateCount, demotedCount, failureCount);
   }
-  if (qmd && await qmdRefreshPendingMatches(config.memoryDir, coldCollection)) {
+  const hasPersistedQmdRefreshPending = qmd ? await qmdRefreshPendingMatches(config.memoryDir, coldCollection) : false;
+  if (qmd && (qmdRefreshPendingForRun || hasPersistedQmdRefreshPending)) {
     try {
       await refreshQmdCollection(qmd, coldCollection, signal);
       await clearQmdRefreshPending(config.memoryDir);
