@@ -9,6 +9,8 @@ import {
   getDreamsStatus,
   dreamsLedgerPath,
   summarizeGovernanceResultForDreams,
+  normalizeDreamsStatusWindowHours,
+  recordDreamsPhaseRun,
   type DreamsLedgerEntry,
 } from "../packages/remnic-core/src/maintenance/dreams-ledger.js";
 
@@ -244,6 +246,35 @@ test("getDreamsStatus honours custom windowHours", async () => {
 
   const oneHour = await getDreamsStatus(memoryDir, 1, now);
   assert.equal(oneHour.phases.lightSleep.runCount, 0);
+});
+
+test("getDreamsStatus rejects out-of-range windowHours before serializing dates", async () => {
+  const memoryDir = await makeTmpDir();
+  await assert.rejects(
+    () => getDreamsStatus(memoryDir, Number.MAX_SAFE_INTEGER, new Date("2026-04-27T12:00:00.000Z")),
+    /windowHours must be a positive integer/,
+  );
+  assert.throws(() => normalizeDreamsStatusWindowHours(1.5), /windowHours must be a positive integer/);
+});
+
+test("recordDreamsPhaseRun writes scheduled ledger entries", async () => {
+  const memoryDir = await makeTmpDir();
+  await recordDreamsPhaseRun({
+    memoryDir,
+    phase: "rem",
+    trigger: "scheduled",
+    itemsProcessed: 7,
+    notes: "scheduled REM consolidation",
+    startedAt: "2026-04-27T02:00:00.000Z",
+    completedAt: "2026-04-27T02:00:03.000Z",
+  });
+
+  const entries = await readDreamsLedgerEntries(memoryDir);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.phase, "rem");
+  assert.equal(entries[0]?.trigger, "scheduled");
+  assert.equal(entries[0]?.itemsProcessed, 7);
+  assert.equal(entries[0]?.durationMs, 3000);
 });
 
 test("summarizeGovernanceResultForDreams does not double-count proposed actions", () => {

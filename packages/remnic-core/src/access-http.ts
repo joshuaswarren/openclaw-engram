@@ -1305,10 +1305,14 @@ export class EngramAccessHttpServer {
     // ── Dreams telemetry (issue #678 PR 3+4) ──────────────────────────────────
 
     if (req.method === "GET" && pathname === "/engram/v1/dreams/status") {
+      const { normalizeDreamsStatusWindowHours } = await import("./maintenance/dreams-ledger.js");
       const windowHoursRaw = parsed.searchParams.get("windowHours");
-      const windowHours =
-        windowHoursRaw !== null ? parseInt(windowHoursRaw, 10) : 24;
-      if (!Number.isFinite(windowHours) || windowHours < 1) {
+      let windowHours: number;
+      try {
+        windowHours = normalizeDreamsStatusWindowHours(
+          windowHoursRaw !== null ? Number(windowHoursRaw) : undefined,
+        );
+      } catch {
         this.respondJson(res, 400, { error: "windowHours must be a positive integer" });
         return;
       }

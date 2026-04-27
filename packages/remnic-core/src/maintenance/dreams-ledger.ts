@@ -158,6 +158,21 @@ export async function readDreamsLedgerEntries(memoryDir: string): Promise<Dreams
 // ── Aggregator ────────────────────────────────────────────────────────────────
 
 const ALL_PHASES: DreamsPhase[] = ["lightSleep", "rem", "deepSleep"];
+const MAX_WINDOW_HOURS = 24 * 365 * 100;
+
+export function normalizeDreamsStatusWindowHours(value: unknown, fallback = 24): number {
+  const raw = value === undefined || value === null ? fallback : value;
+  if (
+    typeof raw !== "number" ||
+    !Number.isFinite(raw) ||
+    !Number.isInteger(raw) ||
+    raw < 1 ||
+    raw > MAX_WINDOW_HOURS
+  ) {
+    throw new RangeError(`windowHours must be a positive integer no greater than ${MAX_WINDOW_HOURS}`);
+  }
+  return raw;
+}
 
 /**
  * Build per-phase 24-hour summary.
@@ -171,10 +186,17 @@ export async function getDreamsStatus(
   windowHours = 24,
   now: Date = new Date(),
 ): Promise<DreamsStatusResult> {
+  const boundedWindowHours = normalizeDreamsStatusWindowHours(windowHours);
   const nowMs = now.getTime();
-  const windowMs = windowHours * 60 * 60 * 1000;
+  if (!Number.isFinite(nowMs)) {
+    throw new RangeError("now must be a valid Date");
+  }
+  const windowMs = boundedWindowHours * 60 * 60 * 1000;
   const windowStart = new Date(nowMs - windowMs);
   const windowEnd = now;
+  if (!Number.isFinite(windowStart.getTime())) {
+    throw new RangeError("windowHours produces an invalid status window");
+  }
 
   const entries = await readDreamsLedgerEntries(memoryDir);
 
@@ -244,6 +266,36 @@ export interface DreamsRunResult {
 /** Internal result shape returned by `runDreamsPhase` — includes the raw ledger entry. */
 export interface DreamsRunResultInternal extends DreamsRunResult {
   ledgerEntry: DreamsLedgerEntry;
+}
+
+export async function recordDreamsPhaseRun(options: {
+  memoryDir: string;
+  phase: DreamsPhase;
+  trigger: DreamsLedgerEntry["trigger"];
+  dryRun?: boolean;
+  itemsProcessed: number;
+  notes?: string;
+  startedAt?: string;
+  completedAt?: string;
+}): Promise<DreamsLedgerEntry> {
+  const startedAt = options.startedAt ?? new Date().toISOString();
+  const completedAt = options.completedAt ?? new Date().toISOString();
+  const durationMs = Math.max(0, Date.parse(completedAt) - Date.parse(startedAt));
+  const ledgerEntry: DreamsLedgerEntry = {
+    schemaVersion: 1,
+    startedAt,
+    completedAt,
+    durationMs: Number.isFinite(durationMs) ? durationMs : 0,
+    phase: options.phase,
+    itemsProcessed: Math.max(0, Math.floor(options.itemsProcessed)),
+    dryRun: options.dryRun === true,
+    trigger: options.trigger,
+    notes: options.notes,
+  };
+  if (!ledgerEntry.dryRun) {
+    await appendDreamsLedgerEntry(options.memoryDir, ledgerEntry);
+  }
+  return ledgerEntry;
 }
 
 /**
@@ -351,21 +403,16 @@ export async function runDreamsPhase(
   const completedAt = new Date().toISOString();
   const durationMs = Date.now() - startMs;
 
-  const ledgerEntry: DreamsLedgerEntry = {
-    schemaVersion: 1,
+  const ledgerEntry = await recordDreamsPhaseRun({
+    memoryDir,
     startedAt,
     completedAt,
-    durationMs,
     phase,
     itemsProcessed,
     dryRun,
     trigger: "manual",
     notes,
-  };
-
-  if (!dryRun) {
-    await appendDreamsLedgerEntry(memoryDir, ledgerEntry);
-  }
+  });
 
   return {
     phase,

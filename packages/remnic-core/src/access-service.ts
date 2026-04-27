@@ -4475,11 +4475,13 @@ export class EngramAccessService {
   async dreamsStatus(options?: {
     windowHours?: number;
   }): Promise<import("./types.js").DreamsStatusResult> {
-    const { getDreamsStatus } = await import("./maintenance/dreams-ledger.js");
-    const windowHours =
-      typeof options?.windowHours === "number" && Number.isFinite(options.windowHours)
-        ? Math.max(1, Math.floor(options.windowHours))
-        : 24;
+    const { getDreamsStatus, normalizeDreamsStatusWindowHours } = await import("./maintenance/dreams-ledger.js");
+    let windowHours: number;
+    try {
+      windowHours = normalizeDreamsStatusWindowHours(options?.windowHours);
+    } catch (error) {
+      throw new EngramAccessInputError(error instanceof Error ? error.message : String(error));
+    }
     return getDreamsStatus(this.orchestrator.config.memoryDir, windowHours);
   }
 

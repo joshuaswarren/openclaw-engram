@@ -2205,20 +2205,14 @@ export class EngramMcpServer {
       // ── Dreams telemetry (issue #678 PR 3+4) ──────────────────────────────
       case "engram.dreams_status":
       case "remnic.dreams_status": {
-        let windowHours: number;
-        if (args.windowHours === undefined || args.windowHours === null) {
-          windowHours = 24;
-        } else if (
-          typeof args.windowHours !== "number" ||
-          !Number.isFinite(args.windowHours) ||
-          args.windowHours <= 0 ||
-          !Number.isInteger(args.windowHours)
-        ) {
+        const { normalizeDreamsStatusWindowHours } = await import("./maintenance/dreams-ledger.js");
+        let windowHours = 24;
+        try {
+          windowHours = normalizeDreamsStatusWindowHours(args.windowHours);
+        } catch {
           throw new Error(
             `engram.dreams_status: windowHours must be a positive integer (e.g. 24). Got: ${String(args.windowHours)}`,
           );
-        } else {
-          windowHours = args.windowHours;
         }
         return this.service.dreamsStatus({ windowHours });
       }

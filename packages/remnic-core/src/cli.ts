@@ -8311,13 +8311,15 @@ export function registerCli(
             console.error(`Invalid --format '${fmt}'. Must be one of: text, json, markdown`);
             process.exit(1);
           }
-          const windowHoursRaw = parseInt(options.windowHours ?? "24", 10);
-          if (!Number.isFinite(windowHoursRaw) || windowHoursRaw < 1) {
+          const { getDreamsStatus, normalizeDreamsStatusWindowHours } = await import("./maintenance/dreams-ledger.js");
+          let windowHours: number;
+          try {
+            windowHours = normalizeDreamsStatusWindowHours(Number(options.windowHours ?? "24"));
+          } catch {
             console.error("--window-hours must be a positive integer");
             process.exit(1);
           }
-          const { getDreamsStatus } = await import("./maintenance/dreams-ledger.js");
-          const result = await getDreamsStatus(orchestrator.config.memoryDir, windowHoursRaw);
+          const result = await getDreamsStatus(orchestrator.config.memoryDir, windowHours);
 
           if (fmt === "json") {
             console.log(JSON.stringify(result, null, 2));
@@ -8331,7 +8333,7 @@ export function registerCli(
           };
 
           if (fmt === "markdown") {
-            console.log(`## Dreams Status (last ${windowHoursRaw}h)\n`);
+            console.log(`## Dreams Status (last ${windowHours}h)\n`);
             console.log(`Window: ${result.windowStart} → ${result.windowEnd}\n`);
             console.log("| Phase | Runs | Total Duration | Items Processed | Last Run |");
             console.log("|-------|------|----------------|-----------------|----------|");
@@ -8346,7 +8348,7 @@ export function registerCli(
           }
 
           // text format
-          console.log(`Dreams status (last ${windowHoursRaw}h):`);
+          console.log(`Dreams status (last ${windowHours}h):`);
           console.log(`  Window: ${result.windowStart} → ${result.windowEnd}\n`);
           for (const phase of ["lightSleep", "rem", "deepSleep"] as const) {
             const p = result.phases[phase];

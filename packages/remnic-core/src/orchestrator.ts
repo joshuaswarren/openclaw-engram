@@ -12885,6 +12885,11 @@ export class Orchestrator {
       try {
         const lifecycleCorpus = await this.storage.readAllMemories();
         await this.runLifecyclePolicyPass(lifecycleCorpus);
+        await this.recordScheduledDreamsPhaseRun(
+          "lightSleep",
+          lifecycleCorpus.length,
+          `scheduled lifecycle policy pass assessed ${lifecycleCorpus.length} memories`,
+        );
       } catch (err) {
         log.warn(`lifecycle policy pass failed (ignored): ${err}`);
       }
@@ -12903,6 +12908,11 @@ export class Orchestrator {
         log.info(`archived ${archived} old low-importance facts`);
       }
     }
+    await this.recordScheduledDreamsPhaseRun(
+      "deepSleep",
+      allMemories.length,
+      `scheduled deep-sleep maintenance assessed ${allMemories.length} memories`,
+    );
 
     // Semantic consolidation pass — find similar memories, synthesize canonical versions
     if (this.config.semanticConsolidationEnabled) {
@@ -12933,6 +12943,11 @@ export class Orchestrator {
 
         if (shouldRun) {
           const semResult = await this.runSemanticConsolidation();
+          await this.recordScheduledDreamsPhaseRun(
+            "rem",
+            allMemories.length,
+            `scheduled REM consolidation found ${semResult.clustersFound} clusters`,
+          );
           if (semResult.memoriesArchived > 0) {
             log.info(
               `[semantic-consolidation] archived ${semResult.memoriesArchived} memories during maintenance`,
@@ -13491,6 +13506,25 @@ export class Orchestrator {
       out.set(memoryId, Math.max(-0.25, Math.min(0.15, score)));
     }
     return out;
+  }
+
+  private async recordScheduledDreamsPhaseRun(
+    phase: "lightSleep" | "rem" | "deepSleep",
+    itemsProcessed: number,
+    notes: string,
+  ): Promise<void> {
+    try {
+      const { recordDreamsPhaseRun } = await import("./maintenance/dreams-ledger.js");
+      await recordDreamsPhaseRun({
+        memoryDir: this.config.memoryDir,
+        phase,
+        trigger: "scheduled",
+        itemsProcessed,
+        notes,
+      });
+    } catch (error) {
+      log.debug(`dreams ledger scheduled ${phase} write failed (non-fatal): ${error}`);
+    }
   }
 
   private async runLifecyclePolicyPass(
