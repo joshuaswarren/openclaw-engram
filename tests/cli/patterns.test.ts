@@ -413,6 +413,8 @@ test("explainPatternMemory parses derived_from source ids and legacy path versio
       reinforcementCount: 2,
       derivedFrom: [
         "mem-source-id",
+        "entity:person:Jane",
+        "global:42",
         "facts/2026-01-01/mem.md:5",
         "facts/2026-01-01/also-bad:notanumber",
         "facts/2026-01-01/missing-version.md",
@@ -423,13 +425,21 @@ test("explainPatternMemory parses derived_from source ids and legacy path versio
   assert.equal(detail.derivedFrom[0].path, "mem-source-id");
   assert.equal(detail.derivedFrom[0].version, null);
   assert.equal(detail.derivedFrom[0].malformed, undefined);
-  assert.equal(detail.derivedFrom[1].path, "facts/2026-01-01/mem.md");
-  assert.equal(detail.derivedFrom[1].version, 5);
+  assert.equal(detail.derivedFrom[1].path, "entity:person:Jane");
+  assert.equal(detail.derivedFrom[1].version, null);
+  assert.equal(detail.derivedFrom[1].malformed, undefined);
+  assert.equal(detail.derivedFrom[2].path, "global:42");
   assert.equal(detail.derivedFrom[2].version, null);
-  assert.equal(detail.derivedFrom[2].malformed, true);
-  assert.equal(detail.derivedFrom[3].path, "facts/2026-01-01/missing-version.md");
-  assert.equal(detail.derivedFrom[3].version, null);
-  assert.equal(detail.derivedFrom[3].malformed, true);
+  assert.equal(detail.derivedFrom[2].malformed, undefined);
+  assert.equal(detail.derivedFrom[3].path, "facts/2026-01-01/mem.md");
+  assert.equal(detail.derivedFrom[3].version, 5);
+  assert.equal(detail.derivedFrom[3].malformed, undefined);
+  assert.equal(detail.derivedFrom[4].path, "facts/2026-01-01/also-bad:notanumber");
+  assert.equal(detail.derivedFrom[4].version, null);
+  assert.equal(detail.derivedFrom[4].malformed, true);
+  assert.equal(detail.derivedFrom[5].path, "facts/2026-01-01/missing-version.md");
+  assert.equal(detail.derivedFrom[5].version, null);
+  assert.equal(detail.derivedFrom[5].malformed, true);
 });
 
 test("explainPatternMemory collects cluster members sorted supersededAt desc then id asc", () => {
