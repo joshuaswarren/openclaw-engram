@@ -11,12 +11,12 @@ test("runLifecyclePolicyPass uses path-based frontmatter writes (no per-item cor
 
   assert.match(
     source,
-    /private async runLifecyclePolicyPass\(\s*allMemories: MemoryFile\[\],?\s*\): Promise<void> \{/m,
+    /private async runLifecyclePolicyPass\(\s*allMemories: MemoryFile\[\],\s*storage: StorageManager = this\.storage,?\s*\): Promise<void> \{/m,
     "expected runLifecyclePolicyPass helper",
   );
   assert.match(
     source,
-    /await this\.storage\.writeMemoryFrontmatter\(memory,\s*\{/m,
+    /await storage\.writeMemoryFrontmatter\(memory,\s*\{/m,
     "lifecycle pass should write by in-memory MemoryFile/path",
   );
   assert.doesNotMatch(
