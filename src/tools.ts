@@ -2382,6 +2382,11 @@ Best for:
         ),
       }),
       async execute(_toolCallId, params) {
+        if (!orchestrator.config.dreamsPhases.deepSleep.enabled) {
+          return toolResult(
+            "Memory governance is disabled by `dreams.phases.deepSleep.enabled=false`.",
+          );
+        }
         const namespace = normalizeToolNamespace(params.namespace);
         const storage = await orchestrator.getStorageForNamespace(namespace);
         const mode = params.mode === "apply" ? "apply" : "shadow";

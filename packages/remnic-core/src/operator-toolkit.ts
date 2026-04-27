@@ -56,6 +56,17 @@ interface QmdRuntimeLike {
   debugStatus(): string;
 }
 
+function isMissingPathError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && (error as { code?: unknown }).code === "ENOENT";
+}
+
+function formatUnknownError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 interface ConversationIndexLike {
   getConversationIndexHealth(): Promise<{
     enabled: boolean;
@@ -1483,7 +1494,7 @@ async function summarizeGraphEdgeDecayStatus(
  * Last-run mapping (best available in PR 2; PR 3/4 will emit per-phase events):
  *   light sleep → `meta.lastExtractionAt`   (lifecycle pass runs with extraction)
  *   REM         → `meta.lastConsolidationAt` (semantic consolidation)
- *   deep sleep  → governance-status file when present, otherwise null
+   *   deep sleep  → latest governance run manifest when present, otherwise null
  */
 export async function summarizeDreamsPhases(
   config: Pick<PluginConfig, "memoryDir" | "dreamsPhases">,
@@ -1494,22 +1505,17 @@ export async function summarizeDreamsPhases(
   // Load meta.json for best-available last-run timestamps.
   const meta = await storage.loadMeta();
 
-  // Codex P2 on PR 763: read the latest governance run's `manifest.json`
-  // (the real on-disk format the maintenance pipeline emits) rather than a
-  // hypothetical status file. Governance runs land under
-  // `state/memory-governance/runs/<runId>/manifest.json` with a `createdAt`
-  // timestamp. `listMemoryGovernanceRuns` returns runIds sorted newest-first,
-  // so the head of the list is the most recent run.
   let deepSleepLastRun: string | null = null;
+  let deepSleepLastRunWarning: string | null = null;
   try {
-    const runIds = await listMemoryGovernanceRuns(config.memoryDir);
+    // Read the latest governance run's manifest from the real on-disk format
+    // rather than treating every failure as "no runs yet".
+    const runsDir = path.join(config.memoryDir, "state", "memory-governance", "runs");
+    const runIds = (await readdir(runsDir)).sort().reverse();
     if (runIds.length > 0) {
       const latestRunId = runIds[0];
       const manifestPath = path.join(
-        config.memoryDir,
-        "state",
-        "memory-governance",
-        "runs",
+        runsDir,
         latestRunId,
         "manifest.json",
       );
@@ -1519,8 +1525,10 @@ export async function summarizeDreamsPhases(
         deepSleepLastRun = parsed.createdAt;
       }
     }
-  } catch {
-    // No governance runs yet on fresh installs — not an error.
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      deepSleepLastRunWarning = `Could not read latest governance run manifest: ${formatUnknownError(error)}`;
+    }
   }
 
   // Build per-phase summary lines for the human-readable `summary` field.
@@ -1532,8 +1540,11 @@ export async function summarizeDreamsPhases(
 
   return {
     key: "dreams_phases",
-    status: "ok",
-    summary: `Dreams pipeline phases: ${phaseLines.join("; ")}`,
+    status: deepSleepLastRunWarning ? "warn" : "ok",
+    summary: `Dreams pipeline phases: ${phaseLines.join("; ")}${deepSleepLastRunWarning ? `; ${deepSleepLastRunWarning}` : ""}`,
+    remediation: deepSleepLastRunWarning
+      ? "Inspect state/memory-governance/runs and repair or remove unreadable governance run artifacts."
+      : undefined,
     details: {
       lightSleep: {
         enabled: phases.lightSleep.enabled,
@@ -1559,6 +1570,7 @@ export async function summarizeDreamsPhases(
         versioningEnabled: phases.deepSleep.versioningEnabled,
         versioningMaxPerPage: phases.deepSleep.versioningMaxPerPage,
         lastRun: deepSleepLastRun,
+        warning: deepSleepLastRunWarning,
       },
     },
   };

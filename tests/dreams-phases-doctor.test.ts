@@ -199,6 +199,21 @@ test("summarizeDreamsPhases: deepSleep lastRun reflects latest governance run ma
   assert.equal(details["deepSleep"].lastRun, newerCreatedAt, "should pick newest by sorted runId");
 });
 
+test("summarizeDreamsPhases: warns when latest governance run manifest is unreadable", async () => {
+  const fixture = await makeFixture();
+  const runsDir = path.join(fixture.memoryDir, "state", "memory-governance", "runs");
+  const runId = "20260403T030000Z-def456";
+  await mkdir(path.join(runsDir, runId), { recursive: true });
+  await writeFile(path.join(runsDir, runId, "manifest.json"), "{not-json", "utf-8");
+
+  const check = await summarizeDreamsPhases(fixture.config);
+  const details = check.details as Record<string, Record<string, unknown>>;
+  assert.equal(check.status, "warn");
+  assert.match(check.summary, /Could not read latest governance run manifest/);
+  assert.match(String(details["deepSleep"].warning), /Could not read latest governance run manifest/);
+  assert.equal(details["deepSleep"].lastRun, null);
+});
+
 test("summarizeDreamsPhases: new phase keys override legacy thresholds in details", async () => {
   const fixture = await makeFixture({
     lifecyclePromoteHeatThreshold: 0.5,
