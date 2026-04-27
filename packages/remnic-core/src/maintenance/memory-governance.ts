@@ -102,6 +102,7 @@ export interface MemoryGovernanceRunResult {
   runId: string;
   traceId: string;
   mode: MemoryGovernanceMode;
+  summary: MemoryGovernanceSummary;
   summaryPath: string;
   reviewQueuePath: string;
   qualityScorePath: string;
@@ -934,6 +935,7 @@ export async function runMemoryGovernance(
     runId,
     traceId,
     mode: options.mode,
+    summary,
     ...paths,
     reviewQueue,
     proposedActions,

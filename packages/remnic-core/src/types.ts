@@ -2944,3 +2944,17 @@ export interface HourlySummary {
   turnCount: number;
   generatedAt: string;
 }
+
+// ============================================================================
+// Dreams Pipeline Telemetry (issue #678 PR 3/4)
+// ============================================================================
+
+// Re-export from the authoritative source to avoid duplicate definitions.
+// dreams-ledger.ts is the single source of truth; types.ts re-exports so
+// callers that import from types.js continue to work unchanged.
+export type {
+  DreamsPhase,
+  DreamsPhaseStatus,
+  DreamsStatusResult,
+  DreamsRunResult,
+} from "./maintenance/dreams-ledger.js";

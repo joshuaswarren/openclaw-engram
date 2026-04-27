@@ -38,7 +38,7 @@ function dreamsPhasesConfig(deepSleepEnabled = true, deepSleepEnabledExplicitlyS
   };
 }
 
-function createService() {
+function createService(dreamsPhases = dreamsPhasesConfig()) {
   const orchestrator = {
     config: {
       memoryDir: "/tmp/engram",
@@ -67,7 +67,7 @@ function createService() {
       recallCrossNamespaceBudgetWindowMs: 60_000,
       recallCrossNamespaceBudgetSoftLimit: 10,
       recallCrossNamespaceBudgetHardLimit: 30,
-      dreamsPhases: dreamsPhasesConfig(),
+      dreamsPhases,
     },
     recall: async () => "ctx",
     lastRecall: {
@@ -75,12 +75,51 @@ function createService() {
       getMostRecent: () => null,
     },
     getStorage: async () => ({
+      dir: "/tmp/engram",
       getMemoryById: async () => null,
       getMemoryTimeline: async () => [],
     }),
   };
   return new EngramAccessService(orchestrator as any);
 }
+
+test("dreamsRun rejects deepSleep when the phase is explicitly disabled", async () => {
+  const service = createService(dreamsPhasesConfig(false, true));
+
+  await assert.rejects(
+    () => service.dreamsRun({ phase: "deepSleep", dryRun: true }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /dreams\.phases\.deepSleep\.enabled=false/.test(err.message),
+  );
+});
+
+test("dreamsStatus enforces readable namespace before loading telemetry", async () => {
+  const service = createService();
+
+  await assert.rejects(
+    () => service.dreamsStatus({ windowHours: 1, namespace: "project-x" }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /authentication required/.test(err.message),
+  );
+});
+
+test("dreamsRun enforces writable namespace before running phases", async () => {
+  const service = createService();
+
+  await assert.rejects(
+    () => service.dreamsRun({
+      phase: "lightSleep",
+      dryRun: true,
+      namespace: "project-x",
+      authenticatedPrincipal: "secret-team",
+    }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /namespace is not writable: project-x/.test(err.message),
+  );
+});
 
 async function writeText(baseDir: string, relPath: string, content: string): Promise<void> {
   const full = path.join(baseDir, relPath);

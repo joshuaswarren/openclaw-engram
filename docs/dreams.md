@@ -152,30 +152,172 @@ to change snapshot behaviour.)
   Light sleep and REM are *not* cron-scheduled — they run inside the
   orchestrator maintenance pass via `runLifecyclePolicyPass` (light
   sleep) and `runSemanticConsolidation` (REM) in `orchestrator.ts`.
-  PR 3/4 will wire per-phase telemetry through both code paths
+  PR 3/4 (this PR) wires per-phase telemetry through both code paths
   (cron and orchestrator pass) so the named-phase view stays
   consistent regardless of which trigger ran the work.
 
+## Per-phase telemetry (PR 3/4)
+
+Every phase run — whether triggered by a cron, the orchestrator
+maintenance pass, or the `remnic dreams run` CLI — appends one JSONL
+entry to `<memoryDir>/state/dreams-ledger.jsonl`. The entry has this
+shape:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "startedAt":     "2026-04-27T02:00:00.000Z",   // ISO-8601
+  "completedAt":   "2026-04-27T02:00:05.123Z",
+  "durationMs":    5123,
+  "phase":         "lightSleep",                  // "lightSleep" | "rem" | "deepSleep"
+  "itemsProcessed": 42,
+  "dryRun":        false,
+  "trigger":       "scheduled",                   // "scheduled" | "manual"
+  "notes":         "scored 42 recent observation entries"
+}
+```
+
+Older ledger entries that predate this PR simply won't have this
+field. No backfill is required — the aggregator treats missing entries
+as having zero runs.
+
+### `remnic dreams status`
+
+```
+remnic dreams status [--window-hours <n>] [--format text|json|markdown]
+```
+
+Reads the dreams ledger and prints a per-phase summary for the last N
+hours (default 24). Example text output:
+
+```
+Dreams status (last 24h):
+  Window: 2026-04-26T12:00:00.000Z → 2026-04-27T12:00:00.000Z
+
+  Light Sleep:
+    Runs:            3
+    Total duration:  4521ms
+    Items processed: 127
+    Last run:        2026-04-27T09:15:00.000Z
+
+  REM:
+    Runs:            1
+    Total duration:  12450ms
+    Items processed: 94
+    Last run:        2026-04-27T03:00:00.000Z
+
+  Deep Sleep:
+    Runs:            1
+    Total duration:  32100ms
+    Items processed: 500
+    Last run:        2026-04-27T02:23:00.000Z
+```
+
+### `GET /engram/v1/dreams/status`
+
+```
+GET /engram/v1/dreams/status?windowHours=24
+```
+
+Returns the same shape as a JSON body:
+
+```jsonc
+{
+  "windowStart": "2026-04-26T12:00:00.000Z",
+  "windowEnd":   "2026-04-27T12:00:00.000Z",
+  "phases": {
+    "lightSleep": {
+      "phase": "lightSleep",
+      "runCount": 3,
+      "totalDurationMs": 4521,
+      "totalItemsProcessed": 127,
+      "lastRunAt": "2026-04-27T09:15:00.000Z",
+      "lastDurationMs": 1200
+    },
+    "rem": { ... },
+    "deepSleep": { ... }
+  }
+}
+```
+
+### MCP tool `engram.dreams_status` / `remnic.dreams_status`
+
+```jsonc
+// call
+{ "name": "engram.dreams_status", "arguments": { "windowHours": 24 } }
+
+// result — same shape as the HTTP response body
+{ "windowStart": "...", "windowEnd": "...", "phases": { ... } }
+```
+
+## Manual phase invocation (PR 4/4)
+
+`remnic dreams run` lets operators trigger a single phase without
+waiting for the cron. This is useful for debugging a misbehaving
+phase or for verifying that a configuration change has the expected
+effect.
+
+### `remnic dreams run`
+
+```
+remnic dreams run --phase <phase> [--dry-run] [--format text|json]
+```
+
+`--phase` accepts kebab-case (`light-sleep`, `rem`, `deep-sleep`) or
+camelCase (`lightSleep`, `rem`, `deepSleep`).
+
+`--dry-run` reports what would happen without committing any writes.
+The ledger entry is not written in dry-run mode so the status surface
+stays clean.
+
+Example:
+
+```
+$ remnic dreams run --phase light-sleep --dry-run
+Dreams run: Light Sleep (dry-run)
+  Duration:   12ms
+  Items:      84
+  Notes:      dry-run: would score 84 observation entries
+```
+
+### `POST /engram/v1/dreams/run`
+
+```jsonc
+// request
+POST /engram/v1/dreams/run
+{ "phase": "lightSleep", "dryRun": true }
+
+// response — same shape as a scheduled-run telemetry record
+{
+  "phase": "lightSleep",
+  "dryRun": true,
+  "durationMs": 12,
+  "itemsProcessed": 84,
+  "notes": "dry-run: would score 84 observation entries"
+}
+```
+
+### MCP tool `engram.dreams_run` / `remnic.dreams_run`
+
+```jsonc
+// call
+{ "name": "engram.dreams_run", "arguments": { "phase": "deepSleep", "dryRun": false } }
+
+// result
+{ "phase": "deepSleep", "dryRun": false, "durationMs": 31200, "itemsProcessed": 500 }
+```
+
 ## What's next
 
-This is PR 1/4. The remaining PRs in [issue
-#678](https://github.com/joshuaswarren/remnic/issues/678) build on
-this naming:
+PRs 3/4 and 4/4 are now shipped (combined in a single PR). The
+remaining item from the original plan:
 
-- **PR 2/4** — Group the existing per-cron / per-module thresholds
-  into a `dreams.phases.{lightSleep,rem,deepSleep}.*` config block.
-  Backward-compatible: the existing top-level keys still parse;
-  any new key under `dreams.phases.*` wins when set. `remnic
-  doctor` gains a section that lists current per-phase threshold
-  values and the last-run timestamp for each phase.
-- **PR 3/4** — Per-phase telemetry. Every event written to the
-  maintenance ledger gains a `phase` field. New `remnic dreams
-  status` CLI / `GET /dreams/status` HTTP / `engram.dreams_status`
-  MCP surface returns the last 24h summary per phase.
-- **PR 4/4** — Manual phase invocation. `remnic dreams run --phase
-  light-sleep|rem|deep-sleep [--dry-run]` returns the same
-  telemetry shape as a scheduled run, so debugging a misbehaving
-  phase no longer requires waiting for the cron.
+- **PR 2/4** (not yet shipped) — Group the existing per-cron /
+  per-module thresholds into a `dreams.phases.{lightSleep,rem,deepSleep}.*`
+  config block. Backward-compatible: the existing top-level keys still
+  parse; any new key under `dreams.phases.*` wins when set. `remnic
+  doctor` gains a section that lists current per-phase threshold values
+  and the last-run timestamp for each phase.
 
 ## See also
 

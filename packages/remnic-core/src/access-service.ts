@@ -4466,4 +4466,77 @@ export class EngramAccessService {
     };
     return importCapsuleFn({ ...opts, root, versioning });
   }
+
+  // ── Dreams pipeline telemetry surfaces (issue #678 PR 3+4) ──────────────
+
+  /**
+   * Return per-phase Dreams telemetry for the last N hours (default 24).
+   */
+  async dreamsStatus(options?: {
+    windowHours?: number;
+    namespace?: string;
+    principal?: string;
+  }): Promise<import("./types.js").DreamsStatusResult> {
+    const { getDreamsStatus, normalizeDreamsStatusWindowHours } = await import("./maintenance/dreams-ledger.js");
+    let windowHours: number;
+    try {
+      windowHours = normalizeDreamsStatusWindowHours(options?.windowHours);
+    } catch (error) {
+      throw new EngramAccessInputError(error instanceof Error ? error.message : String(error));
+    }
+    const resolvedNamespace = this.resolveReadableNamespace(options?.namespace, options?.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    return getDreamsStatus(storage.dir, windowHours);
+  }
+
+  /**
+   * Manually invoke a single Dreams phase pass (PR 4/4).
+   *
+   * Deep-sleep delegates to memory governance (shadow → dry-run, apply → live).
+   * Light-sleep and REM scan the observation ledger and memory corpus
+   * respectively, returning the same telemetry shape as a scheduled run.
+   */
+  async dreamsRun(options: {
+    phase: import("./types.js").DreamsPhase;
+    dryRun?: boolean;
+    namespace?: string;
+    authenticatedPrincipal?: string;
+  }): Promise<import("./types.js").DreamsRunResult> {
+    const { runDreamsPhase, deepSleepGovernanceRunner } = await import("./maintenance/dreams-ledger.js");
+    const validPhases = ["lightSleep", "rem", "deepSleep"];
+    if (!validPhases.includes(options.phase)) {
+      throw new EngramAccessInputError(
+        `Invalid phase: ${String(options.phase)}. Must be one of: ${validPhases.join(", ")}`,
+      );
+    }
+    const deepSleep = this.orchestrator.config.dreamsPhases.deepSleep;
+    if (
+      options.phase === "deepSleep" &&
+      deepSleep.enabled === false &&
+      deepSleep.enabledExplicitlySet === true
+    ) {
+      throw new EngramAccessInputError(
+        "memory governance is disabled by dreams.phases.deepSleep.enabled=false",
+      );
+    }
+    const dryRun = options.dryRun === true;
+    const resolvedNamespace = this.resolveWritableNamespace(
+      options.namespace,
+      undefined,
+      options.authenticatedPrincipal,
+    );
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const memoryDir = storage.dir;
+    const result = await runDreamsPhase(
+      { memoryDir, phase: options.phase, dryRun },
+      options.phase === "deepSleep" ? deepSleepGovernanceRunner : undefined,
+    );
+    return {
+      phase: result.phase,
+      dryRun: result.dryRun,
+      durationMs: result.durationMs,
+      itemsProcessed: result.itemsProcessed,
+      notes: result.notes,
+    };
+  }
 }

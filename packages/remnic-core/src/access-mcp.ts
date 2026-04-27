@@ -1108,6 +1108,51 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
+      // ── Dreams telemetry (issue #678 PR 3+4) ─────────────────────────────
+      {
+        name: "engram.dreams_status",
+        description:
+          "Return per-phase Dreams pipeline telemetry for the last N hours (default 24). Reports run count, total duration, and items processed for each phase: lightSleep, rem, deepSleep.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            windowHours: {
+              type: "number",
+              description: "How many hours to look back (default 24, minimum 1).",
+            },
+            namespace: {
+              type: "string",
+              description: "Optional namespace to read Dreams telemetry from.",
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.dreams_run",
+        description:
+          "Manually invoke a single Dreams pipeline phase (lightSleep, rem, or deepSleep). Returns the same telemetry shape as a scheduled run. Pass dryRun: true to preview without committing writes.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            phase: {
+              type: "string",
+              enum: ["lightSleep", "rem", "deepSleep"],
+              description: "Which phase to run.",
+            },
+            dryRun: {
+              type: "boolean",
+              description: "When true, report what would change without committing writes (default false).",
+            },
+            namespace: {
+              type: "string",
+              description: "Optional namespace to run the phase in.",
+            },
+          },
+          required: ["phase"],
+          additionalProperties: false,
+        },
+      },
     ].flatMap((tool) => withToolAliases(tool));
   }
 
@@ -2165,6 +2210,48 @@ export class EngramMcpServer {
           typeof args.namespace === "string" ? args.namespace : undefined,
           effectivePrincipal,
         );
+      // ── Dreams telemetry (issue #678 PR 3+4) ──────────────────────────────
+      case "engram.dreams_status":
+      case "remnic.dreams_status": {
+        const { normalizeDreamsStatusWindowHours } = await import("./maintenance/dreams-ledger.js");
+        let windowHours = 24;
+        try {
+          windowHours = normalizeDreamsStatusWindowHours(args.windowHours);
+        } catch {
+          throw new Error(
+            `engram.dreams_status: windowHours must be a positive integer (e.g. 24). Got: ${String(args.windowHours)}`,
+          );
+        }
+        return this.service.dreamsStatus({
+          windowHours,
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
+        });
+      }
+      case "engram.dreams_run":
+      case "remnic.dreams_run": {
+        const VALID_PHASES = ["lightSleep", "rem", "deepSleep"];
+        const phase = typeof args.phase === "string" ? args.phase : "";
+        if (!phase || !VALID_PHASES.includes(phase)) {
+          throw new Error(
+            `engram.dreams_run: phase is required and must be one of: ${VALID_PHASES.join(", ")}`,
+          );
+        }
+        if (
+          "dryRun" in args &&
+          args.dryRun !== undefined &&
+          typeof args.dryRun !== "boolean"
+        ) {
+          throw new Error("engram.dreams_run: dryRun must be a boolean when provided");
+        }
+        const dryRun = args.dryRun === true;
+        return this.service.dreamsRun({
+          phase: phase as import("./types.js").DreamsPhase,
+          dryRun,
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          authenticatedPrincipal: effectivePrincipal,
+        });
+      }
       default:
         throw new Error(`unknown tool: ${name}`);
     }

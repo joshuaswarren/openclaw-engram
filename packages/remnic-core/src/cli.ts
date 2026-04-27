@@ -8294,6 +8294,142 @@ export function registerCli(
           console.log(`  Cooled down: ${result.cooledDown}`);
         });
 
+      // ── Dreams subcommand (issue #678 PR 3+4) ───────────────────────────
+      // `remnic dreams status` — per-phase telemetry for the last N hours.
+      // `remnic dreams run`    — manually invoke a single phase pass.
+      const dreamsCmd = cmd.command("dreams").description("Inspect and manually trigger Dreams consolidation pipeline phases");
+
+      dreamsCmd
+        .command("status")
+        .description("Show per-phase Dreams telemetry for the last N hours")
+        .option("--window-hours <n>", "Look-back window in hours (default 24)", "24")
+        .option("--format <fmt>", "Output format: text, json, markdown (default text)", "text")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, string>;
+          const fmt = options.format ?? "text";
+          if (fmt !== "text" && fmt !== "json" && fmt !== "markdown") {
+            console.error(`Invalid --format '${fmt}'. Must be one of: text, json, markdown`);
+            process.exit(1);
+          }
+          const { getDreamsStatus, normalizeDreamsStatusWindowHours } = await import("./maintenance/dreams-ledger.js");
+          let windowHours: number;
+          try {
+            windowHours = normalizeDreamsStatusWindowHours(Number(options.windowHours ?? "24"));
+          } catch {
+            console.error("--window-hours must be a positive integer");
+            process.exit(1);
+          }
+          const result = await getDreamsStatus(orchestrator.config.memoryDir, windowHours);
+
+          if (fmt === "json") {
+            console.log(JSON.stringify(result, null, 2));
+            return;
+          }
+
+          const phaseLabels: Record<string, string> = {
+            lightSleep: "Light Sleep",
+            rem: "REM",
+            deepSleep: "Deep Sleep",
+          };
+
+          if (fmt === "markdown") {
+            console.log(`## Dreams Status (last ${windowHours}h)\n`);
+            console.log(`Window: ${result.windowStart} → ${result.windowEnd}\n`);
+            console.log("| Phase | Runs | Total Duration | Items Processed | Last Run |");
+            console.log("|-------|------|----------------|-----------------|----------|");
+            for (const phase of ["lightSleep", "rem", "deepSleep"] as const) {
+              const p = result.phases[phase];
+              const lastRun = p.lastRunAt ? p.lastRunAt.slice(0, 19).replace("T", " ") : "—";
+              console.log(
+                `| ${phaseLabels[phase]} | ${p.runCount} | ${p.totalDurationMs}ms | ${p.totalItemsProcessed} | ${lastRun} |`,
+              );
+            }
+            return;
+          }
+
+          // text format
+          console.log(`Dreams status (last ${windowHours}h):`);
+          console.log(`  Window: ${result.windowStart} → ${result.windowEnd}\n`);
+          for (const phase of ["lightSleep", "rem", "deepSleep"] as const) {
+            const p = result.phases[phase];
+            const label = phaseLabels[phase];
+            console.log(`  ${label}:`);
+            console.log(`    Runs:            ${p.runCount}`);
+            console.log(`    Total duration:  ${p.totalDurationMs}ms`);
+            console.log(`    Items processed: ${p.totalItemsProcessed}`);
+            console.log(`    Last run:        ${p.lastRunAt ?? "—"}`);
+            console.log();
+          }
+        });
+
+      dreamsCmd
+        .command("run")
+        .description("Manually invoke a single Dreams phase pass")
+        .requiredOption("--phase <phase>", "Phase to run: light-sleep, rem, deep-sleep")
+        .option("--dry-run", "Preview without committing writes")
+        .option("--format <fmt>", "Output format: text, json (default text)", "text")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, string | boolean>;
+          const phaseInput = typeof options.phase === "string" ? options.phase : "";
+          const dryRun = options.dryRun === true || options.dryRun === "true";
+          const fmt = typeof options.format === "string" ? options.format : "text";
+
+          if (fmt !== "text" && fmt !== "json") {
+            console.error(`Invalid --format '${fmt}'. Must be one of: text, json`);
+            process.exit(1);
+          }
+
+          // Accept both kebab-case (light-sleep) and camelCase (lightSleep).
+          const phaseMap: Record<string, string> = {
+            "light-sleep": "lightSleep",
+            lightsleep: "lightSleep",
+            lightSleep: "lightSleep",
+            rem: "rem",
+            REM: "rem",
+            "deep-sleep": "deepSleep",
+            deepsleep: "deepSleep",
+            deepSleep: "deepSleep",
+          };
+          const phase = phaseMap[phaseInput] as import("./maintenance/dreams-ledger.js").DreamsPhase | undefined;
+          if (!phase) {
+            console.error(
+              `Invalid --phase '${phaseInput}'. Must be one of: light-sleep, rem, deep-sleep`,
+            );
+            process.exit(1);
+          }
+
+          const { runDreamsPhase, deepSleepGovernanceRunner } = await import("./maintenance/dreams-ledger.js");
+          const deepSleep = orchestrator.config.dreamsPhases.deepSleep;
+          if (
+            phase === "deepSleep" &&
+            deepSleep.enabled === false &&
+            deepSleep.enabledExplicitlySet === true
+          ) {
+            throw new Error("memory governance is disabled by dreams.phases.deepSleep.enabled=false");
+          }
+          const result = await runDreamsPhase(
+            { memoryDir: orchestrator.config.memoryDir, phase, dryRun },
+            phase === "deepSleep" ? deepSleepGovernanceRunner : undefined,
+          );
+
+          if (fmt === "json") {
+            // Omit the internal ledgerEntry field — the public shape matches
+            // the HTTP and MCP surfaces (types.ts::DreamsRunResult).
+            const { ledgerEntry: _discarded, ...publicResult } = result;
+            void _discarded;
+            console.log(JSON.stringify(publicResult, null, 2));
+            return;
+          }
+
+          const phaseLabel = { lightSleep: "Light Sleep", rem: "REM", deepSleep: "Deep Sleep" }[phase];
+          console.log(`Dreams run: ${phaseLabel}${dryRun ? " (dry-run)" : ""}`);
+          console.log(`  Duration:   ${result.durationMs}ms`);
+          console.log(`  Items:      ${result.itemsProcessed}`);
+          if (result.notes) {
+            console.log(`  Notes:      ${result.notes}`);
+          }
+        });
+
       // ── Secure-store subcommand (issue #690 PR 2/4) ─────────────────────
       // CLI for the at-rest encryption header + in-memory keyring. Pure
       // primitives (KDF + cipher + metadata) shipped in PR 1/4. This PR

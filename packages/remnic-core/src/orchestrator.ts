@@ -12883,8 +12883,18 @@ export class Orchestrator {
     // v8.3 Lifecycle policy pass — deterministic promotion/decay metadata
     if (this.config.lifecyclePolicyEnabled) {
       try {
+        const lightSleepStartedAt = new Date().toISOString();
         const lifecycleCorpus = await this.storage.readAllMemories();
         await this.runLifecyclePolicyPass(lifecycleCorpus);
+        await this.recordScheduledDreamsPhaseRun(
+          "lightSleep",
+          lifecycleCorpus.length,
+          `scheduled lifecycle policy pass assessed ${lifecycleCorpus.length} memories`,
+          {
+            startedAt: lightSleepStartedAt,
+            completedAt: new Date().toISOString(),
+          },
+        );
       } catch (err) {
         log.warn(`lifecycle policy pass failed (ignored): ${err}`);
       }
@@ -12893,6 +12903,7 @@ export class Orchestrator {
     // v8.3 Compression guideline learning pass (default off, fail-open).
     await this.runCompressionGuidelineLearningPass();
 
+    const deepSleepStartedAt = new Date().toISOString();
     await this.runTierMigrationCycle(this.storage, "maintenance");
     allMemories = await this.storage.readAllMemories();
 
@@ -12903,6 +12914,15 @@ export class Orchestrator {
         log.info(`archived ${archived} old low-importance facts`);
       }
     }
+    await this.recordScheduledDreamsPhaseRun(
+      "deepSleep",
+      allMemories.length,
+      `scheduled deep-sleep maintenance assessed ${allMemories.length} memories`,
+      {
+        startedAt: deepSleepStartedAt,
+        completedAt: new Date().toISOString(),
+      },
+    );
 
     // Semantic consolidation pass — find similar memories, synthesize canonical versions
     if (this.config.semanticConsolidationEnabled) {
@@ -12932,7 +12952,17 @@ export class Orchestrator {
         }
 
         if (shouldRun) {
+          const remStartedAt = new Date().toISOString();
           const semResult = await this.runSemanticConsolidation();
+          await this.recordScheduledDreamsPhaseRun(
+            "rem",
+            allMemories.length,
+            `scheduled REM consolidation found ${semResult.clustersFound} clusters`,
+            {
+              startedAt: remStartedAt,
+              completedAt: new Date().toISOString(),
+            },
+          );
           if (semResult.memoriesArchived > 0) {
             log.info(
               `[semantic-consolidation] archived ${semResult.memoriesArchived} memories during maintenance`,
@@ -13491,6 +13521,28 @@ export class Orchestrator {
       out.set(memoryId, Math.max(-0.25, Math.min(0.15, score)));
     }
     return out;
+  }
+
+  private async recordScheduledDreamsPhaseRun(
+    phase: "lightSleep" | "rem" | "deepSleep",
+    itemsProcessed: number,
+    notes: string,
+    timing: { startedAt?: string; completedAt?: string } = {},
+  ): Promise<void> {
+    try {
+      const { recordDreamsPhaseRun } = await import("./maintenance/dreams-ledger.js");
+      await recordDreamsPhaseRun({
+        memoryDir: this.config.memoryDir,
+        phase,
+        trigger: "scheduled",
+        itemsProcessed,
+        notes,
+        startedAt: timing.startedAt,
+        completedAt: timing.completedAt,
+      });
+    } catch (error) {
+      log.debug(`dreams ledger scheduled ${phase} write failed (non-fatal): ${error}`);
+    }
   }
 
   private async runLifecyclePolicyPass(
