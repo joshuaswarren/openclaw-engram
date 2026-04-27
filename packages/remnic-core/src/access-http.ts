@@ -1331,6 +1331,16 @@ export class EngramAccessHttpServer {
         });
         return;
       }
+      if (
+        "dryRun" in body &&
+        body.dryRun !== undefined &&
+        typeof body.dryRun !== "boolean"
+      ) {
+        this.respondJson(res, 400, {
+          error: "dryRun must be a boolean when provided",
+        });
+        return;
+      }
       const dryRun = body.dryRun === true;
       const result = await this.service.dreamsRun({
         phase: phase as import("./types.js").DreamsPhase,
