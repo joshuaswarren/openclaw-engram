@@ -12,9 +12,9 @@
     "locomo": {
       "metrics": {
         "contains_answer": 1,
-        "f1": 0.055556,
+        "f1": 0.041667,
         "llm_judge": 1,
-        "rouge_l": 0.055556
+        "rouge_l": 0.041667
       }
     }
   }

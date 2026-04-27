@@ -1460,8 +1460,31 @@
             "description": "Bind port for the Engram HTTP access server. Use 0 for an ephemeral port."
           },
           "authToken": {
-            "type": "string",
-            "description": "Bearer token for the local Remnic HTTP API. Supports ${ENV_VAR} expansion. If omitted, OPENCLAW_ENGRAM_ACCESS_TOKEN is used."
+            "description": "Bearer token for the local Remnic HTTP API. Either a literal string (supports ${ENV_VAR} expansion) or an OpenClaw SecretRef object (e.g. {\"source\":\"exec\",\"provider\":\"kc_openclaw_remnic_token\",\"id\":\"value\"}) resolved at startup via the OpenClaw gateway secret resolver (issue #757). If omitted, OPENCLAW_REMNIC_ACCESS_TOKEN / OPENCLAW_ENGRAM_ACCESS_TOKEN is used.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "source"
+                ],
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "provider": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "command": {}
+                }
+              }
+            ]
           },
           "principal": {
             "type": "string",
@@ -2270,8 +2293,14 @@
       },
       "patternReinforcementCategories": {
         "type": "array",
-        "items": { "type": "string" },
-        "default": ["preference", "fact", "decision"],
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "preference",
+          "fact",
+          "decision"
+        ],
         "description": "Memory categories the pattern-reinforcement job considers. Skips procedural memories so it stays disjoint from procedural mining. Default: preference, fact, decision."
       },
       "reinforcementRecallBoostEnabled": {

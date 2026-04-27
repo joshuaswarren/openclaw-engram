@@ -340,6 +340,16 @@ function createFakeService(): EngramAccessService {
       status,
       previousStatus: "pending_review",
     }),
+    consoleState: async () => ({
+      capturedAt: "2026-04-27T00:00:00.000Z",
+      bufferState: { turnsCount: 2, byteCount: 128 },
+      extractionQueue: { depth: 0, recentVerdicts: [] },
+      dedupRecent: [],
+      maintenanceLedgerTail: [],
+      qmdProbe: { available: true, daemonMode: false, debug: "ok" },
+      daemon: { uptimeMs: 5000, version: "9.3.230" },
+      errors: [],
+    }),
     procedureStats: async (request: { namespace?: string } = {}) => ({
       namespace: request.namespace ?? "global",
       schemaVersion: 1,
@@ -517,6 +527,25 @@ test("access HTTP server enforces bearer auth and serves phase 1 routes", async 
     assert.equal(proceduralStats.counts.pending_review, 1);
     assert.equal(proceduralStats.config.enabled, true);
     assert.equal(proceduralStats.config.recallMaxProcedures, 2);
+
+    // Operator console state (issue #688 PR 2/3).
+    const consoleStateRes = await fetch(`${base}/engram/v1/console/state`, { headers });
+    assert.equal(consoleStateRes.status, 200);
+    const consoleState = await consoleStateRes.json() as {
+      capturedAt: string;
+      bufferState: { turnsCount: number; byteCount: number };
+      qmdProbe: { available: boolean };
+      errors: string[];
+    };
+    assert.ok(typeof consoleState.capturedAt === "string");
+    assert.equal(consoleState.bufferState.turnsCount, 2);
+    assert.equal(consoleState.bufferState.byteCount, 128);
+    assert.equal(consoleState.qmdProbe.available, true);
+    assert.deepEqual(consoleState.errors, []);
+
+    // Auth required — no token.
+    const consoleStateNoAuth = await fetch(`${base}/engram/v1/console/state`);
+    assert.equal(consoleStateNoAuth.status, 401);
 
     const trustZoneBrowseRes = await fetch(`${base}/engram/v1/trust-zones/records?zone=working`, { headers });
     assert.equal(trustZoneBrowseRes.status, 200);

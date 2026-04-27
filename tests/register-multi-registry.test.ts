@@ -33,8 +33,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
+import { clearAuthTokenSecretCache } from "../packages/remnic-core/src/resolve-auth-token.js";
 
 // ============================================================================
 // Shared constants — must match src/index.ts
@@ -51,10 +54,12 @@ const HOOK_APIS_KEY = `__openclawEngramHookApis::${SERVICE_ID}`;
 const ORCH_KEY = `__openclawEngramOrchestrator::${SERVICE_ID}`;
 const ACCESS_SVC_KEY = `__openclawEngramAccessService::${SERVICE_ID}`;
 const ACCESS_HTTP_KEY = `__openclawEngramAccessHttpServer::${SERVICE_ID}`;
+const ACCESS_HTTP_AUTH_STATE_KEY = `__openclawEngramAccessHttpAuthState::${SERVICE_ID}`;
 const SERVICE_STARTED_KEY = `__openclawEngramServiceStarted::${SERVICE_ID}`;
 const INIT_PROMISE_KEY = `__openclawEngramInitPromise::${SERVICE_ID}`;
 const MIGRATION_PROMISE_KEY = "__openclawEngramMigrationPromise";
 const DISABLE_REGISTER_MIGRATION_ENV = "REMNIC_DISABLE_REGISTER_MIGRATION";
+const SECRET_REF_RESOLVER_TEST_KEY = "__openclawEngramSecretRefResolverForTest";
 
 // ============================================================================
 // Helpers
@@ -123,6 +128,7 @@ function saveAndResetGlobals() {
     cliActiveCount: (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT_KEY],
     accessSvc: (globalThis as any)[ACCESS_SVC_KEY],
     accessHttp: (globalThis as any)[ACCESS_HTTP_KEY],
+    accessHttpAuthState: (globalThis as any)[ACCESS_HTTP_AUTH_STATE_KEY],
     serviceStarted: (globalThis as any)[SERVICE_STARTED_KEY],
     initPromise: (globalThis as any)[INIT_PROMISE_KEY],
     migrationPromise: (globalThis as any)[MIGRATION_PROMISE_KEY],
@@ -135,6 +141,7 @@ function saveAndResetGlobals() {
   delete (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT_KEY];
   delete (globalThis as any)[ACCESS_SVC_KEY];
   delete (globalThis as any)[ACCESS_HTTP_KEY];
+  delete (globalThis as any)[ACCESS_HTTP_AUTH_STATE_KEY];
   delete (globalThis as any)[SERVICE_STARTED_KEY];
   delete (globalThis as any)[INIT_PROMISE_KEY];
   delete (globalThis as any)[MIGRATION_PROMISE_KEY];
@@ -198,6 +205,9 @@ function restoreGlobals(saved: ReturnType<typeof saveAndResetGlobals>) {
 
   if (saved.accessHttp !== undefined) (globalThis as any)[ACCESS_HTTP_KEY] = saved.accessHttp;
   else delete (globalThis as any)[ACCESS_HTTP_KEY];
+
+  if (saved.accessHttpAuthState !== undefined) (globalThis as any)[ACCESS_HTTP_AUTH_STATE_KEY] = saved.accessHttpAuthState;
+  else delete (globalThis as any)[ACCESS_HTTP_AUTH_STATE_KEY];
 
   if (saved.serviceStarted !== undefined) (globalThis as any)[SERVICE_STARTED_KEY] = saved.serviceStarted;
   else delete (globalThis as any)[SERVICE_STARTED_KEY];
@@ -408,6 +418,97 @@ test("concurrent start() calls await the in-flight init promise (regression: iss
     await awaitPendingMigration();
     restoreRegisterMigrationEnv(previousDisableMigration);
     restoreGlobals(saved);
+  }
+});
+
+test("SecretRef auth resolution failure rejects start() and rolls back service ownership", async () => {
+  const saved = saveAndResetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  const memoryDir = await mkdtemp(join(tmpdir(), "remnic-secretref-start-"));
+  let first: ReturnType<typeof buildApi> | undefined;
+  let second: ReturnType<typeof buildApi> | undefined;
+  let resolverCalls = 0;
+
+  clearAuthTokenSecretCache();
+  (globalThis as any)[SECRET_REF_RESOLVER_TEST_KEY] = async () => {
+    resolverCalls += 1;
+    if (resolverCalls === 1) throw new Error("keychain locked");
+    return " retry-token\n";
+  };
+
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    first = buildApi("secretref-failure-primary");
+    second = buildApi("secretref-failure-secondary");
+    const pluginConfig = {
+      memoryDir,
+      agentAccessHttp: {
+        enabled: true,
+        port: 0,
+        authToken: {
+          source: "exec",
+          provider: "kc_openclaw_remnic_token",
+          id: "value",
+        },
+      },
+    };
+    first.api.pluginConfig = pluginConfig;
+    second.api.pluginConfig = pluginConfig;
+
+    plugin.register(first.api as any);
+    plugin.register(second.api as any);
+
+    await assert.rejects(
+      () => first!.api._registeredStart?.() ?? Promise.resolve(),
+      /failed to resolve agentAccessHttp\.authToken SecretRef.*keychain locked/,
+    );
+
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      false,
+      "failed SecretRef auth start must leave SERVICE_STARTED=false",
+    );
+    assert.equal(
+      (globalThis as any)[INIT_PROMISE_KEY],
+      null,
+      "failed SecretRef auth start must clear INIT_PROMISE",
+    );
+    assert.equal(
+      (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT_KEY],
+      0,
+      "failed SecretRef auth start must decrement the active-service refcount",
+    );
+
+    await second.api._registeredStart?.();
+
+    assert.equal(resolverCalls, 2, "second registry should attempt a clean retry");
+    assert.equal(
+      (globalThis as any)[SERVICE_STARTED_KEY],
+      true,
+      "second start should complete after SecretRef auth retry succeeds",
+    );
+    const accessHttpServer = (globalThis as any)[ACCESS_HTTP_KEY] as
+      | { authTokensGetter?: () => string[] }
+      | undefined;
+    assert.deepEqual(
+      accessHttpServer?.authTokensGetter?.(),
+      ["retry-token"],
+      "reused HTTP server must read the retried SecretRef token from shared auth state",
+    );
+    assert.equal(
+      (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT_KEY],
+      1,
+      "successful retry should leave exactly one active service owner",
+    );
+  } finally {
+    await safeStop(first?.api, second?.api);
+    delete (globalThis as any)[SECRET_REF_RESOLVER_TEST_KEY];
+    clearAuthTokenSecretCache();
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    restoreGlobals(saved);
+    await rm(memoryDir, { recursive: true, force: true });
   }
 });
 

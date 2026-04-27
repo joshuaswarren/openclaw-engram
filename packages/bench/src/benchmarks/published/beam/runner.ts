@@ -9,6 +9,7 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Message } from "../../../adapters/types.js";
 import { answerBenchmarkQuestion } from "../../../answering.js";
+import { benchmarkRecallBudgetForSessionCount } from "../../../recall-budget.js";
 import type {
   BenchmarkDefinition,
   BenchmarkResult,
@@ -112,9 +113,12 @@ export async function runBeamBenchmark(
         try {
           const rubricTargets = normalizeRubricTargets(probe.rubric);
           const { result: recalledText, durationMs } = await timed(async () => {
+            const recallBudget = benchmarkRecallBudgetForSessionCount(
+              sessionIds.length,
+            );
             const recalledSessions = await Promise.all(
               sessionIds.map((sessionId) =>
-                options.system.recall(sessionId, probe.question),
+                options.system.recall(sessionId, probe.question, recallBudget),
               ),
             );
             return recalledSessions.filter(Boolean).join("\n\n");
@@ -123,6 +127,7 @@ export async function runBeamBenchmark(
             question: probe.question,
             recalledText,
             responder: options.system.responder,
+            answerMode: "strict",
           });
           const searchResults = await options.system.search(probe.question, 10);
           const judgeResult = await llmJudgeScoreDetailed(

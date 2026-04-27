@@ -646,6 +646,87 @@ export async function deletePeer(memoryDir: string, peerId: string): Promise<boo
 }
 
 /**
+ * Destructively purge the entire peer directory for a given peerId —
+ * `identity.md`, `profile.md`, `interactions.log.md`, and any other
+ * files written by future extensions.
+ *
+ * This is the DESTRUCTIVE counterpart to `deletePeer` (which only
+ * removes `identity.md`). Callers must pass `confirm: "yes"` to prevent
+ * accidental data loss — the function throws `Error("forgetPeer requires
+ * confirm: 'yes'")` when the flag is absent or wrong.
+ *
+ * Idempotent: if the peer directory does not exist the function returns
+ * `{ purged: false }` rather than throwing. Safe to run twice.
+ *
+ * Security contract (mirrors `deletePeer`):
+ *   - `peerId` is validated against `PEER_ID_PATTERN`.
+ *   - The peers root is checked for symlink swap (assertPeersRootNotSymlink).
+ *   - `assertPeerDirNotEscaped` performs realpath containment: symlinked
+ *     peer directories are rejected and the resolved path is confirmed to
+ *     stay inside peersRoot (same guard used by every other I/O entry-point).
+ *   - A secondary `lstat` + `isSymbolicLink()` check is kept as defence-in-
+ *     depth before the `fs.rm` call itself.
+ *   - `fs.rm` with `{ recursive: true, force: true }` is used for the
+ *     actual removal so partially-populated directories are handled
+ *     atomically by the OS rather than file-by-file in userland.
+ *
+ * Returns:
+ *   `{ purged: true }`  — directory existed and was removed.
+ *   `{ purged: false }` — directory did not exist (no-op).
+ */
+export async function forgetPeer(
+  memoryDir: string,
+  peerId: string,
+  opts: { confirm: string },
+): Promise<{ purged: boolean }> {
+  if (opts.confirm !== "yes") {
+    throw new Error("forgetPeer requires confirm: 'yes'");
+  }
+  assertValidPeerId(peerId);
+  await assertPeersRootNotSymlink(memoryDir);
+  // assertPeerDirNotEscaped performs the realpath-containment check that
+  // the lexical `peerDir()` guard alone cannot provide: it lstat-checks
+  // the candidate, rejects symlinks, and confirms the resolved path stays
+  // inside peersRoot. Mirrors the contract of every other I/O entry-point
+  // in this module (`readPeer`, `writePeer`, `deletePeer`,
+  // `appendInteractionLog`, `readPeerProfile`, `writePeerProfile`).
+  // The function handles ENOENT gracefully (returns without throwing), so
+  // calling it here is safe for the idempotent no-op path as well.
+  await assertPeerDirNotEscaped(memoryDir, peerId);
+
+  const dir = peerDir(memoryDir, peerId);
+
+  // lstat the candidate directory. Return early (idempotent) if it
+  // doesn't exist. Reject if it resolves to a symlink.
+  let dirStat: import("node:fs").Stats;
+  try {
+    dirStat = await fs.lstat(dir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return { purged: false };
+    }
+    throw err;
+  }
+  if (dirStat.isSymbolicLink()) {
+    throw new Error(
+      `refusing to purge peer directory "${peerId}": target is a symlink`,
+    );
+  }
+  if (!dirStat.isDirectory()) {
+    throw new Error(
+      `refusing to purge peer directory "${peerId}": target is not a directory`,
+    );
+  }
+
+  // Perform the recursive removal. `fs.rm` with `{ recursive: true }`
+  // is the correct API (replaces the deprecated `fs.rmdir`). The
+  // `force: true` flag makes it a no-op if the directory was already
+  // removed between our lstat and this call (race-safe idempotency).
+  await fs.rm(dir, { recursive: true, force: true });
+  return { purged: true };
+}
+
+/**
  * Enumerate all peers under `memoryDir/peers/`.
  *
  * Returns an empty array if the peers root does not exist. Subdirectories

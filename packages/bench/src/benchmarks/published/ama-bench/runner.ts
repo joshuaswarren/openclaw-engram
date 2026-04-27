@@ -10,6 +10,7 @@ import {
   type AMABenchEpisode,
 } from "./fixture.js";
 import { answerBenchmarkQuestion } from "../../../answering.js";
+import { DEFAULT_BENCH_RECALL_BUDGET_CHARS } from "../../../recall-budget.js";
 import type {
   BenchmarkDefinition,
   BenchmarkResult,
@@ -74,12 +75,17 @@ export async function runAmaBenchBenchmark(
     for (const qa of episode.qa_pairs) {
       try {
         const { result: recalledText, durationMs } = await timed(async () =>
-          options.system.recall(sessionId, qa.question),
+          options.system.recall(
+            sessionId,
+            qa.question,
+            DEFAULT_BENCH_RECALL_BUDGET_CHARS,
+          ),
         );
         const answered = await answerBenchmarkQuestion({
           question: qa.question,
           recalledText,
           responder: options.system.responder,
+          answerMode: "strict",
         });
         const judgeResult = await llmJudgeScoreDetailed(
           options.system.judge,
