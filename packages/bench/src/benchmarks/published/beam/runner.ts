@@ -47,12 +47,15 @@ const SPLIT_ORDER: Record<string, number> = {
 };
 const SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN =
   "(?:syntax highlight(?:ed|ing) code blocks?|code blocks? with syntax highlighting)";
-const SYNTAX_HIGHLIGHTING_WEAKENING_BEFORE_PATTERN =
-  "\\b(?:do not|don't|dont|must not|should not|never|no|without|avoid|disable)\\b";
 const SYNTAX_HIGHLIGHTING_WEAKENING_AFTER_PATTERN =
   "\\b(?:(?:is|are|be|being)?\\s*(?:not required|not needed|optional|unnecessary)|(?:must|should|do|does|is|are)?\\s*(?:not|never)\\s+(?:be\\s+)?(?:used|required|needed|enabled|applied)|avoid|disable)\\b";
-const SYNTAX_HIGHLIGHTING_NEGATED_BEFORE = new RegExp(
-  `${SYNTAX_HIGHLIGHTING_WEAKENING_BEFORE_PATTERN}.{0,60}${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}`,
+const SYNTAX_HIGHLIGHTING_DIRECT_NEGATED_BEFORE = new RegExp(
+  "\\b(?:do not|don't|dont|must not|should not|never)\\s+(?:use|include|format|write|return|provide|apply|enable)\\s+(?:\\w+\\s+){0,3}" +
+    SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN,
+);
+const SYNTAX_HIGHLIGHTING_SHORT_NEGATED_BEFORE = new RegExp(
+  "\\b(?:without|avoid|disable|no)\\s+(?:\\w+\\s+){0,3}" +
+    SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN,
 );
 const SYNTAX_HIGHLIGHTING_NEGATED_AFTER = new RegExp(
   `${SYNTAX_HIGHLIGHTING_RUBRIC_PATTERN}.{0,60}${SYNTAX_HIGHLIGHTING_WEAKENING_AFTER_PATTERN}`,
@@ -940,11 +943,19 @@ function mentionsSyntaxHighlightingRequirement(value: string): boolean {
 }
 
 function negatesSyntaxHighlighting(value: string): boolean {
-  const normalized = normalizeRubricPhrase(value);
-  return (
-    SYNTAX_HIGHLIGHTING_NEGATED_BEFORE.test(normalized) ||
-    SYNTAX_HIGHLIGHTING_NEGATED_AFTER.test(normalized)
+  return splitRubricClauses(value).some(
+    (clause) =>
+      SYNTAX_HIGHLIGHTING_DIRECT_NEGATED_BEFORE.test(clause) ||
+      SYNTAX_HIGHLIGHTING_SHORT_NEGATED_BEFORE.test(clause) ||
+      SYNTAX_HIGHLIGHTING_NEGATED_AFTER.test(clause),
   );
+}
+
+function splitRubricClauses(value: string): string[] {
+  return value
+    .split(/[.;:]+/)
+    .map(normalizeRubricPhrase)
+    .filter((clause) => clause.length > 0);
 }
 
 function normalizeRubricPhrase(value: string): string {

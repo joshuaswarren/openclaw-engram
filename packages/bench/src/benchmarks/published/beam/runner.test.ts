@@ -177,6 +177,19 @@ test("BEAM rubric coverage allows compliant contrastive syntax answers", async (
   );
 });
 
+test("BEAM rubric coverage allows pre-mention contrastive negation", async () => {
+  const result = await runBeamWithInstructionAnswer(
+    "Do not use plain text; use code blocks with syntax highlighting.",
+  );
+
+  assert.equal(
+    result.results.tasks.find((task) =>
+      task.taskId.includes("instruction_following"),
+    )?.scores.rubric_coverage,
+    1,
+  );
+});
+
 async function runBeamWithInstructionAnswer(instructionAnswer: string) {
   return runBeamBenchmark({
     benchmark: beamDefinition,
