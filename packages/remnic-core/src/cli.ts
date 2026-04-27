@@ -8371,12 +8371,14 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                     memoryDir: md,
                     mode: dr ? "shadow" : "apply",
                   });
+                  const proposedCount = govResult.proposedActions.length;
+                  const appliedCount = govResult.appliedActions.length;
                   return {
-                    scannedMemories: govResult.summary.scannedMemories,
-                    appliedActionCount: govResult.summary.appliedActionCount,
+                    scannedMemories: proposedCount + govResult.reviewQueue.length,
+                    appliedActionCount: appliedCount,
                     notes: dr
-                      ? `shadow mode: ${govResult.summary.proposedActionCount} actions proposed`
-                      : `applied ${govResult.summary.appliedActionCount} actions`,
+                      ? `shadow mode: ${proposedCount} actions proposed`
+                      : `applied ${appliedCount} actions`,
                   };
                 }
               : undefined,
