@@ -7866,7 +7866,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               console.log(`  Would read anchor:  ${result.identityAnchorSource}`);
             }
             if (result.identityMdSource) {
-              console.log(`  Would read identity:${result.identityMdSource}`);
+              console.log(`  Would read identity: ${result.identityMdSource}`);
             }
             if (!result.identityAnchorSource && !result.identityMdSource) {
               console.log(`  No legacy source files found — self peer would be created with no notes.`);
@@ -7879,7 +7879,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             console.log(`  Read anchor:  ${result.identityAnchorSource}`);
           }
           if (result.identityMdSource) {
-            console.log(`  Read identity:${result.identityMdSource}`);
+            console.log(`  Read identity: ${result.identityMdSource}`);
           }
           if (!result.identityAnchorSource && !result.identityMdSource) {
             console.log(`  No legacy source files found — self peer created with no notes.`);

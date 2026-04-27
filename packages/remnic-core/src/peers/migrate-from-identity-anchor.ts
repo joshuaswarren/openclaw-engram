@@ -299,16 +299,24 @@ export async function migrateFromIdentityAnchor(
   // Mitigation: before calling writePeer we attempt to exclusively create
   // (O_CREAT | O_EXCL | O_NOFOLLOW) the identity file path. If the open
   // succeeds we are the sole creator; close the handle immediately and let
-  // writePeer fill in the real content (it mkdirs + rewrites atomically).
+  // writePeer fill in the real content (it mkdirs + rewrites atomically via
+  // mkdirPeerDirAtomic — the only symlink-safe mkdir path for this tree).
   // If O_EXCL fails with EEXIST, another process won the race — re-read the
-  // file and return `skipped`. The window between our exclusive open and the
-  // writePeer overwrite is deliberate: we've already locked out concurrent
-  // migrate calls via EEXIST, and `peer set self` targeting the same file
-  // path will succeed (it is a legitimate overwrite, not a migrate race).
+  // file and return `skipped`. ENOENT means the peer directory does not yet
+  // exist; fall through so writePeer creates it through mkdirPeerDirAtomic.
+  // The window between our exclusive open and writePeer's overwrite is
+  // deliberate: we've already locked out concurrent migrate calls via EEXIST,
+  // and `peer set self` is a legitimate overwrite (not a migrate race).
+  //
+  // Cursor Low (PR #758): a plain fs.mkdir(selfPeerDir) here would bypass the
+  // symlink and inode-stability guards inside mkdirPeerDirAtomic. We
+  // intentionally omit the mkdir and instead let the O_EXCL open return ENOENT
+  // when the directory is absent, then fall through to writePeer which is the
+  // only caller of mkdirPeerDirAtomic and therefore the only safe creator.
   if (!dryRun) {
-    const selfPeerDir = path.join(memoryDir, PEERS_DIR_NAME, "self");
-    await fs.mkdir(selfPeerDir, { recursive: true });
-    const identityFilePath = path.join(selfPeerDir, "identity.md");
+    const identityFilePath = path.join(
+      memoryDir, PEERS_DIR_NAME, "self", "identity.md",
+    );
     let exclusiveFh: import("node:fs/promises").FileHandle | null = null;
     try {
       exclusiveFh = await fs.open(
@@ -330,12 +338,17 @@ export async function migrateFromIdentityAnchor(
           identityMdSource: null,
         };
       }
-      throw err;
+      // ENOENT: the peers/self/ directory doesn't exist yet. Fall through and
+      // let writePeer create it via mkdirPeerDirAtomic (the symlink-safe path).
+      if (code !== "ENOENT" && code !== "ENOTDIR") {
+        throw err;
+      }
     } finally {
       if (exclusiveFh !== null) await exclusiveFh.close();
     }
-    // We hold the exclusive-create claim. Now writePeer fills in the
-    // real content (it calls mkdirPeerDirAtomic + writeFileNoFollow).
+    // writePeer calls mkdirPeerDirAtomic (symlink+inode-safe) then writes
+    // the file. If it races with another writePeer on the same peer id, the
+    // last write wins — that is the documented contract for writePeer.
     await writePeer(memoryDir, peer);
   }
 
