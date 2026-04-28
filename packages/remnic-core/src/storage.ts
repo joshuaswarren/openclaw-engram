@@ -3,7 +3,7 @@ import { appendFileSync, mkdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { log } from "./logger.js";
-import { getCachedEntities, setCachedEntities } from "./memory-cache.js";
+import { getCachedEntities, invalidateCachedEntities, setCachedEntities } from "./memory-cache.js";
 import { rotateMarkdownFileToArchive } from "./hygiene.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import { createVersion as createPageVersion, type VersioningConfig, type VersionTrigger } from "./page-versioning.js";
@@ -2131,6 +2131,8 @@ export class StorageManager {
   private static readonly ARTIFACT_INDEX_CACHE_TTL_MS = 60_000; // 1 minute
   private static readonly artifactWriteVersionByDir = new Map<string, number>();
   private static readonly memoryStatusVersionByDir = new Map<string, number>();
+  private static readonly secureStoreEntityCacheKeyIds = new WeakMap<Buffer, number>();
+  private static nextSecureStoreEntityCacheKeyId = 1;
   // In-process fallback for the cold-write sentinel (used when the disk file
   // is not accessible).  The canonical source of truth is state/cold-write.log.
   private static readonly coldWriteVersionByDir = new Map<string, number>();
@@ -2242,6 +2244,18 @@ export class StorageManager {
   setSecureStoreKey(key: Buffer | null, encryptOnWrite = true): void {
     this._secureStoreKey = key;
     this._secureStoreEncryptOnWrite = encryptOnWrite;
+    invalidateCachedEntities(this.baseDir);
+    this.invalidateKnowledgeIndexCache();
+  }
+
+  private getEntityCacheSecureStoreKey(): string {
+    if (!this._secureStoreKey) return "secure-store:locked";
+    let id = StorageManager.secureStoreEntityCacheKeyIds.get(this._secureStoreKey);
+    if (id === undefined) {
+      id = StorageManager.nextSecureStoreEntityCacheKeyId++;
+      StorageManager.secureStoreEntityCacheKeyIds.set(this._secureStoreKey, id);
+    }
+    return `secure-store:key:${id}`;
   }
 
   /**
@@ -2427,6 +2441,12 @@ export class StorageManager {
   }
   private get entitiesDir(): string {
     return path.join(this.baseDir, "entities");
+  }
+  private readEntityFileContent(filePath: string): Promise<string> {
+    return readMaybeEncryptedFile(filePath, this._secureStoreKey, this.baseDir);
+  }
+  private writeEntityFileContent(filePath: string, content: string): Promise<void> {
+    return writeMaybeEncryptedFile(filePath, content, this.resolveWriteKey(), {}, this.baseDir);
   }
   private get stateDir(): string {
     return path.join(this.baseDir, "state");
@@ -3103,9 +3123,11 @@ export class StorageManager {
       aliases: [],
     };
     try {
-      const existing = await readFile(filePath, "utf-8");
+      const existing = await this.readEntityFileContent(filePath);
       entity = parseEntityFile(existing, this.entitySchemas);
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       // File doesn't exist yet
     }
 
@@ -3168,7 +3190,7 @@ export class StorageManager {
     entity.updated = new Date().toISOString();
 
     await this.snapshotBeforeWrite(filePath, "write");
-    await writeFile(filePath, serializeEntityFile(entity, this.entitySchemas), "utf-8");
+    await this.writeEntityFileContent(filePath, serializeEntityFile(entity, this.entitySchemas));
     this.invalidateKnowledgeIndexCache();
     this.bumpMemoryStatusVersion(); // invalidate entity cache
     log.debug(`wrote entity ${normalized}`);
@@ -3968,8 +3990,10 @@ export class StorageManager {
 
   async readEntity(name: string): Promise<string> {
     try {
-      return await readFile(path.join(this.entitiesDir, `${name}.md`), "utf-8");
-    } catch {
+      return await this.readEntityFileContent(path.join(this.entitiesDir, `${name}.md`));
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return "";
     }
   }
@@ -5272,9 +5296,11 @@ export class StorageManager {
     const filePath = path.join(this.entitiesDir, `${name}.md`);
     let entity: EntityFile;
     try {
-      const content = await readFile(filePath, "utf-8");
+      const content = await this.readEntityFileContent(filePath);
       entity = parseEntityFile(content, this.entitySchemas);
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       log.debug(`addEntityRelationship: entity file ${name}.md not found`);
       return;
     }
@@ -5287,7 +5313,7 @@ export class StorageManager {
 
     entity.relationships.push(rel);
     entity.updated = new Date().toISOString();
-    await writeFile(filePath, serializeEntityFile(entity, this.entitySchemas), "utf-8");
+    await this.writeEntityFileContent(filePath, serializeEntityFile(entity, this.entitySchemas));
     this.invalidateKnowledgeIndexCache();
   }
 
@@ -5303,9 +5329,11 @@ export class StorageManager {
     const filePath = path.join(this.entitiesDir, `${name}.md`);
     let entity: EntityFile;
     try {
-      const content = await readFile(filePath, "utf-8");
+      const content = await this.readEntityFileContent(filePath);
       entity = parseEntityFile(content, this.entitySchemas);
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       log.debug(`addEntityActivity: entity file ${name}.md not found`);
       return;
     }
@@ -5315,7 +5343,7 @@ export class StorageManager {
       entity.activity = entity.activity.slice(0, maxEntries);
     }
     entity.updated = new Date().toISOString();
-    await writeFile(filePath, serializeEntityFile(entity, this.entitySchemas), "utf-8");
+    await this.writeEntityFileContent(filePath, serializeEntityFile(entity, this.entitySchemas));
     this.invalidateKnowledgeIndexCache();
   }
 
@@ -5326,9 +5354,11 @@ export class StorageManager {
     const filePath = path.join(this.entitiesDir, `${name}.md`);
     let entity: EntityFile;
     try {
-      const content = await readFile(filePath, "utf-8");
+      const content = await this.readEntityFileContent(filePath);
       entity = parseEntityFile(content, this.entitySchemas);
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       log.debug(`addEntityAlias: entity file ${name}.md not found`);
       return;
     }
@@ -5336,7 +5366,7 @@ export class StorageManager {
     if (entity.aliases.includes(alias)) return;
     entity.aliases.push(alias);
     entity.updated = new Date().toISOString();
-    await writeFile(filePath, serializeEntityFile(entity, this.entitySchemas), "utf-8");
+    await this.writeEntityFileContent(filePath, serializeEntityFile(entity, this.entitySchemas));
     this.invalidateKnowledgeIndexCache();
   }
 
@@ -5358,9 +5388,11 @@ export class StorageManager {
     const filePath = path.join(this.entitiesDir, `${name}.md`);
     let entity: EntityFile;
     try {
-      const content = await readFile(filePath, "utf-8");
+      const content = await this.readEntityFileContent(filePath);
       entity = parseEntityFile(content, this.entitySchemas);
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       log.debug(`updateEntitySynthesis: entity file ${name}.md not found`);
       return;
     }
@@ -5386,7 +5418,7 @@ export class StorageManager {
     entity.synthesisVersion = Math.max(0, entity.synthesisVersion ?? 0)
       + (options.incrementVersion === false ? 0 : 1);
     entity.updated = entityUpdatedAt;
-    await writeFile(filePath, serializeEntityFile(entity, this.entitySchemas), "utf-8");
+    await this.writeEntityFileContent(filePath, serializeEntityFile(entity, this.entitySchemas));
     await this.removeEntitySynthesisQueueEntries([
       ...new Set([name, normalizeEntityName(entity.name, entity.type)]),
     ]);
@@ -5402,9 +5434,11 @@ export class StorageManager {
     let synthesisTimelineCount: number | undefined;
     try {
       const filePath = path.join(this.entitiesDir, `${name}.md`);
-      const content = await readFile(filePath, "utf-8");
+      const content = await this.readEntityFileContent(filePath);
       synthesisTimelineCount = parseEntityFile(content, this.entitySchemas).timeline.length;
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       synthesisTimelineCount = undefined;
     }
     await this.updateEntitySynthesis(name, summary, {
@@ -5496,7 +5530,7 @@ export class StorageManager {
       if (!raw) continue;
       const serialized = serializeEntityFile(parseEntityFile(raw, this.entitySchemas), this.entitySchemas);
       if (raw.trimEnd() === serialized.trimEnd()) continue;
-      await writeFile(path.join(this.entitiesDir, `${entityName}.md`), serialized, "utf-8");
+      await this.writeEntityFileContent(path.join(this.entitiesDir, `${entityName}.md`), serialized);
       migrated += 1;
     }
     if (migrated > 0) {
@@ -5520,7 +5554,8 @@ export class StorageManager {
   async readAllEntityFiles(): Promise<EntityFile[]> {
     const currentVersion = this.getMemoryStatusVersion();
     const schemaCacheKey = buildEntitySchemaCacheKey(this.entitySchemas);
-    const cached = getCachedEntities(this.baseDir, currentVersion, schemaCacheKey);
+    const cacheKey = `${this.getEntityCacheSecureStoreKey()}\u0000${schemaCacheKey}`;
+    const cached = getCachedEntities(this.baseDir, currentVersion, cacheKey);
     if (cached) return cached;
 
     try {
@@ -5536,18 +5571,25 @@ export class StorageManager {
       for (let i = 0; i < mdFiles.length; i += BATCH_SIZE) {
         const batch = mdFiles.slice(i, i + BATCH_SIZE);
         const results = await Promise.all(
-          batch.map((entry) =>
-            readFile(path.join(this.entitiesDir, entry), "utf-8").catch(() => null),
-          ),
+          batch.map(async (entry) => {
+            try {
+              return await this.readEntityFileContent(path.join(this.entitiesDir, entry));
+            } catch (err) {
+              if (err instanceof SecureStoreLockedError) throw err;
+              if (!isErrnoCode(err, "ENOENT")) throw err;
+              return null;
+            }
+          }),
         );
         for (const content of results) {
           if (content !== null) entities.push(parseEntityFile(content, this.entitySchemas));
         }
       }
 
-      setCachedEntities(this.baseDir, entities, currentVersion, schemaCacheKey);
+      setCachedEntities(this.baseDir, entities, currentVersion, cacheKey);
       return entities;
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError || !isErrnoCode(err, "ENOENT")) throw err;
       // Directory doesn't exist yet
       return [];
     }
@@ -5736,7 +5778,7 @@ export class StorageManager {
         for (const file of files) {
           const filePath = path.join(this.entitiesDir, file);
           try {
-            const content = await readFile(filePath, "utf-8");
+            const content = await this.readEntityFileContent(filePath);
             const parsed = parseEntityFile(content, this.entitySchemas);
 
             // Prefer specific types over "other"
@@ -5858,7 +5900,9 @@ export class StorageManager {
               title: section.title,
               lines: [...section.lines],
             })));
-          } catch {
+          } catch (err) {
+            if (err instanceof SecureStoreLockedError) throw err;
+            if (!isErrnoCode(err, "ENOENT")) throw err;
             // Skip unreadable
           }
         }
@@ -5924,7 +5968,7 @@ export class StorageManager {
         mergedEntity.updated = mergedEntity.updated || new Date().toISOString();
 
         const canonicalPath = path.join(this.entitiesDir, `${canonical}.md`);
-        await writeFile(canonicalPath, serializeEntityFile(mergedEntity, this.entitySchemas), "utf-8");
+        await this.writeEntityFileContent(canonicalPath, serializeEntityFile(mergedEntity, this.entitySchemas));
 
         // Remove non-canonical files
         for (const file of files) {
@@ -5940,7 +5984,8 @@ export class StorageManager {
           }
         }
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError || !isErrnoCode(err, "ENOENT")) throw err;
       // Directory doesn't exist yet
     }
 

@@ -533,6 +533,7 @@ const ENCRYPTABLE_STORAGE_ROOTS = new Set([
   "reasoning-traces",
   "artifacts",
   "archive",
+  "entities",
 ]);
 
 const DECRYPTABLE_SIDECAR_ROOTS = new Set([

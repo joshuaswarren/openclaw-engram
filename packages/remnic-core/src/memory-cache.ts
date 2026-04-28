@@ -80,6 +80,13 @@ export function setCachedEntities(
   });
 }
 
+export function invalidateCachedEntities(baseDir: string): void {
+  const prefix = `${baseDir}\u0000`;
+  for (const key of entityCacheByDir.keys()) {
+    if (key.startsWith(prefix)) entityCacheByDir.delete(key);
+  }
+}
+
 // Derived caches — pre-filtered views invalidated alongside the main cache.
 // These avoid O(146K) filter+map on every verified recall/rules call.
 interface DerivedCacheEntry<T> {
@@ -171,9 +178,7 @@ export function clearMemoryCache(baseDir?: string): void {
   if (baseDir) {
     hotCacheByDir.delete(baseDir);
     archiveCacheByDir.delete(baseDir);
-    const entityPrefix = `${baseDir}\u0000`;
-    const entityKeysToDelete = [...entityCacheByDir.keys()].filter((key) => key.startsWith(entityPrefix));
-    for (const key of entityKeysToDelete) entityCacheByDir.delete(key);
+    invalidateCachedEntities(baseDir);
     episodeMapByDir.delete(baseDir);
     ruleMemoriesByDir.delete(baseDir);
   } else {
