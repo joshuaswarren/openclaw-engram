@@ -120,6 +120,23 @@ function createFakeService(): EngramAccessService {
       summaryPath: "/tmp/summary.json",
       reportPath: "/tmp/report.md",
     }),
+    liveConnectorsRun: async ({ force }) => ({
+      ranAt: "2026-04-28T00:00:00.000Z",
+      force: force === true,
+      totalDocsImported: 2,
+      ranCount: 1,
+      skippedCount: 0,
+      errorCount: 0,
+      results: [{
+        id: "google-drive",
+        displayName: "Google Drive",
+        enabled: true,
+        ran: true,
+        docsImported: 2,
+        lastSyncAt: "2026-04-28T00:00:00.000Z",
+        nextDueAt: "2026-04-28T00:05:00.000Z",
+      }],
+    }),
     reviewQueue: async () => ({
       found: true,
       runId: "gov-1",
@@ -274,6 +291,7 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.review_resolve",
     "engram.contradiction_scan_run",
     "engram.graph_edge_decay_run",
+    "engram.live_connectors_run",
     "engram.peer_list",
     "engram.peer_get",
     "engram.peer_set",
@@ -325,9 +343,24 @@ test("MCP server advertises tools and dispatches recall", async () => {
   assert.equal(governanceResult.structuredContent.runId, "gov-1");
   assert.equal(governanceResult.structuredContent.mode, "shadow");
 
-  const entity = await server.handleRequest({
+  const liveConnectors = await server.handleRequest({
     jsonrpc: "2.0",
     id: 6,
+    method: "tools/call",
+    params: {
+      name: "engram.live_connectors_run",
+      arguments: { force: true },
+    },
+  });
+  const liveConnectorsResult = liveConnectors?.result as {
+    structuredContent: { force: boolean; totalDocsImported: number };
+  };
+  assert.equal(liveConnectorsResult.structuredContent.force, true);
+  assert.equal(liveConnectorsResult.structuredContent.totalDocsImported, 2);
+
+  const entity = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 7,
     method: "tools/call",
     params: {
       name: "engram.entity_get",

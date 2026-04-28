@@ -79,8 +79,14 @@ import {
   ensureContradictionScanCron,
   ensurePatternReinforcementCron,
   ensureGraphEdgeDecayCron,
+  ensureLiveConnectorCron,
   graphEdgeDecayCadenceToCronExpr,
 } from "./maintenance/memory-governance-cron.js";
+import {
+  hasEnabledLiveConnector,
+  runLiveConnectorsOnce,
+  type LiveConnectorsRunSummary,
+} from "./live-connectors-runner.js";
 import {
   runPatternReinforcement,
   type PatternReinforcementResult,
@@ -2529,6 +2535,14 @@ export class Orchestrator {
       }
     }
 
+    if (hasEnabledLiveConnector(this.config.connectors)) {
+      try {
+        await this.autoRegisterLiveConnectorCron();
+      } catch (err) {
+        log.debug(`live connectors cron auto-register failed (non-fatal): ${err}`);
+      }
+    }
+
     // First-start lifecycle migration (issue #686 retention-completion).
     // When lifecyclePolicyEnabled is true and the memoryDir has never been
     // touched by the lifecycle policy, run a one-time rate-limited demotion
@@ -2898,6 +2912,50 @@ export class Orchestrator {
     } catch (err) {
       log.debug(`graph edge decay cron auto-register error: ${err}`);
     }
+  }
+
+  private async autoRegisterLiveConnectorCron(): Promise<void> {
+    const home = resolveHomeDir();
+    const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
+    try {
+      if (!existsSync(jobsPath)) {
+        log.debug("live connectors cron: jobs.json not found, skipping auto-register");
+        return;
+      }
+      const created = await ensureLiveConnectorCron(jobsPath, {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      if (created.created) {
+        log.info(`live connectors cron auto-registered (${created.jobId})`);
+      } else {
+        log.debug("live connectors cron already exists, skipping auto-register");
+      }
+    } catch (err) {
+      log.debug(`live connectors cron auto-register error: ${err}`);
+    }
+  }
+
+  async runLiveConnectors(options: {
+    force?: boolean;
+    abortSignal?: AbortSignal;
+  } = {}): Promise<LiveConnectorsRunSummary> {
+    return runLiveConnectorsOnce({
+      memoryDir: this.config.memoryDir,
+      connectors: this.config.connectors,
+      force: options.force === true,
+      abortSignal: options.abortSignal,
+      ingestDocuments: async (docs) => {
+        const fetchedAt = new Date().toISOString();
+        const turns = docs.map((doc) => ({
+          role: "assistant" as const,
+          content: doc.title
+            ? `# ${doc.title}\n\n${doc.content}`
+            : doc.content,
+          timestamp: fetchedAt,
+        }));
+        await this.ingestBulkImportBatch(turns);
+      },
+    });
   }
 
 
