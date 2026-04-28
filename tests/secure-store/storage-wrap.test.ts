@@ -272,11 +272,12 @@ test("migrateMemoryDirToEncrypted — only encrypts storage-secure markdown path
       path.join(dir, "facts", "2024-01-01", "fact.md"),
       path.join(dir, "artifacts", "2024-01-01", "artifact.md"),
       path.join(dir, "archive", "2024-01-01", "archived.md"),
+      path.join(dir, "entities", "person.md"),
       path.join(dir, "namespaces", "team-a", "facts", "2024-01-01", "fact.md"),
+      path.join(dir, "namespaces", "team-a", "entities", "person.md"),
       path.join(dir, "profile.md"),
     ];
     const plainPaths = [
-      path.join(dir, "entities", "person.md"),
       path.join(dir, "identity", "IDENTITY.md"),
     ];
     for (const f of [...encryptedPaths, ...plainPaths]) {
@@ -298,6 +299,14 @@ test("migrateMemoryDirToEncrypted — only encrypts storage-secure markdown path
         path.join(dir, "namespaces", "team-a"),
       ),
       "content for fact.md",
+    );
+    assert.strictEqual(
+      await readMaybeEncryptedFile(
+        path.join(dir, "namespaces", "team-a", "entities", "person.md"),
+        key,
+        path.join(dir, "namespaces", "team-a"),
+      ),
+      "content for person.md",
     );
     for (const f of plainPaths) {
       assert.strictEqual((await readFile(f, "utf8")).startsWith("content for"), true);
@@ -358,10 +367,12 @@ test("decryptMemoryDirToPlaintext — decrypts encrypted files and is idempotent
     const key = makeKey();
     const encryptedFile = path.join(dir, "facts", "2024-01-01", "fact.md");
     const namespacedFile = path.join(dir, "namespaces", "team-a", "facts", "2024-01-01", "fact.md");
+    const entityFile = path.join(dir, "entities", "person.md");
     const plaintextFile = path.join(dir, "facts", "2024-01-01", "plain.md");
     const stateFile = path.join(dir, "state", "fact-hashes.txt");
     await mkdir(path.dirname(encryptedFile), { recursive: true });
     await mkdir(path.dirname(namespacedFile), { recursive: true });
+    await mkdir(path.dirname(entityFile), { recursive: true });
     await mkdir(path.dirname(stateFile), { recursive: true });
     await writeMaybeEncryptedFile(encryptedFile, "encrypted fact", key, {}, dir);
     await writeMaybeEncryptedFile(
@@ -371,21 +382,23 @@ test("decryptMemoryDirToPlaintext — decrypts encrypted files and is idempotent
       {},
       path.join(dir, "namespaces", "team-a"),
     );
+    await writeMaybeEncryptedFile(entityFile, "encrypted entity", key, {}, dir);
     await writeFile(plaintextFile, "already plain", "utf8");
     await writeMaybeEncryptedFile(stateFile, "encrypted state", key, {}, dir);
 
     const first = await decryptMemoryDirToPlaintext(dir, key);
-    assert.strictEqual(first.decrypted, 3);
+    assert.strictEqual(first.decrypted, 4);
     assert.strictEqual(first.skipped, 1);
     assert.strictEqual(first.errors.length, 0);
     assert.strictEqual(await readFile(encryptedFile, "utf8"), "encrypted fact");
     assert.strictEqual(await readFile(namespacedFile, "utf8"), "encrypted namespaced fact");
+    assert.strictEqual(await readFile(entityFile, "utf8"), "encrypted entity");
     assert.strictEqual(await readFile(plaintextFile, "utf8"), "already plain");
     assert.strictEqual(await readFile(stateFile, "utf8"), "encrypted state");
 
     const second = await decryptMemoryDirToPlaintext(dir, key);
     assert.strictEqual(second.decrypted, 0);
-    assert.strictEqual(second.skipped, 4);
+    assert.strictEqual(second.skipped, 5);
     assert.strictEqual(second.errors.length, 0);
   });
 });
@@ -544,5 +557,168 @@ test("StorageManager — locked store throws SecureStoreLockedError on readProfi
       () => storage.readProfile(),
       (err) => err instanceof SecureStoreLockedError,
     );
+  });
+});
+
+test("StorageManager — writeEntity encrypts and entity reads decrypt", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const storage = new StorageManager(dir, []);
+    storage.setSecureStoreKey(key, true);
+    await storage.ensureDirectories();
+
+    const entityName = await storage.writeEntity(
+      "Alice Example",
+      "person",
+      ["Alice Example owns the launch checklist."],
+      { timestamp: "2026-04-28T00:00:00.000Z" },
+    );
+    assert.equal(entityName, "person-alice-example");
+
+    const entityPath = path.join(dir, "entities", `${entityName}.md`);
+    const raw = await readFile(entityPath);
+    assert.ok(isEncryptedFile(raw), "entity file should be encrypted on disk");
+
+    const content = await storage.readEntity(entityName);
+    assert.match(content, /Alice Example owns the launch checklist\./);
+
+    const entities = await storage.readAllEntityFiles();
+    assert.equal(entities[0]?.name, "Alice Example");
+    assert.deepEqual(entities[0]?.facts, ["Alice Example owns the launch checklist."]);
+
+    const lockedStorage = new StorageManager(dir, []);
+    await assert.rejects(
+      () => lockedStorage.readAllEntityFiles(),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+
+    storage.setSecureStoreKey(null);
+    await assert.rejects(
+      () => storage.readAllEntityFiles(),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+  });
+});
+
+test("StorageManager — locked store throws SecureStoreLockedError on encrypted entity reads", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const entityDir = path.join(dir, "entities");
+    await mkdir(entityDir, { recursive: true });
+    const entityPath = path.join(entityDir, "person-alice-example.md");
+    await writeMaybeEncryptedFile(
+      entityPath,
+      [
+        "# Alice Example",
+        "",
+        "**Type:** person",
+        "**Created:** 2026-04-28T00:00:00.000Z",
+        "**Updated:** 2026-04-28T00:00:00.000Z",
+        "",
+        "## Facts",
+        "- Alice Example owns the launch checklist.",
+        "",
+      ].join("\n"),
+      key,
+      {},
+      dir,
+    );
+
+    const storage = new StorageManager(dir, []);
+
+    await assert.rejects(
+      () => storage.readEntity("person-alice-example"),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+    await assert.rejects(
+      () => storage.readAllEntityFiles(),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+    await assert.rejects(
+      () => storage.writeEntity(
+        "Alice Example",
+        "person",
+        ["This must not overwrite the encrypted entity while locked."],
+      ),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+  });
+});
+
+test("StorageManager — entity writes reject decrypt failures instead of overwriting", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const wrongKey = makeKey(0x43);
+    const entityDir = path.join(dir, "entities");
+    await mkdir(entityDir, { recursive: true });
+    const entityPath = path.join(entityDir, "person-alice-example.md");
+    await writeMaybeEncryptedFile(
+      entityPath,
+      [
+        "# Alice Example",
+        "",
+        "**Type:** person",
+        "**Created:** 2026-04-28T00:00:00.000Z",
+        "**Updated:** 2026-04-28T00:00:00.000Z",
+        "",
+        "## Facts",
+        "- Alice Example owns the launch checklist.",
+        "",
+      ].join("\n"),
+      key,
+      {},
+      dir,
+    );
+
+    const storage = new StorageManager(dir, []);
+    storage.setSecureStoreKey(wrongKey, true);
+
+    await assert.rejects(
+      () => storage.readEntity("person-alice-example"),
+      (err) => err instanceof SecureStoreDecryptError,
+    );
+    await assert.rejects(
+      () => storage.readAllEntityFiles(),
+      (err) => err instanceof SecureStoreDecryptError,
+    );
+    await assert.rejects(
+      () => storage.writeEntity(
+        "Alice Example",
+        "person",
+        ["This must not overwrite the encrypted entity with a wrong key."],
+      ),
+      (err) => err instanceof SecureStoreDecryptError,
+    );
+    assert.ok(isEncryptedFile(await readFile(entityPath)), "entity file should remain encrypted");
+  });
+});
+
+test("StorageManager — plaintext entity files remain readable without secure-store key", async () => {
+  await withTempDir(async (dir) => {
+    const entityDir = path.join(dir, "entities");
+    await mkdir(entityDir, { recursive: true });
+    await writeFile(
+      path.join(entityDir, "person-bob-example.md"),
+      [
+        "# Bob Example",
+        "",
+        "**Type:** person",
+        "**Created:** 2026-04-28T00:00:00.000Z",
+        "**Updated:** 2026-04-28T00:00:00.000Z",
+        "",
+        "## Facts",
+        "- Bob Example owns the support queue.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const storage = new StorageManager(dir, []);
+    const content = await storage.readEntity("person-bob-example");
+    assert.match(content, /Bob Example owns the support queue\./);
+
+    const entities = await storage.readAllEntityFiles();
+    assert.equal(entities[0]?.name, "Bob Example");
+    assert.deepEqual(entities[0]?.facts, ["Bob Example owns the support queue."]);
   });
 });
