@@ -339,14 +339,14 @@ export async function writeHeader(memoryDir: string, header: SecureStoreHeader):
 export function buildHeaderFromPassphrase(options: {
   passphrase: string;
   salt: Buffer;
-  /** Optional override; defaults to scrypt with `DEFAULT_SCRYPT_PARAMS`. */
+  /** Optional override; defaults to Argon2id with `DEFAULT_ARGON2ID_PARAMS`. */
   algorithm?: "scrypt" | "argon2id";
   params?: ScryptParams | Argon2idParams;
   createdAt?: string;
   note?: string;
 }): { header: SecureStoreHeader; derivedKey: Buffer } {
   const { passphrase, salt } = options;
-  const algorithm = options.algorithm ?? "scrypt";
+  const algorithm = options.algorithm ?? "argon2id";
   const metadataOpts: {
     algorithm: "scrypt" | "argon2id";
     salt: Buffer;

@@ -66,7 +66,14 @@ remnic secure-store init
 
 Creates a `.secure-store/header.json` metadata file in your memory directory. You will be prompted for a passphrase (twice for confirmation).
 
-**Minimum passphrase length:** 12 characters.
+New stores use Argon2id by default. Use `--kdf scrypt` only when you need to
+create a compatibility store that avoids the native Argon2id dependency:
+
+```bash
+remnic secure-store init --kdf scrypt
+```
+
+**Minimum passphrase length:** 8 characters.
 
 This command does NOT encrypt existing memory files. Run `remnic secure-store migrate` after init to encrypt existing files.
 
@@ -127,7 +134,19 @@ Run `remnic secure-store unlock` then restart the daemon to decrypt.
 
 **Algorithm:** AES-256-GCM (NIST SP 800-38D).
 
-**KDF:** scrypt with strong parameters:
+**KDF:** Argon2id by default, with scrypt retained for legacy/compatibility
+stores.
+
+Argon2id defaults:
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| memoryKiB | 65536 | 64 MiB memory cost |
+| iterations | 3 | Time cost |
+| parallelism | 4 | Parallel lanes |
+| Output | 32 bytes | AES-256 key |
+
+Legacy scrypt params:
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
@@ -158,7 +177,8 @@ Run `remnic secure-store unlock` then restart the daemon to decrypt.
 
 ## Performance
 
-Key derivation (scrypt N=2^17) takes approximately 100–300 ms on modern laptop hardware. This cost is paid once per `unlock` call, not per file read.
+Key derivation is paid once per `unlock` call, not per file read. Argon2id uses
+64 MiB, 3 iterations, and 4 lanes by default; legacy scrypt stores use N=2^17.
 
 Per-file encrypt/decrypt overhead is negligible (~microseconds) compared to disk I/O.
 

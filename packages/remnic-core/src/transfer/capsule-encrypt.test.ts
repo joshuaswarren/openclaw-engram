@@ -15,8 +15,8 @@
  *  11. backupMemoryDir excludes .secure-store and .capsules dirs — Cursor
  *  12. exportCapsule with includeTranscripts=true includes transcripts+peers — Cursor
  *
- * KDF note: tests use a minimal scrypt param set (N=1024) to keep the suite
- * fast.  ONE integration test exercises the real unlock path so CLI
+ * KDF note: tests use a minimal scrypt param set (N=1024) for legacy-header
+ * fixtures so the suite stays fast. ONE integration test exercises the real unlock path so CLI
  * plumbing and keyring integration stay green.
  */
 
@@ -66,6 +66,7 @@ async function initAndUnlockStore(memoryDir: string): Promise<Buffer> {
   const { header, derivedKey } = buildHeaderFromPassphrase({
     passphrase: TEST_PASSPHRASE,
     salt,
+    algorithm: "scrypt",
     params: FAST_SCRYPT,
   });
   await writeHeader(memoryDir, header);
@@ -234,8 +235,8 @@ test("exportCapsule with encrypt=true + importCapsule roundtrip restores all fil
     // passphrase as the source. For this unit test, we simply pass srcDir as
     // the memoryDir for the import — the key was registered there and is still
     // in the keyring. In production, the operator runs `secure-store init` +
-    // `unlock` on the destination with the same passphrase; scrypt derives the
-    // same key because the salt is embedded in the sealed envelope.
+    // `unlock` on the destination with the same passphrase; the recorded KDF
+    // derives the same key because the salt is embedded in the sealed envelope.
     const importResult = await importCapsule({
       archivePath: exportResult.archivePath,
       root: dstDir,

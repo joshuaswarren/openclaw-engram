@@ -43,8 +43,11 @@ import {
   KDF_SALT_LENGTH,
   constantTimeEqual,
   deriveKey,
+  deriveKeyArgon2id,
   deriveKeyScrypt,
+  validateArgon2idParams,
   validateScryptParams,
+  type Argon2idParams,
   type ScryptParams,
 } from "./kdf.js";
 import {
@@ -65,6 +68,13 @@ const FAST_SCRYPT: ScryptParams = {
   p: 1,
   keyLength: 32,
   maxmem: 64 * 1024 * 1024,
+};
+
+const FAST_ARGON2ID: Argon2idParams = {
+  memoryKiB: 8,
+  iterations: 1,
+  parallelism: 1,
+  keyLength: 32,
 };
 
 // ─── kdf.ts ─────────────────────────────────────────────────────────────
@@ -121,14 +131,48 @@ test("deriveKey('scrypt') dispatches to scryptSync", () => {
   assert.ok(viaWrapper.equals(direct));
 });
 
-test("deriveKey('argon2id') is reserved but not implemented in this PR", () => {
-  // Argon2id is recorded in the metadata enum so future PRs can opt
-  // in without breaking on-disk format. This PR's runtime refuses to
-  // use it — and the error message must say so clearly.
-  const salt = Buffer.alloc(KDF_SALT_LENGTH, 0);
+test("deriveKeyArgon2id is deterministic for the same passphrase + salt + params", () => {
+  const salt = Buffer.alloc(KDF_SALT_LENGTH, 0x24);
+  const k1 = deriveKeyArgon2id("correct horse battery staple", salt, FAST_ARGON2ID);
+  const k2 = deriveKeyArgon2id("correct horse battery staple", salt, FAST_ARGON2ID);
+  assert.equal(k1.length, KDF_KEY_LENGTH);
+  assert.equal(k2.length, KDF_KEY_LENGTH);
+  assert.ok(k1.equals(k2), "same inputs must yield same key");
+});
+
+test("deriveKeyArgon2id produces different keys for different passphrases", () => {
+  const salt = Buffer.alloc(KDF_SALT_LENGTH, 0x24);
+  const k1 = deriveKeyArgon2id("passphrase-a", salt, FAST_ARGON2ID);
+  const k2 = deriveKeyArgon2id("passphrase-b", salt, FAST_ARGON2ID);
+  assert.equal(k1.equals(k2), false);
+});
+
+test("deriveKey('argon2id') dispatches to Argon2id", () => {
+  const salt = Buffer.alloc(KDF_SALT_LENGTH, 0x24);
+  const viaWrapper = deriveKey("argon2id", "pw", salt, FAST_ARGON2ID);
+  const direct = deriveKeyArgon2id("pw", salt, FAST_ARGON2ID);
+  assert.ok(viaWrapper.equals(direct));
+  assert.equal(DEFAULT_ARGON2ID_PARAMS.memoryKiB, 64 * 1024);
+  assert.equal(DEFAULT_ARGON2ID_PARAMS.iterations, 3);
+  assert.equal(DEFAULT_ARGON2ID_PARAMS.parallelism, 4);
+});
+
+test("validateArgon2idParams rejects invalid values", () => {
   assert.throws(
-    () => deriveKey("argon2id", "pw", salt, DEFAULT_ARGON2ID_PARAMS),
-    /argon2id/i,
+    () => validateArgon2idParams({ ...FAST_ARGON2ID, memoryKiB: 0 }),
+    /memoryKiB/,
+  );
+  assert.throws(
+    () => validateArgon2idParams({ ...FAST_ARGON2ID, iterations: 0 }),
+    /iterations/,
+  );
+  assert.throws(
+    () => validateArgon2idParams({ ...FAST_ARGON2ID, parallelism: 0 }),
+    /parallelism/,
+  );
+  assert.throws(
+    () => validateArgon2idParams({ ...FAST_ARGON2ID, keyLength: 16 }),
+    /keyLength/,
   );
 });
 
@@ -347,9 +391,7 @@ test("buildMetadata + serialize + parse round-trip (scrypt)", () => {
   assert.ok(decodeMetadataSalt(parsed).equals(salt));
 });
 
-test("buildMetadata + serialize + parse round-trip (argon2id placeholder)", () => {
-  // Argon2id is reserved in the metadata format even though the KDF
-  // dispatcher refuses to use it in this PR.
+test("buildMetadata + serialize + parse round-trip (argon2id)", () => {
   const salt = Buffer.alloc(KDF_SALT_LENGTH, 0xcd);
   const meta = buildMetadata({
     algorithm: "argon2id",

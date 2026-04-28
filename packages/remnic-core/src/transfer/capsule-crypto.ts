@@ -46,7 +46,7 @@
  *
  * Cross-machine restore (Codex P1 / #690)
  * ----------------------------------------
- * Format v2 embeds the KDF params (algorithm + N/r/p/keyLength/maxmem + salt)
+ * Format v2 embeds the KDF params (algorithm + params + salt)
  * in the archive header as a compact JSON blob. Any machine that knows the
  * original passphrase can parse this blob and re-derive the exact same
  * 256-bit AES key using the documented algorithm + params + salt — no
@@ -402,11 +402,11 @@ async function loadKdfSection(memoryDir: string): Promise<KdfSection> {
   }
   const { generateSalt } = await import("../secure-store/cipher.js");
   const salt = generateSalt();
-  // Use default scrypt params from kdf.ts.
-  const { DEFAULT_SCRYPT_PARAMS } = await import("../secure-store/kdf.js");
+  // Use the current secure-store default when a header is unavailable.
+  const { DEFAULT_ARGON2ID_PARAMS } = await import("../secure-store/kdf.js");
   const json = JSON.stringify({
-    algorithm: "scrypt",
-    params: DEFAULT_SCRYPT_PARAMS,
+    algorithm: "argon2id",
+    params: DEFAULT_ARGON2ID_PARAMS,
     salt: salt.toString("hex"),
   });
   return { json, salt };

@@ -59,11 +59,11 @@ export interface SecureStoreInitOptions extends SecureStoreHandlerCommon {
   /** Passphrase reader — called twice (entry + confirmation). */
   readPassphrase: PassphraseReader;
   /**
-   * KDF algorithm. Defaults to `"scrypt"`. `"argon2id"` is reserved
-   * but not implemented in this build (PR 1/4 throws on use).
+   * KDF algorithm. Defaults to `"argon2id"` for new stores.
+   * `"scrypt"` remains supported for explicit compatibility cases.
    */
   algorithm?: KdfAlgorithm;
-  /** KDF parameter override; defaults to OWASP-acceptable scrypt params. */
+  /** KDF parameter override; defaults to OWASP-acceptable params for the selected KDF. */
   params?: ScryptParams | Argon2idParams;
   /** Pre-generated salt for tests; production callers should omit. */
   salt?: Buffer;
@@ -103,7 +103,7 @@ export async function runSecureStoreInit(
   const passphrase = await readPassphrase("Enter new passphrase: ", { confirm: true });
   validatePassphrase(passphrase);
 
-  const algorithm: KdfAlgorithm = options.algorithm ?? "scrypt";
+  const algorithm: KdfAlgorithm = options.algorithm ?? "argon2id";
   const params = resolveParams(algorithm, options.params);
   const salt = options.salt ?? generateEnvelopeSalt();
   if (salt.length !== KDF_SALT_LENGTH) {

@@ -31,6 +31,7 @@
   "dependencies": {
     "@honcho-ai/sdk": "^2.0.0",
     "@lancedb/lancedb": "^0.26.2",
+    "@node-rs/argon2": "^2.0.2",
     "@orama/orama": "^3.0.0",
     "@orama/plugin-data-persistence": "^3.0.0",
     "@sinclair/typebox": "^0.34.0",
