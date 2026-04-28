@@ -32,7 +32,8 @@ import type { LiveConnectorsConfig } from "./types.js";
 export type LiveConnectorSkipReason =
   | "disabled"
   | "not_due"
-  | "invalid_config";
+  | "invalid_config"
+  | "state_read_error";
 
 export interface LiveConnectorRunItem {
   id: string;
@@ -143,7 +144,23 @@ export async function runLiveConnectorsOnce(options: {
       results.push(skipResult(definition, null, now, "disabled"));
       continue;
     }
-    const state = await readConnectorState(options.memoryDir, definition.id);
+    let state: ConnectorState | null;
+    try {
+      state = await readConnectorState(options.memoryDir, definition.id);
+    } catch (err) {
+      results.push({
+        id: definition.id,
+        displayName: definition.displayName,
+        enabled: true,
+        ran: false,
+        skippedReason: "state_read_error",
+        docsImported: 0,
+        error: err instanceof Error ? err.message : String(err),
+        lastSyncAt: null,
+        nextDueAt: null,
+      });
+      continue;
+    }
     if (!force && !isConnectorDue(state, definition.pollIntervalMs, now)) {
       results.push(skipResult(definition, state, now, "not_due"));
       continue;
@@ -155,8 +172,9 @@ export async function runLiveConnectorsOnce(options: {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       let stateWriteError: string | undefined;
+      let writtenErrorState: ConnectorState | undefined;
       try {
-        await writeConnectorErrorState({
+        writtenErrorState = await writeConnectorErrorState({
           memoryDir: options.memoryDir,
           connectorId: definition.id,
           state,
@@ -167,6 +185,7 @@ export async function runLiveConnectorsOnce(options: {
         stateWriteError =
           writeErr instanceof Error ? writeErr.message : String(writeErr);
       }
+      const reportedState = writtenErrorState ?? state;
       results.push({
         id: definition.id,
         displayName: definition.displayName,
@@ -176,8 +195,8 @@ export async function runLiveConnectorsOnce(options: {
         docsImported: 0,
         error: message,
         ...(stateWriteError !== undefined ? { stateWriteError } : {}),
-        lastSyncAt: state?.lastSyncAt ?? null,
-        nextDueAt: nextDueAt(state, definition.pollIntervalMs),
+        lastSyncAt: reportedState?.lastSyncAt ?? null,
+        nextDueAt: nextDueAt(reportedState, definition.pollIntervalMs),
       });
       continue;
     }
@@ -291,8 +310,8 @@ async function writeConnectorErrorState(options: {
   state: ConnectorState | null;
   error: string;
   now: Date;
-}): Promise<void> {
-  await writeConnectorState(options.memoryDir, options.connectorId, {
+}): Promise<ConnectorState> {
+  return writeConnectorState(options.memoryDir, options.connectorId, {
     id: options.connectorId,
     cursor: options.state?.cursor ?? null,
     lastSyncAt: options.now.toISOString(),
