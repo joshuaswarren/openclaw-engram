@@ -6,10 +6,12 @@ import { execSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { LegacyBenchmarkResult } from "./adapters/types.js";
+import { writeLeaderboardArtifactsForResult } from "./leaderboard-export.js";
 import { isSecretKey } from "./security/secret-keys.js";
 import type { BenchmarkResult } from "./types.js";
 
 const REDACTED_SECRET = "[REDACTED]";
+const PROCESS_GIT_SHA = readGitSha();
 
 function sanitizeFilenameSegment(value: string): string {
   const sanitized = value.trim().replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -50,8 +52,31 @@ export async function writeBenchmarkResult(
     outputDir,
     `${result.meta.benchmark}-v${safeRemnicVersion}-${timestamp}.json`,
   );
+  const leaderboardArtifacts = await writeLeaderboardArtifactsForResult(
+    result,
+    outputDir,
+  ).catch((error: unknown) => [
+    {
+      benchmark: result.meta.benchmark,
+      path: "",
+      format: "leaderboard-artifact-error",
+      records: 0,
+      error: error instanceof Error ? error.message : String(error),
+    },
+  ]);
 
-  await writeFile(filePath, JSON.stringify(redactBenchmarkResultSecrets(result), null, 2) + "\n");
+  const resultWithArtifacts = {
+    ...result,
+    config: {
+      ...result.config,
+      benchmarkOptions: {
+        ...(result.config.benchmarkOptions ?? {}),
+        leaderboardArtifacts,
+      },
+    },
+  };
+
+  await writeFile(filePath, JSON.stringify(redactBenchmarkResultSecrets(resultWithArtifacts), null, 2) + "\n");
   return filePath;
 }
 
@@ -73,6 +98,18 @@ export async function getRemnicVersion(): Promise<string> {
 }
 
 export function getGitSha(): string {
+  return PROCESS_GIT_SHA;
+}
+
+function readGitSha(): string {
+  const explicitSha =
+    process.env.REMNIC_BENCH_GIT_SHA ??
+    process.env.GITHUB_SHA ??
+    process.env.CI_COMMIT_SHA;
+  if (typeof explicitSha === "string" && explicitSha.trim().length > 0) {
+    return explicitSha.trim().slice(0, 40);
+  }
+
   try {
     return execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim();
   } catch {

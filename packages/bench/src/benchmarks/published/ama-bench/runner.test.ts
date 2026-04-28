@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { buildAmaBenchLeaderboardRows } from "../../../leaderboard-export.ts";
 import { amaBenchDefinition, runAmaBenchBenchmark } from "./runner.ts";
 
 test("AMA-Bench normalizes sparse null trajectory fields from the official dataset", async () => {
@@ -168,6 +169,89 @@ test("AMA-Bench records recommended and cross-judge protocol metrics", async () 
     provider: "ollama",
     model: "qwen3:32b",
   });
+});
+
+test("AMA-Bench failed tasks retain episode metadata for leaderboard export", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "remnic-ama-bench-"));
+  const datasetPath = path.join(tempDir, "open_end_qa_set.jsonl");
+
+  try {
+    await writeFile(
+      datasetPath,
+      JSON.stringify({
+        episode_id: 77,
+        task: "Failing AMA fixture",
+        task_type: "web",
+        domain: "WEB",
+        success: true,
+        num_turns: 1,
+        total_tokens: 12,
+        trajectory: [
+          {
+            turn_idx: 0,
+            action: "Open the settings page.",
+            observation: "Settings opened.",
+          },
+        ],
+        qa_pairs: [
+          {
+            question: "What page opened?",
+            answer: "settings",
+            type: "recall",
+            question_uuid: "ama-fail-q1",
+          },
+        ],
+      }) + "\n",
+      "utf8",
+    );
+
+    const result = await runAmaBenchBenchmark({
+      benchmark: amaBenchDefinition,
+      mode: "full",
+      datasetDir: tempDir,
+      system: {
+        async store() {},
+        async recall() {
+          throw new Error("recall unavailable");
+        },
+        async search() {
+          return [];
+        },
+        async reset() {},
+        async getStats() {
+          return {
+            totalMessages: 2,
+            totalSummaryNodes: 0,
+            maxDepth: 0,
+          };
+        },
+        async destroy() {},
+        judge: {
+          async score() {
+            return 0;
+          },
+          async scoreWithMetrics() {
+            return {
+              score: 0,
+              tokens: { input: 0, output: 0 },
+              latencyMs: 0,
+              model: "judge-smoke",
+            };
+          },
+        },
+      },
+    });
+
+    assert.equal(result.results.tasks[0]?.details?.episodeId, 77);
+    assert.deepEqual(buildAmaBenchLeaderboardRows(result), [
+      {
+        episode_id: 77,
+        answer_list: ["unknown"],
+      },
+    ]);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("AMA-Bench omits cross-judge agreement for scalar primary protocol", async () => {

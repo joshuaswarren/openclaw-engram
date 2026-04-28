@@ -77,7 +77,8 @@ export function buildStrictBenchmarkQuestion(
     "Benchmark answer protocol:",
     "- Use only the supplied Remnic memory context as evidence.",
     "- Answer the benchmark question directly; do not add prefaces, caveats, or unsupported facts.",
-    "- If the context is insufficient, answer \"unknown\".",
+    "- If the context contains enough evidence to answer, give the best supported answer even when other unrelated details are missing.",
+    "- Answer \"unknown\" only when the supplied context has no relevant evidence, has irreconcilably conflicting evidence, or lacks the specific value the question asks for.",
     "- Resolve relative temporal references from the timestamps or dated facts in the memory context when possible.",
     "- For date or year questions, prefer the absolute date or year over relative wording like yesterday or last year.",
   ];

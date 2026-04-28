@@ -183,7 +183,16 @@ export async function runAmaBenchBenchmark(
           scores: { f1: -1, contains_answer: -1, llm_judge: -1 },
           latencyMs: 0,
           tokens: { input: 0, output: 0 },
-          details: { error: message },
+          details: {
+            error: message,
+            qaType: qa.type,
+            domain: episode.domain,
+            episodeId: episode.episode_id,
+            task: episode.task,
+            taskType: episode.task_type,
+            numTurns: episode.num_turns,
+            totalTokens: episode.total_tokens,
+          },
         });
       }
 

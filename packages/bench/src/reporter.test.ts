@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -129,6 +129,35 @@ test("writeBenchmarkResult does not persist secret values", async () => {
     assert.match(raw, /"provider": "ollama"/);
     assert.match(raw, /"secretary": "office-role"/);
     assert.match(raw, /"credentialingOrg": "board"/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("writeBenchmarkResult preserves main result when leaderboard sidecar write fails", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-reporter-"));
+  try {
+    await writeFile(path.join(dir, "leaderboard"), "not a directory", "utf8");
+    const result = buildResult();
+    result.results.tasks = [
+      {
+        taskId: "ama-q1",
+        question: "What happened?",
+        expected: "opened the app",
+        actual: "opened the app",
+        scores: { llm_judge: 1 },
+        latencyMs: 1,
+        tokens: { input: 0, output: 0 },
+        details: { episodeId: 1 },
+      },
+    ];
+
+    const filePath = await writeBenchmarkResult(result, dir);
+    const raw = await readFile(filePath, "utf8");
+
+    assert.match(raw, /"benchmark": "ama-bench"/);
+    assert.match(raw, /"format": "leaderboard-artifact-error"/);
+    assert.match(raw, /"records": 0/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

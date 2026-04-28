@@ -128,9 +128,13 @@ export async function runMemoryArenaBenchmark(
             question,
             expectedAnswer,
           );
+          const answerContext = buildMemoryArenaAnswerContext(
+            recalledText,
+            question,
+          );
           const answered = await answerBenchmarkQuestion({
             question: benchmarkQuestion,
-            recalledText,
+            recalledText: options.system.responder ? answerContext : recalledText,
             responder: options.system.responder,
             answerMode: "strict",
           });
@@ -181,8 +185,10 @@ export async function runMemoryArenaBenchmark(
                 ? {}
                 : { initialSeedError }),
               recalledLength: recalledText.length,
+              answerContextLength: answerContext.length,
               answeredLength: answered.finalAnswer.length,
               recalledText,
+              answerContext,
               answeredText: answered.finalAnswer,
               responderModel: answered.model,
               judgeModel: judgeResult.model,
@@ -652,6 +658,23 @@ function formatMemoryArenaQuestion(
     "Current traveler request:",
     question,
   ].join("\n");
+}
+
+function buildMemoryArenaAnswerContext(
+  recalledText: string,
+  currentQuestion: string,
+): string {
+  const trimmedQuestion = currentQuestion.trim();
+  const trimmedRecall = recalledText.trim();
+  if (trimmedQuestion.length === 0) {
+    return trimmedRecall;
+  }
+  return [
+    "## Current MemoryArena task prompt",
+    trimmedQuestion,
+    trimmedRecall.length > 0 ? "## Remnic memory context" : "",
+    trimmedRecall,
+  ].filter((part) => part.length > 0).join("\n\n");
 }
 
 function scoreMemoryArenaDomainAnswer(

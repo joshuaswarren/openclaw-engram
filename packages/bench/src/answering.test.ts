@@ -110,6 +110,14 @@ test("strict question builder preserves free-form summarization prompts", () => 
   );
 });
 
+test("strict question builder reserves unknown for genuinely missing evidence", () => {
+  const prompt = buildStrictBenchmarkQuestion("What code did I save?");
+
+  assert.match(prompt, /best supported answer/);
+  assert.match(prompt, /only when the supplied context has no relevant evidence/);
+  assert.doesNotMatch(prompt, /If the context is insufficient, answer "unknown"/);
+});
+
 test("strict question builder supports concise answers with required specifics", () => {
   const question = "How many columns did I add?";
   const prompt = buildStrictBenchmarkQuestion(question, "short-with-specifics");
