@@ -65,10 +65,15 @@ test("purge: exit failure classifier ignores best-effort maintenance errors", ()
   assert.equal(
     hasDestructivePurgeFailures([
       { id: "(purge-audit)" },
-      { id: "(qmd-update)" },
       { id: "(fact-hash-index)" },
     ]),
     false,
+  );
+  assert.equal(
+    hasDestructivePurgeFailures([
+      { id: "(qmd-update)" },
+    ]),
+    true,
   );
   assert.equal(
     hasDestructivePurgeFailures([

@@ -1540,7 +1540,7 @@ export async function summarizeTierDistribution(
               reason?: string;
             };
             const tsMs = entry.ts ? Date.parse(entry.ts) : NaN;
-            if (Number.isFinite(tsMs) && tsMs >= sevenDaysAgoMs && entry.changed) {
+            if (Number.isFinite(tsMs) && tsMs >= sevenDaysAgoMs && entry.changed === true) {
               recentMigrations += 1;
               if (entry.fromTier === "hot" && entry.toTier === "cold" && typeof entry.reason === "string") {
                 const reason = entry.reason;

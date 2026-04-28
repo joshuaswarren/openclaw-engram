@@ -2276,7 +2276,6 @@ export function parseDurationToMs(raw: string): number | null {
 
 const NON_FATAL_PURGE_ERROR_IDS = new Set([
   "(purge-audit)",
-  "(qmd-update)",
   "(fact-hash-index)",
 ]);
 

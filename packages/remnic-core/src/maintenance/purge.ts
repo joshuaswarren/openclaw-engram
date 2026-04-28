@@ -228,9 +228,6 @@ export async function purgeMemories(
       collectionsToUpdate.add(coldCollection);
     } else if (candidate.tier === "hot") {
       collectionsToUpdate.add(hotCollection);
-    } else {
-      collectionsToUpdate.add(hotCollection);
-      collectionsToUpdate.add(coldCollection);
     }
   };
 

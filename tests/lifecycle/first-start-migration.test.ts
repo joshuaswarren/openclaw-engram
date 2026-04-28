@@ -467,7 +467,7 @@ test("first-start migration: pending QMD retry uses strict refresh when availabl
   }
 });
 
-test("first-start migration: stale QMD pending marker for another collection does not block init marker", async () => {
+test("first-start migration: QMD pending marker for another collection blocks init marker without clearing it", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-fsm-"));
   try {
     const storage = new StorageManager(dir);
@@ -500,10 +500,49 @@ test("first-start migration: stale QMD pending marker for another collection doe
       } as any,
     });
 
-    assert.equal(result.failureCount, 0);
+    assert.equal(result.failureCount, 1);
     assert.equal(refreshAttempts, 0);
-    await access(path.join(dir, "state", LIFECYCLE_INIT_DONE_MARKER));
-    await assert.rejects(() => access(path.join(stateDir, ".lifecycle-qmd-refresh-pending")));
+    await assert.rejects(() => access(path.join(dir, "state", LIFECYCLE_INIT_DONE_MARKER)));
+    await access(path.join(stateDir, ".lifecycle-qmd-refresh-pending"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("first-start migration: cold orphan does not mask failed demotion while source remains hot", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-fsm-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    const config = makeConfig(dir, {
+      qmdTierDemotionMinAgeDays: 1,
+      qmdTierDemotionValueThreshold: 0.99,
+    });
+
+    const id = await storage.writeMemory("fact", "Old low-value fact.", { source: "test" });
+    const memory = await storage.getMemoryById(id);
+    assert.ok(memory, "expected memory to exist");
+    await storage.writeMemoryFrontmatter(memory, {
+      updated: "2020-01-01T00:00:00.000Z",
+      created: "2020-01-01T00:00:00.000Z",
+      confidence: 0.01,
+    });
+    const currentMemory = await storage.getMemoryById(id);
+    assert.ok(currentMemory, "expected updated memory to exist");
+    const orphanPath = storage.buildTierMemoryPath(currentMemory, "cold");
+    await mkdir(path.dirname(orphanPath), { recursive: true });
+    await writeFile(orphanPath, "orphan from prior failed run", "utf-8");
+
+    storage.migrateMemoryToTier = (async () => {
+      throw new Error("move failed before deleting source");
+    }) as StorageManager["migrateMemoryToTier"];
+
+    const result = await runFirstStartMigration({ storage, config });
+
+    assert.equal(result.demotedCount, 0);
+    assert.equal(result.failureCount, 1);
+    await access(currentMemory.path);
+    await assert.rejects(() => access(path.join(dir, "state", LIFECYCLE_INIT_DONE_MARKER)));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

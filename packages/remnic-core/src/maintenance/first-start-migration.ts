@@ -113,17 +113,13 @@ async function readQmdRefreshPending(memoryDir: string): Promise<QmdRefreshPendi
   }
 }
 
-async function qmdRefreshPendingMatches(memoryDir: string, collection: string): Promise<boolean> {
-  const pending = await readQmdRefreshPending(memoryDir);
-  if (!pending) {
-    await clearQmdRefreshPending(memoryDir);
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await access(p);
+    return true;
+  } catch {
     return false;
   }
-  if (pending.collection !== collection) {
-    await clearQmdRefreshPending(memoryDir);
-    return false;
-  }
-  return true;
 }
 
 async function writeQmdRefreshPending(memoryDir: string, now: Date, collection: string): Promise<void> {
@@ -298,9 +294,12 @@ export async function runFirstStartMigration(
       }
       demotedCount += 1;
     } catch {
-      const movedToCold = (await storage.readAllColdMemories().catch(() => [])).some(
-        (candidate) => candidate.frontmatter.id === memory.frontmatter.id,
-      );
+      const targetPath = storage.buildTierMemoryPath(memory, "cold");
+      const [targetExists, sourceExists] = await Promise.all([
+        pathExists(targetPath),
+        pathExists(memory.path),
+      ]);
+      const movedToCold = targetExists && !sourceExists;
       if (movedToCold) {
         if (!qmd) {
           demotedCount += 1;
@@ -335,7 +334,11 @@ export async function runFirstStartMigration(
   if (signal?.aborted) {
     return abortedResult(candidateCount, demotedCount, failureCount);
   }
-  const hasPersistedQmdRefreshPending = qmd ? await qmdRefreshPendingMatches(config.memoryDir, coldCollection) : false;
+  const persistedQmdRefreshPending = qmd ? await readQmdRefreshPending(config.memoryDir) : null;
+  const hasPersistedQmdRefreshPending = persistedQmdRefreshPending?.collection === coldCollection;
+  if (qmd && persistedQmdRefreshPending && persistedQmdRefreshPending.collection !== coldCollection) {
+    failureCount += 1;
+  }
   if (qmd && (qmdRefreshPendingForRun || hasPersistedQmdRefreshPending)) {
     try {
       await refreshQmdCollection(qmd, coldCollection, signal);

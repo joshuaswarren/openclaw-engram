@@ -346,7 +346,7 @@ test("purgeMemories: audit ledger failure is reported without blocking hard-dele
   }
 });
 
-test("purgeMemories: archive purges invalidate archive tier and strictly refresh affected QMD collections with signal", async () => {
+test("purgeMemories: archive purges invalidate archive tier without refreshing hot/cold QMD collections", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-purge-archive-"));
   try {
     const archivedPath = path.join(dir, "archive", "2024-01-01", "arch-1.md");
@@ -385,8 +385,8 @@ test("purgeMemories: archive purges invalidate archive tier and strictly refresh
 
     assert.equal(result.purgedCount, 1);
     assert.deepEqual(invalidatedTiers, ["archive"]);
-    assert.deepEqual(updatedCollections.sort(), ["cold-test", "hot-test"]);
-    assert.deepEqual(signals, [controller.signal, controller.signal]);
+    assert.deepEqual(updatedCollections, []);
+    assert.deepEqual(signals, []);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

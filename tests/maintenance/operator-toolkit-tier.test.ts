@@ -151,6 +151,30 @@ test("summarizeTierDistribution: reads real journal file for recent migrations",
   }
 });
 
+test("summarizeTierDistribution: ignores malformed truthy changed values in journal", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-toolkit-tier-"));
+  try {
+    const { mkdir, appendFile } = await import("node:fs/promises");
+    const journalDir = path.join(dir, "state");
+    await mkdir(journalDir, { recursive: true });
+    const journalPath = path.join(journalDir, "tier-migration-journal.jsonl");
+    const yesterday = new Date(Date.now() - 1 * 86_400_000).toISOString();
+
+    await appendFile(journalPath, JSON.stringify({
+      ts: yesterday, memoryId: "bad", fromTier: "hot", toTier: "cold",
+      changed: "false", reason: "malformed",
+    }) + "\n", "utf-8");
+
+    const storage = new StorageManager(dir);
+    const check = await summarizeTierDistribution(storage);
+    const details = check.details as Record<string, unknown>;
+    assert.equal(details.recentMigrations, 0);
+    assert.deepEqual(details.topDemotionReasons, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("summarizeTierDistribution: gracefully handles storage read errors", async () => {
   const broken = {
     dir: "/tmp/nonexistent",
