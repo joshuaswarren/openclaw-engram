@@ -4,9 +4,8 @@ Live connectors are the **continuous** ingest path: they run on a schedule,
 remember where they left off, and pull *new* documents from external services
 (Google Drive, Notion, Gmail, GitHub, …) into the user's memory directory.
 
-This page documents the framework contract that landed in issue #683 PR 1/N.
-Concrete connector implementations ship in PRs 2–5. The maintenance scheduler
-hookup and the `remnic connector …` CLI surface land in later PRs.
+This page documents the framework contract, built-in connector implementations,
+operator CLI, and maintenance scheduler hookup that landed across issue #683.
 
 ## How live connectors differ from importers
 
@@ -257,13 +256,26 @@ remnic connectors run google-drive
 remnic connectors run notion
 ```
 
-All three accept `--format text|markdown|json`.  `status` defaults to `json`;
+The manual CLI run target currently supports Google Drive and Notion. The
+scheduled MCP runner covers every enabled built-in connector. All three CLI
+subcommands accept `--format text|markdown|json`.  `status` defaults to `json`;
 the others default to `text`.
+
+## Scheduled sync
+
+When any connector is enabled, the orchestrator registers an OpenClaw
+maintenance cron job:
+
+| Job id | Schedule | Tool |
+|--------|----------|------|
+| `engram-live-connectors-sync` | `*/5 * * * *` | `engram.live_connectors_run` |
+
+The cron wakes every five minutes and runs only connectors whose own
+`pollIntervalMs` says they are due. Operators can call the same MCP tool with
+`{"force": true}` to bypass the due check during debugging.
 
 ## What's deferred
 
-- **Maintenance scheduler integration** — wiring connectors into the periodic
-  sync loop (separate PR).
 - **OAuth helpers and credential storage** — keychain-backed storage is
   still TODO; connectors currently read credentials directly from the
   validated config.
@@ -273,6 +285,9 @@ the others default to `text`.
 ```
 packages/remnic-core/src/
 ├── connectors-cli.ts            # remnic connectors CLI helpers (PR 6/N)
+├── live-connectors-runner.ts     # scheduler/MCP runner for due connectors
+├── maintenance/
+│   └── memory-governance-cron.ts # OpenClaw cron registration helpers
 └── connectors/live/
     ├── framework.ts             # LiveConnector interface + ConnectorConfig/Cursor/Document
     ├── registry.ts              # LiveConnectorRegistry (pure, in-memory)
@@ -281,11 +296,17 @@ packages/remnic-core/src/
     ├── google-drive.test.ts
     ├── notion.ts                # Notion connector (PR 3/N)
     ├── notion.test.ts
+    ├── gmail.ts                 # Gmail connector (PR 4/N)
+    ├── gmail.test.ts
+    ├── github.ts                # GitHub connector (PR 5/N)
+    ├── github.test.ts
     ├── index.ts                 # Public barrel
     └── live-connectors.test.ts
 
 tests/cli/
 └── connectors.test.ts           # Unit tests for connectors-cli.ts helpers
+tests/
+└── live-connectors-runner.test.ts # Scheduler runner tests
 ```
 
 The framework lives under `connectors/live/` because the parent

@@ -365,6 +365,19 @@ test("renderConnectorsRunResult markdown: failure includes error", () => {
   assert.ok(out.includes("timeout"));
 });
 
+test("renderConnectorsRunResult text: error-state write failure does not claim docs were ingested", () => {
+  const result: ConnectorRunResult = {
+    docsImported: 0,
+    error: "sync_failed",
+    stateWriteError: "state_write_failed",
+  };
+  const out = renderConnectorsRunResult("github", result, "text");
+  assert.ok(out.includes("sync_failed"));
+  assert.ok(out.includes("state_write_failed"));
+  assert.ok(out.includes("error state was not persisted"));
+  assert.ok(!out.includes("docs were ingested"));
+});
+
 test("renderConnectorsRunResult json: success shape", () => {
   const result: ConnectorRunResult = { docsImported: 5 };
   const out = renderConnectorsRunResult("google-drive", result, "json");

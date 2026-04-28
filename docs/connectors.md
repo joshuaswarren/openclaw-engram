@@ -2,7 +2,7 @@
 
 `remnic connectors` is the operator surface for inspecting and manually
 controlling the [live connectors](./live-connectors.md) that continuously ingest
-content from external services (Google Drive, Notion, …) into your memory
+content from external services (Google Drive, Notion, Gmail, GitHub, …) into your memory
 directory.
 
 This page documents configuration keys, environment variables, OAuth setup
@@ -113,6 +113,12 @@ Options:
 On success, exits `0` and prints the number of new documents imported.  On
 failure, exits `1`, writes the error to stderr, and records the failure in the
 connector's state file so `connectors list` reflects it.
+
+The maintenance scheduler calls the MCP tool `engram.live_connectors_run` every
+five minutes through the `engram-live-connectors-sync` cron. That runner honors
+each connector's `pollIntervalMs` and covers every enabled built-in connector.
+`remnic connectors run <name>` currently supports Google Drive and Notion as the
+single-connector debug path.
 
 **Example — success:**
 

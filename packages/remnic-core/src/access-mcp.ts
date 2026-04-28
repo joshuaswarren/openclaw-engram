@@ -1002,6 +1002,21 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
+      {
+        name: "engram.live_connectors_run",
+        description:
+          "Run due live connectors once. Used by the live-connector cron and available for operator-triggered sync checks.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            force: {
+              type: "boolean",
+              description: "When true, run enabled connectors even if their poll interval has not elapsed.",
+            },
+          },
+          additionalProperties: false,
+        },
+      },
       // ── Peer Registry tools (issue #679 PR 4/5) ─────────────────────────
       {
         name: "engram.peer_list",
@@ -2144,6 +2159,15 @@ export class EngramMcpServer {
         );
         return { results };
       }
+      case "engram.live_connectors_run":
+      case "remnic.live_connectors_run":
+        return this.service.liveConnectorsRun(
+          {
+            authenticatedPrincipal: effectivePrincipal,
+            force: args.force === true,
+          },
+          effectivePrincipal,
+        );
       // ── Peer Registry dispatchers (issue #679 PR 4/5) ─────────────────
       case "engram.peer_list":
       case "remnic.peer_list":

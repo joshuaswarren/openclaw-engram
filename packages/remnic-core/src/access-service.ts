@@ -30,6 +30,7 @@ import {
 } from "./maintenance/memory-governance.js";
 import { runProcedureMining } from "./procedural/procedure-miner.js";
 import type { PatternReinforcementResult } from "./maintenance/pattern-reinforcement.js";
+import type { LiveConnectorsRunSummary } from "./live-connectors-runner.js";
 import {
   computeProcedureStats,
   type ProcedureStatsReport,
@@ -2760,6 +2761,23 @@ export class EngramAccessService {
       proceduresWritten: result.proceduresWritten,
       skippedReason: result.skippedReason,
     };
+  }
+
+  async liveConnectorsRun(
+    request: {
+      authenticatedPrincipal?: string;
+      force?: boolean;
+    } = {},
+    principal?: string,
+  ): Promise<LiveConnectorsRunSummary> {
+    this.resolveWritableNamespace(
+      undefined,
+      undefined,
+      request.authenticatedPrincipal ?? principal,
+    );
+    return this.orchestrator.runLiveConnectors({
+      force: request.force === true,
+    });
   }
 
   /**

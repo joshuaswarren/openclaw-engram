@@ -82,6 +82,10 @@ import {
   graphEdgeDecayCadenceToCronExpr,
 } from "./maintenance/memory-governance-cron.js";
 import {
+  runLiveConnectorsOnce,
+  type LiveConnectorsRunSummary,
+} from "./live-connectors-runner.js";
+import {
   runPatternReinforcement,
   type PatternReinforcementResult,
 } from "./maintenance/pattern-reinforcement.js";
@@ -2898,6 +2902,29 @@ export class Orchestrator {
     } catch (err) {
       log.debug(`graph edge decay cron auto-register error: ${err}`);
     }
+  }
+
+  async runLiveConnectors(options: {
+    force?: boolean;
+    abortSignal?: AbortSignal;
+  } = {}): Promise<LiveConnectorsRunSummary> {
+    return runLiveConnectorsOnce({
+      memoryDir: this.config.memoryDir,
+      connectors: this.config.connectors,
+      force: options.force === true,
+      abortSignal: options.abortSignal,
+      ingestDocuments: async (docs) => {
+        const fetchedAt = new Date().toISOString();
+        const turns = docs.map((doc) => ({
+          role: "assistant" as const,
+          content: doc.title
+            ? `# ${doc.title}\n\n${doc.content}`
+            : doc.content,
+          timestamp: fetchedAt,
+        }));
+        await this.ingestBulkImportBatch(turns);
+      },
+    });
   }
 
 

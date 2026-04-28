@@ -361,6 +361,10 @@ test("runConnectorPollOnce: writeCursorFn throws on error path — original inge
     !result.error?.includes("cursor_write_failed"),
     "cursor_write_failed must NOT replace the primary ingest error in result.error",
   );
+  assert.ok(
+    result.stateWriteError?.includes("cursor_write_failed"),
+    `expected cursor_write_failed in stateWriteError, got: ${result.stateWriteError}`,
+  );
 });
 
 test("runConnectorPollOnce: writeCursorFn throws on error path — promise still resolves (no unhandled rejection)", async () => {
@@ -380,6 +384,7 @@ test("runConnectorPollOnce: writeCursorFn throws on error path — promise still
 
   assert.equal(result.docsImported, 0);
   assert.ok(result.error?.includes("sync_failed"));
+  assert.ok(result.stateWriteError?.includes("state_write_failed"));
 });
 
 test("runConnectorPollOnce: writeCursorFn throws on success path — docsImported preserved, stateWriteError set", async () => {
