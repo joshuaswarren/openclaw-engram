@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { gzipSync } from "node:zlib";
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { EngramAccessInputError, EngramAccessService } from "../src/access-service.js";
 import { runMemoryGovernance } from "../src/maintenance/memory-governance.ts";
 import { rebuildMemoryProjection } from "../src/maintenance/rebuild-memory-projection.ts";
@@ -15,6 +16,7 @@ import {
 } from "../src/secure-store/index.js";
 import { StorageManager } from "../src/storage.js";
 import { recordTrustZoneRecord } from "../src/trust-zones.ts";
+import { exportCapsule } from "../src/transfer/capsule-export.js";
 
 const FAST_SCRYPT: ScryptParams = {
   N: 1 << 10,
@@ -384,6 +386,279 @@ test("capsuleExport encrypts namespace exports with the root secure-store keyrin
     assert.match(result.manifest.pluginVersion, /^\d+\.\d+\.\d+/);
   } finally {
     keyring.lockAll();
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("capsuleImport decrypts namespace imports with the root secure-store keyring", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-capsule-import-ns-"));
+  const sourceDir = path.join(memoryDir, "source");
+  const namespaceDir = path.join(memoryDir, "namespaces", "project-x");
+  await mkdir(namespaceDir, { recursive: true });
+  await writeText(
+    sourceDir,
+    path.join("facts", "2026-04-28", "fact-a.md"),
+    "---\nid: fact-a\ncategory: fact\n---\nEncrypted namespace imports use the root secure-store key.\n",
+  );
+  let resolvedNamespace: string | undefined;
+  const service = new EngramAccessService({
+    config: {
+      memoryDir,
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x", "read-only"],
+          writePrincipals: ["project-x"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
+      dreamsPhases: dreamsPhasesConfig(),
+      versioningEnabled: false,
+      versioningMaxPerPage: 50,
+      versioningSidecarDir: undefined,
+    },
+    recall: async () => "ctx",
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async (namespace: string | undefined) => {
+      resolvedNamespace = namespace;
+      return { dir: namespaceDir };
+    },
+  } as any);
+
+  try {
+    await runSecureStoreInit({
+      memoryDir,
+      readPassphrase: staticPassphraseReader(TEST_PASSPHRASE, TEST_PASSPHRASE),
+      algorithm: "scrypt",
+      params: FAST_SCRYPT,
+    });
+    const unlock = await runSecureStoreUnlock({
+      memoryDir,
+      readPassphrase: staticPassphraseReader(TEST_PASSPHRASE),
+    });
+    assert.equal(unlock.ok, true);
+
+    const capsule = await exportCapsule({
+      name: "project-x-import",
+      root: sourceDir,
+      outDir: path.join(memoryDir, "out"),
+      encrypt: true,
+      memoryDir,
+    });
+
+    await assert.rejects(
+      () => service.capsuleImport({
+        archivePath: capsule.archivePath,
+        namespace: "project-x",
+        principal: "read-only",
+      }),
+      (err: unknown) =>
+        err instanceof EngramAccessInputError &&
+        /namespace is not writable: project-x/.test(err.message),
+    );
+
+    const result = await service.capsuleImport({
+      archivePath: capsule.archivePath,
+      namespace: "project-x",
+      principal: "project-x",
+    });
+
+    assert.equal(resolvedNamespace, "project-x");
+    assert.equal(result.imported.length, 1);
+    assert.equal(result.imported[0]?.targetPath, "facts/2026-04-28/fact-a.md");
+    const imported = await readFile(path.join(namespaceDir, "facts", "2026-04-28", "fact-a.md"), "utf-8");
+    assert.match(imported, /Encrypted namespace imports use the root secure-store key/);
+  } finally {
+    keyring.lockAll();
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("capsuleImport reports bad archive input as an access input error", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-capsule-import-bad-"));
+  const namespaceDir = path.join(memoryDir, "namespaces", "project-x");
+  await mkdir(namespaceDir, { recursive: true });
+  const service = new EngramAccessService({
+    config: {
+      memoryDir,
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-x"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
+      dreamsPhases: dreamsPhasesConfig(),
+      versioningEnabled: false,
+      versioningMaxPerPage: 50,
+      versioningSidecarDir: undefined,
+    },
+    recall: async () => "ctx",
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async () => ({ dir: namespaceDir }),
+  } as any);
+
+  try {
+    await assert.rejects(
+      () => service.capsuleImport({
+        archivePath: path.join(memoryDir, "missing.capsule.json.gz"),
+        namespace: "project-x",
+        principal: "project-x",
+      }),
+      (err: unknown) =>
+        err instanceof EngramAccessInputError &&
+        /capsule import failed:/.test(err.message),
+    );
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("capsuleImport reports unreadable archive paths as access input errors", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-capsule-import-unreadable-"));
+  const namespaceDir = path.join(memoryDir, "namespaces", "project-x");
+  await mkdir(namespaceDir, { recursive: true });
+  const archivePath = path.join(memoryDir, "unreadable.capsule.json.gz");
+  await writeFile(archivePath, "not gzip", "utf8");
+  await chmod(archivePath, 0o000);
+  const service = new EngramAccessService({
+    config: {
+      memoryDir,
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-x"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
+      dreamsPhases: dreamsPhasesConfig(),
+      versioningEnabled: false,
+      versioningMaxPerPage: 50,
+      versioningSidecarDir: undefined,
+    },
+    recall: async () => "ctx",
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async () => ({ dir: namespaceDir }),
+  } as any);
+
+  try {
+    await assert.rejects(
+      () => service.capsuleImport({
+        archivePath,
+        namespace: "project-x",
+        principal: "project-x",
+      }),
+      (err: unknown) =>
+        err instanceof EngramAccessInputError &&
+        /archive is not readable/.test(err.message),
+    );
+  } finally {
+    await chmod(archivePath, 0o600).catch(() => {});
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("capsuleImport reports malformed capsule bundles as access input errors", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-capsule-import-malformed-"));
+  const namespaceDir = path.join(memoryDir, "namespaces", "project-x");
+  await mkdir(namespaceDir, { recursive: true });
+  const archivePath = path.join(memoryDir, "bad.capsule.json.gz");
+  const corruptGzipPath = path.join(memoryDir, "corrupt.capsule.json.gz");
+  await writeFile(archivePath, gzipSync(Buffer.from(JSON.stringify({ format: "not-remnic-capsule" }), "utf8")));
+  await writeFile(corruptGzipPath, "not gzip", "utf8");
+  const service = new EngramAccessService({
+    config: {
+      memoryDir,
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-x"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
+      dreamsPhases: dreamsPhasesConfig(),
+      versioningEnabled: false,
+      versioningMaxPerPage: 50,
+      versioningSidecarDir: undefined,
+    },
+    recall: async () => "ctx",
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async () => ({ dir: namespaceDir }),
+  } as any);
+
+  try {
+    await assert.rejects(
+      () => service.capsuleImport({
+        archivePath,
+        namespace: "project-x",
+        principal: "project-x",
+      }),
+      (err: unknown) =>
+        err instanceof EngramAccessInputError &&
+        /capsule import failed:/.test(err.message),
+    );
+    await assert.rejects(
+      () => service.capsuleImport({
+        archivePath: corruptGzipPath,
+        namespace: "project-x",
+        principal: "project-x",
+      }),
+      (err: unknown) =>
+        err instanceof EngramAccessInputError &&
+        /capsule import failed:/.test(err.message),
+    );
+  } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
 });

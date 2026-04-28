@@ -1,5 +1,7 @@
 import { stat } from "node:fs/promises";
 import * as nodeFs from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { ZodError } from "zod";
 import { AccessIdempotencyStore, hashAccessIdempotencyPayload } from "./access-idempotency.js";
 import { AccessAuditAdapter, type AccessAuditConfig, type AccessAuditResult } from "./access-audit.js";
 import type { AnomalyDetectorResult } from "./recall-audit-anomaly.js";
@@ -4503,15 +4505,82 @@ export class EngramAccessService {
    * caller having to construct the config object.
    */
   async capsuleImport(
-    opts: Omit<ImportCapsuleOptions, "root"> & { root?: string },
+    opts: Omit<ImportCapsuleOptions, "root" | "memoryDir"> & {
+      root?: string;
+      memoryDir?: string;
+      namespace?: string;
+      principal?: string;
+    },
   ): Promise<ImportCapsuleResult> {
-    const root = opts.root ?? this.orchestrator.config.memoryDir;
-    const versioning = opts.versioning ?? {
+    const { namespace, principal, root: explicitRoot, memoryDir: explicitMemoryDir, ...importOptions } = opts;
+    const resolvedNamespace = this.resolveWritableNamespace(namespace, undefined, principal);
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const root = explicitRoot ?? storage.dir;
+    const memoryDir = explicitMemoryDir ?? this.orchestrator.config.memoryDir;
+    const versioning = importOptions.versioning ?? {
       enabled: this.orchestrator.config.versioningEnabled,
       maxVersionsPerPage: this.orchestrator.config.versioningMaxPerPage,
       sidecarDir: this.orchestrator.config.versioningSidecarDir,
     };
-    return importCapsuleFn({ ...opts, root, versioning });
+    await this.validateCapsuleImportArchivePath(importOptions.archivePath);
+    try {
+      return await importCapsuleFn({ ...importOptions, root, memoryDir, versioning });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (this.isCapsuleImportArchiveInputError(err, message)) {
+        throw new EngramAccessInputError(`capsule import failed: ${message}`);
+      }
+      throw err;
+    }
+  }
+
+  private async validateCapsuleImportArchivePath(archivePath: string): Promise<void> {
+    let archiveStat;
+    try {
+      archiveStat = await stat(archivePath);
+    } catch (err) {
+      if (!this.isCapsuleImportPathInputFsError(err)) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      throw new EngramAccessInputError(`capsule import failed: archive is not readable: ${message}`);
+    }
+    if (!archiveStat.isFile()) {
+      throw new EngramAccessInputError("capsule import failed: archivePath must point to a file");
+    }
+    try {
+      await nodeFs.access(archivePath, fsConstants.R_OK);
+    } catch (err) {
+      if (!this.isCapsuleImportPathInputFsError(err)) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      throw new EngramAccessInputError(`capsule import failed: archive is not readable: ${message}`);
+    }
+  }
+
+  private isCapsuleImportPathInputFsError(err: unknown): boolean {
+    const code = typeof err === "object" && err !== null && "code" in err
+      ? (err as { code?: unknown }).code
+      : undefined;
+    return (
+      code === "ENOENT" ||
+      code === "ENOTDIR" ||
+      code === "EACCES" ||
+      code === "EPERM" ||
+      code === "ELOOP"
+    );
+  }
+
+  private isCapsuleImportArchiveInputError(err: unknown, message: string): boolean {
+    if (err instanceof ZodError) return true;
+    const code = typeof err === "object" && err !== null && "code" in err
+      ? (err as { code?: unknown }).code
+      : undefined;
+    if (typeof code === "string" && code.startsWith("Z_")) return true;
+    return (
+      message.startsWith("importCapsule: archive") ||
+      message.startsWith("importCapsule: bundle") ||
+      message.startsWith("importCapsule: manifest") ||
+      message.startsWith("importCapsule: record") ||
+      /incorrect header check|invalid stored block lengths|not in gzip format|unexpected end of file/i.test(message)
+    );
   }
 
   /**
