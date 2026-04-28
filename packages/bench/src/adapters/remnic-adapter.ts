@@ -204,7 +204,7 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
   return async function createAdapter(
     options: RemnicAdapterOptions = {},
   ): Promise<BenchMemoryAdapter> {
-    const useCoreMemoryPipeline = shouldUseCoreMemoryPipeline(options);
+    const useCoreMemoryPipeline = shouldUseCoreMemoryPipeline(mode, options);
     let state = await createBenchOrchestrator(
       mode,
       options.configOverrides,
@@ -496,7 +496,14 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
 export const createLightweightAdapter = createAdapterFactory("lightweight");
 export const createRemnicAdapter = createAdapterFactory("direct");
 
-function shouldUseCoreMemoryPipeline(options: RemnicAdapterOptions): boolean {
+function shouldUseCoreMemoryPipeline(
+  mode: BenchAdapterMode,
+  options: RemnicAdapterOptions,
+): boolean {
+  if (mode === "lightweight") {
+    return false;
+  }
+
   if (options.preserveRuntimeDefaults === true) {
     return true;
   }

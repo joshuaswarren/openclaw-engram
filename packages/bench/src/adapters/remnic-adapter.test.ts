@@ -5,6 +5,7 @@ import { parseConfig } from "@remnic/core";
 import {
   buildBenchAdapterConfig,
   buildBenchBaselineRemnicConfig,
+  createLightweightAdapter,
   createRemnicAdapter,
 } from "./remnic-adapter.ts";
 
@@ -214,6 +215,37 @@ test("runtime-backed adapter preserves transcript order for stored batches", asy
     assert.notEqual(firstIndex, -1);
     assert.notEqual(secondIndex, -1);
     assert.equal(firstIndex < secondIndex, true);
+  } finally {
+    await adapter.destroy();
+  }
+});
+
+test("lightweight adapter suppresses real Remnic pipeline even when feature overrides are present", async () => {
+  const adapter = await createLightweightAdapter({
+    configOverrides: {
+      transcriptEnabled: true,
+      qmdEnabled: true,
+      extractionMinUserTurns: 0,
+    },
+  });
+
+  try {
+    await adapter.store("agent:bench:main", [
+      {
+        role: "user",
+        content: "Remember the lightweight mode code is smoke-only.",
+      },
+    ]);
+    await adapter.drain?.();
+
+    const recalled = await adapter.recall(
+      "agent:bench:main",
+      "What is the lightweight mode code?",
+    );
+
+    assert.doesNotMatch(recalled, /## Remnic recall pipeline/);
+    assert.doesNotMatch(recalled, /Recent Conversation/);
+    assert.match(recalled, /smoke-only/);
   } finally {
     await adapter.destroy();
   }

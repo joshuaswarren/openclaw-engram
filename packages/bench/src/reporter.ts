@@ -52,6 +52,18 @@ export async function writeBenchmarkResult(
     outputDir,
     `${result.meta.benchmark}-v${safeRemnicVersion}-${timestamp}.json`,
   );
+  const leaderboardArtifacts = await writeLeaderboardArtifactsForResult(
+    result,
+    outputDir,
+  ).catch((error: unknown) => [
+    {
+      benchmark: result.meta.benchmark,
+      path: "",
+      format: "leaderboard-artifact-error",
+      records: 0,
+      error: error instanceof Error ? error.message : String(error),
+    },
+  ]);
 
   const resultWithArtifacts = {
     ...result,
@@ -59,10 +71,7 @@ export async function writeBenchmarkResult(
       ...result.config,
       benchmarkOptions: {
         ...(result.config.benchmarkOptions ?? {}),
-        leaderboardArtifacts: await writeLeaderboardArtifactsForResult(
-          result,
-          outputDir,
-        ),
+        leaderboardArtifacts,
       },
     },
   };
