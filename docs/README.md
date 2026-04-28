@@ -15,6 +15,7 @@
 - [Memory Lifecycle](architecture/memory-lifecycle.md) — Write, consolidation, expiry
 - [Dreams: phased consolidation](dreams.md) — Light sleep / REM / deep sleep phase mapping over the existing maintenance pipeline (issue #678)
 - [Graph Reasoning](architecture/graph-reasoning.md) — Opt-in graph traversal, assist, and explainability
+- [Graph Edge Decay](graph-edge-decay.md) — Confidence decay model, maintenance job, traversal pruning, and `--include-low-confidence` (issue #681)
 - [Writing a Search Backend](writing-a-search-backend.md) — Build your own search adapter (v9.0)
 
 ## Guides

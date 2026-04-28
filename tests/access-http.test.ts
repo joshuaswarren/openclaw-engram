@@ -937,6 +937,152 @@ test("access HTTP server forwards namespace query params to governance endpoints
   }
 });
 
+test("access HTTP recall forwards include_low_confidence query flag", async () => {
+  const captured: Array<Record<string, unknown>> = [];
+  const server = new EngramAccessHttpServer({
+    service: {
+      recall: async (request: Record<string, unknown>) => {
+        captured.push(request);
+        return {
+          query: request.query,
+          namespace: "global",
+          context: "",
+          count: 0,
+          memoryIds: [],
+          results: [],
+          recordedAt: "2026-03-08T00:00:00.000Z",
+          fallbackUsed: false,
+          sourcesUsed: [],
+          disclosure: "chunk",
+        };
+      },
+    } as unknown as EngramAccessService,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const response = await fetch(
+      `${base}/engram/v1/recall?include_low_confidence=true`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer secret-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query: "diagnose graph traversal" }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0]!.includeLowConfidence, true);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("access HTTP recall body includeLowConfidence wins over query flag", async () => {
+  const captured: Array<Record<string, unknown>> = [];
+  const server = new EngramAccessHttpServer({
+    service: {
+      recall: async (request: Record<string, unknown>) => {
+        captured.push(request);
+        return {
+          query: request.query,
+          namespace: "global",
+          context: "",
+          count: 0,
+          memoryIds: [],
+          results: [],
+          recordedAt: "2026-03-08T00:00:00.000Z",
+          fallbackUsed: false,
+          sourcesUsed: [],
+          disclosure: "chunk",
+        };
+      },
+    } as unknown as EngramAccessService,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const response = await fetch(
+      `${base}/engram/v1/recall?include_low_confidence=true`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer secret-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: "diagnose graph traversal",
+          includeLowConfidence: false,
+        }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0]!.includeLowConfidence, undefined);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("access HTTP recall rejects invalid include_low_confidence query flag", async () => {
+  const server = new EngramAccessHttpServer({
+    service: {
+      recall: async () => ({
+        query: "unused",
+        namespace: "global",
+        context: "",
+        count: 0,
+        memoryIds: [],
+        results: [],
+        recordedAt: "2026-03-08T00:00:00.000Z",
+        fallbackUsed: false,
+        sourcesUsed: [],
+        disclosure: "chunk",
+      }),
+    } as unknown as EngramAccessService,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+
+  try {
+    const response = await fetch(
+      `${base}/engram/v1/recall?include_low_confidence=1`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer secret-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query: "diagnose graph traversal" }),
+      },
+    );
+
+    assert.equal(response.status, 400);
+    const body = await response.json() as { error: string };
+    assert.match(body.error, /include_low_confidence/);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("access HTTP server rejects oversized JSON bodies", async () => {
   const server = new EngramAccessHttpServer({
     service: createFakeService(),

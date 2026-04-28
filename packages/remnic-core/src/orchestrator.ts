@@ -586,6 +586,13 @@ export interface RecallInvocationOptions {
    * rule 51); the orchestrator does NOT silently fall back here.
    */
   asOf?: string;
+  /**
+   * Issue #681 — when `true`, bypasses `graphTraversalConfidenceFloor`
+   * and includes edges below the floor in graph traversal.  Useful for
+   * diagnostic recall queries that need to surface results that would
+   * normally be pruned by confidence decay.  Default `false`.
+   */
+  includeLowConfidence?: boolean;
 }
 
 type QueryAwarePrefilter = {
@@ -5402,6 +5409,8 @@ export class Orchestrator {
     memoryResults: QmdSearchResult[];
     recallNamespaces: string[];
     recallResultLimit: number;
+    /** Issue #681 — when true, bypass graphTraversalConfidenceFloor. */
+    includeLowConfidence?: boolean;
   }): Promise<{
     merged: QmdSearchResult[];
     seedPaths: string[];
@@ -5450,6 +5459,7 @@ export class Orchestrator {
       const expanded = await this.graphIndexFor(storage).spreadingActivation(
         seedRelativePaths,
         this.config.maxGraphTraversalSteps,
+        options.includeLowConfidence === true ? { includeLowConfidence: true } : undefined,
       );
       if (expanded.length === 0) continue;
 
@@ -8621,6 +8631,7 @@ export class Orchestrator {
               memoryResults,
               recallNamespaces,
               recallResultLimit,
+              ...(options.includeLowConfidence === true ? { includeLowConfidence: true } : {}),
             });
             graphSnapshotStatus = "completed";
             graphDecisionStatus = "completed";
@@ -8942,6 +8953,7 @@ export class Orchestrator {
             abortSignal: options.abortSignal,
             xrayPoolSizeSink: xrayColdPoolSink,
             asOfMs,
+            ...(options.includeLowConfidence === true ? { includeLowConfidence: true } : {}),
           });
           if (longTerm.length > 0) {
             if (shouldPersistGraphSnapshot) {
@@ -9151,6 +9163,7 @@ export class Orchestrator {
               abortSignal: options.abortSignal,
               xrayPoolSizeSink: xrayColdPoolSink,
               asOfMs,
+              ...(options.includeLowConfidence === true ? { includeLowConfidence: true } : {}),
             });
             if (longTerm.length > 0) {
               recallSource = "cold_fallback";
@@ -9252,6 +9265,7 @@ export class Orchestrator {
                 abortSignal: options.abortSignal,
                 xrayPoolSizeSink: xrayColdPoolSink,
                 asOfMs,
+                ...(options.includeLowConfidence === true ? { includeLowConfidence: true } : {}),
               });
               if (longTerm.length > 0) {
                 if (shouldPersistGraphSnapshot) {
@@ -9294,6 +9308,7 @@ export class Orchestrator {
             abortSignal: options.abortSignal,
             xrayPoolSizeSink: xrayColdPoolSink,
             asOfMs,
+            ...(options.includeLowConfidence === true ? { includeLowConfidence: true } : {}),
           });
           if (longTerm.length > 0) {
             if (shouldPersistGraphSnapshot) {
@@ -14898,6 +14913,8 @@ export class Orchestrator {
      * Unset by default so existing call sites are unaffected.
      */
     xrayPoolSizeSink?: { size: number };
+    /** Issue #681 — when true, bypass graphTraversalConfidenceFloor. */
+    includeLowConfidence?: boolean;
   }): Promise<QmdSearchResult[]> {
     const coldQmdEnabled = this.config.qmdColdTierEnabled === true;
     const coldCollection =
@@ -14977,6 +14994,7 @@ export class Orchestrator {
         memoryResults: results,
         recallNamespaces: options.recallNamespaces,
         recallResultLimit: options.recallResultLimit,
+        ...(options.includeLowConfidence === true ? { includeLowConfidence: true } : {}),
       });
       results = merged;
     }

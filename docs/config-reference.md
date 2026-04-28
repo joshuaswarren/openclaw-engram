@@ -858,6 +858,11 @@ of truth for similarity logic across read-time and write-time code paths.
 | `graphActivationDecay` | `0.7` | Per-hop decay factor |
 | `graphTraversalConfidenceFloor` | `0.2` | Minimum edge confidence required for traversal (issue #681 PR 3/3). Edges below this floor are pruned. Legacy edges without `confidence` are treated as `1.0`. Range `[0, 1]`. |
 | `graphTraversalPageRankIterations` | `8` | PageRank-style refinement iterations applied on top of BFS spreading-activation scores (issue #681 PR 3/3). Set to `0` to disable refinement. |
+| `graphEdgeDecayEnabled` | `false` | Enable the periodic graph-edge confidence decay maintenance job (issue #681 PR 2/3). When `false` all edges retain their initial confidence indefinitely. |
+| `graphEdgeDecayCadenceMs` | `604800000` | How often the decay job runs, in milliseconds (default 7 days). Minimum enforced at `60000` ms. |
+| `graphEdgeDecayWindowMs` | `7776000000` | Length of one decay window, in milliseconds (default 90 days). One window of inactivity costs `graphEdgeDecayPerWindow` confidence. Minimum enforced at `60000` ms. |
+| `graphEdgeDecayPerWindow` | `0.1` | Fraction of confidence lost per elapsed decay window. Range `[0, 1]`. |
+| `graphEdgeDecayFloor` | `0.1` | Minimum confidence an edge can decay to; the job will not reduce confidence below this value. Range `[0, 1]`. Set to `0` to allow full decay to zero. |
 | `graphExpansionActivationWeight` | `0.65` | Blend weight for graph activation vs seed QMD score (0-1) |
 | `graphExpansionBlendMin` | `0.05` | Lower clamp bound for blended graph-expanded scores (0-1) |
 | `graphExpansionBlendMax` | `0.95` | Upper clamp bound for blended graph-expanded scores (0-1) |
