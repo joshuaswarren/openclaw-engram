@@ -8770,6 +8770,29 @@ export function registerCli(
         });
 
       secureStoreCmd
+        .command("migrate")
+        .description(
+          "Encrypt existing plaintext storage-managed memory files in an initialized, unlocked secure-store. Idempotent; already-encrypted files are skipped.",
+        )
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const { runSecureStoreMigrate, renderMigrateReport } = await import(
+            "./secure-store/index.js"
+          );
+          const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const report = await runSecureStoreMigrate({ memoryDir });
+          if (options.json === true) {
+            console.log(JSON.stringify(report, null, 2));
+          } else {
+            console.log(renderMigrateReport(report));
+          }
+          if (!report.ok) {
+            process.exitCode = 1;
+          }
+        });
+
+      secureStoreCmd
         .command("status")
         .description(
           "Report secure-store status: whether a header exists, whether the daemon currently holds the key, KDF parameters, and last-unlock timestamp.",

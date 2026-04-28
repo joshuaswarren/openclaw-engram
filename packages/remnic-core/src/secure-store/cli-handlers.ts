@@ -1,6 +1,6 @@
 /**
  * Pure handlers behind the `remnic secure-store {init,unlock,lock,
- * status}` CLI surface (issue #690 PR 2/4).
+ * status,migrate}` CLI surface (issue #690 PR 2/4 + #779).
  *
  * Each handler:
  *   - takes an explicit `memoryDir` (already `~`-expanded by the CLI),
@@ -33,6 +33,7 @@ import {
   type KdfAlgorithm,
   type ScryptParams,
 } from "./kdf.js";
+import { migrateMemoryDirToEncrypted, type MigrateResult } from "./secure-fs.js";
 
 /** Passphrase source — async so callers can read from a TTY without echo. */
 export type PassphraseReader = (
@@ -183,6 +184,51 @@ export function runSecureStoreLock(options: SecureStoreLockOptions): SecureStore
   const id = options.keyringId ?? secureStoreDir(options.memoryDir);
   const cleared = keyring.lock(id);
   return { ok: true, cleared };
+}
+
+// ─── migrate ─────────────────────────────────────────────────────────
+
+export interface SecureStoreMigrateOptions extends SecureStoreHandlerCommon {}
+
+export type SecureStoreMigrateReport =
+  | ({ ok: true } & MigrateResult)
+  | ({
+      ok: false;
+      reason: "not-initialized" | "locked" | "file-errors";
+    } & MigrateResult);
+
+export async function runSecureStoreMigrate(
+  options: SecureStoreMigrateOptions,
+): Promise<SecureStoreMigrateReport> {
+  const { memoryDir } = options;
+  const header = await readHeader(memoryDir);
+  if (!header) {
+    return {
+      ok: false,
+      reason: "not-initialized",
+      encrypted: 0,
+      skipped: 0,
+      errors: [],
+    };
+  }
+
+  const id = options.keyringId ?? secureStoreDir(memoryDir);
+  const key = keyring.getKey(id);
+  if (key === null) {
+    return {
+      ok: false,
+      reason: "locked",
+      encrypted: 0,
+      skipped: 0,
+      errors: [],
+    };
+  }
+
+  const result = await migrateMemoryDirToEncrypted(memoryDir, key);
+  if (result.errors.length > 0) {
+    return { ok: false, reason: "file-errors", ...result };
+  }
+  return { ok: true, ...result };
 }
 
 // ─── status ───────────────────────────────────────────────────────────

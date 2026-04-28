@@ -87,6 +87,27 @@ Derives the AES-256 key from your passphrase and stores it in the in-memory keyr
 
 **The key is never persisted to disk.** You must run `unlock` after every daemon restart.
 
+### Migrate Existing Files
+
+```bash
+remnic secure-store migrate
+```
+
+Encrypts existing plaintext storage-managed memory files using the currently
+unlocked secure-store key. Already encrypted files are skipped, so the command
+is safe to rerun.
+
+This command requires the store to be initialized and unlocked:
+
+```bash
+remnic secure-store unlock
+remnic secure-store migrate
+```
+
+`migrate` covers the storage roots already routed through Remnic's secure-fs
+layer. Remaining sidecar coverage is tracked separately so the migration command
+does not encrypt files that older code paths would still read as plaintext.
+
 ### Lock
 
 ```bash
