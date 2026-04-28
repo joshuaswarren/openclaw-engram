@@ -1784,7 +1784,7 @@ export class Orchestrator {
       ? new SharedContextManager(config)
       : undefined;
     this.compounding = config.compoundingEnabled
-      ? new CompoundingEngine(config)
+      ? new CompoundingEngine(config, this.storage)
       : undefined;
     this.buffer = new SmartBuffer(config, this.storage);
     this.transcript = new TranscriptManager(config);

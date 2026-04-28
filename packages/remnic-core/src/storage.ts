@@ -2442,10 +2442,10 @@ export class StorageManager {
   private get entitiesDir(): string {
     return path.join(this.baseDir, "entities");
   }
-  private readEntityFileContent(filePath: string): Promise<string> {
+  private readStorageSecureFile(filePath: string): Promise<string> {
     return readMaybeEncryptedFile(filePath, this._secureStoreKey, this.baseDir);
   }
-  private writeEntityFileContent(filePath: string, content: string): Promise<void> {
+  private writeStorageSecureFile(filePath: string, content: string): Promise<void> {
     return writeMaybeEncryptedFile(filePath, content, this.resolveWriteKey(), {}, this.baseDir);
   }
   private get stateDir(): string {
@@ -3123,7 +3123,7 @@ export class StorageManager {
       aliases: [],
     };
     try {
-      const existing = await this.readEntityFileContent(filePath);
+      const existing = await this.readStorageSecureFile(filePath);
       entity = parseEntityFile(existing, this.entitySchemas);
     } catch (err) {
       if (err instanceof SecureStoreLockedError) throw err;
@@ -3190,7 +3190,7 @@ export class StorageManager {
     entity.updated = new Date().toISOString();
 
     await this.snapshotBeforeWrite(filePath, "write");
-    await this.writeEntityFileContent(filePath, serializeEntityFile(entity, this.entitySchemas));
+    await this.writeStorageSecureFile(filePath, serializeEntityFile(entity, this.entitySchemas));
     this.invalidateKnowledgeIndexCache();
     this.bumpMemoryStatusVersion(); // invalidate entity cache
     log.debug(`wrote entity ${normalized}`);
@@ -3990,7 +3990,7 @@ export class StorageManager {
 
   async readEntity(name: string): Promise<string> {
     try {
-      return await this.readEntityFileContent(path.join(this.entitiesDir, `${name}.md`));
+      return await this.readStorageSecureFile(path.join(this.entitiesDir, `${name}.md`));
     } catch (err) {
       if (err instanceof SecureStoreLockedError) throw err;
       if (!isErrnoCode(err, "ENOENT")) throw err;
@@ -4822,13 +4822,14 @@ export class StorageManager {
 
   async writeIdentityAnchor(content: string): Promise<void> {
     await this.ensureDirectories();
-    await writeFile(this.identityAnchorPath, content, "utf-8");
+    await this.writeStorageSecureFile(this.identityAnchorPath, content);
   }
 
   async readIdentityAnchor(): Promise<string | null> {
     try {
-      return await readFile(this.identityAnchorPath, "utf-8");
-    } catch {
+      return await this.readStorageSecureFile(this.identityAnchorPath);
+    } catch (err) {
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return null;
     }
   }
@@ -4841,7 +4842,7 @@ export class StorageManager {
     const id = this.generateId("incident");
     const incident = createContinuityIncidentRecord(id, input, nowIso);
     const filePath = path.join(this.identityIncidentsDir, `${date}-${id}.md`);
-    await writeFile(filePath, serializeContinuityIncident(incident), "utf-8");
+    await this.writeStorageSecureFile(filePath, serializeContinuityIncident(incident));
     return { ...incident, filePath };
   }
 
@@ -4861,17 +4862,20 @@ export class StorageManager {
         if (incidents.length >= cappedLimit) break;
         const filePath = path.join(this.identityIncidentsDir, file);
         try {
-          const raw = await readFile(filePath, "utf-8");
+          const raw = await this.readStorageSecureFile(filePath);
           const parsed = parseContinuityIncident(raw);
           if (!parsed) continue;
           if (state !== "all" && parsed.state !== state) continue;
           incidents.push({ ...parsed, filePath });
-        } catch {
+        } catch (err) {
+          if (err instanceof SecureStoreLockedError) throw err;
           // Fail-open on malformed/missing files.
         }
       }
       return incidents;
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return [];
     }
   }
@@ -4886,7 +4890,7 @@ export class StorageManager {
     if (target.state === "closed") return target;
 
     const closed = closeContinuityIncidentRecord(target, closure, new Date().toISOString());
-    await writeFile(directFilePath, serializeContinuityIncident(closed), "utf-8");
+    await this.writeStorageSecureFile(directFilePath, serializeContinuityIncident(closed));
     return { ...closed, filePath: directFilePath };
   }
 
@@ -4895,7 +4899,7 @@ export class StorageManager {
     const safeKey = this.sanitizeIdentityAuditKey(key);
     const dir = period === "weekly" ? this.identityAuditsWeeklyDir : this.identityAuditsMonthlyDir;
     const filePath = path.join(dir, `${safeKey}.md`);
-    await writeFile(filePath, content, "utf-8");
+    await this.writeStorageSecureFile(filePath, content);
     return filePath;
   }
 
@@ -4903,21 +4907,24 @@ export class StorageManager {
     try {
       const safeKey = this.sanitizeIdentityAuditKey(key);
       const dir = period === "weekly" ? this.identityAuditsWeeklyDir : this.identityAuditsMonthlyDir;
-      return await readFile(path.join(dir, `${safeKey}.md`), "utf-8");
-    } catch {
+      return await this.readStorageSecureFile(path.join(dir, `${safeKey}.md`));
+    } catch (err) {
+      if (err instanceof Error && err.message === "Invalid identity audit key") return null;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return null;
     }
   }
 
   async writeIdentityImprovementLoops(content: string): Promise<void> {
     await this.ensureDirectories();
-    await writeFile(this.identityImprovementLoopsPath, content, "utf-8");
+    await this.writeStorageSecureFile(this.identityImprovementLoopsPath, content);
   }
 
   async readIdentityImprovementLoops(): Promise<string | null> {
     try {
-      return await readFile(this.identityImprovementLoopsPath, "utf-8");
-    } catch {
+      return await this.readStorageSecureFile(this.identityImprovementLoopsPath);
+    } catch (err) {
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return null;
     }
   }
@@ -4967,10 +4974,11 @@ export class StorageManager {
 
   private async readContinuityIncidentFile(filePath: string): Promise<ContinuityIncidentRecord | null> {
     try {
-      const raw = await readFile(filePath, "utf-8");
+      const raw = await this.readStorageSecureFile(filePath);
       const parsed = parseContinuityIncident(raw);
       return parsed ? { ...parsed, filePath } : null;
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
       return null;
     }
   }
@@ -5239,22 +5247,24 @@ export class StorageManager {
 
   async readIdentityReflections(): Promise<string | null> {
     try {
-      return await readFile(this.identityReflectionsPath, "utf-8");
-    } catch {
+      return await this.readStorageSecureFile(this.identityReflectionsPath);
+    } catch (err) {
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return null;
     }
   }
 
   async writeIdentityReflections(content: string): Promise<void> {
     await mkdir(this.identityDir, { recursive: true });
-    await writeFile(this.identityReflectionsPath, content, "utf-8");
+    await this.writeStorageSecureFile(this.identityReflectionsPath, content);
   }
 
   async appendIdentityReflection(reflection: string): Promise<void> {
     let existing = "";
     try {
-      existing = await readFile(this.identityReflectionsPath, "utf-8");
-    } catch {
+      existing = await this.readStorageSecureFile(this.identityReflectionsPath);
+    } catch (err) {
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       // File doesn't exist yet.
     }
 
@@ -5280,7 +5290,7 @@ export class StorageManager {
     const timestamp = new Date().toISOString();
     const section = `${existing.trimEnd().length > 0 ? "\n\n" : ""}## Reflection — ${timestamp}\n\n${reflection}\n`;
     await mkdir(this.identityDir, { recursive: true });
-    await writeFile(this.identityReflectionsPath, `${existing.trimEnd()}${section}`, "utf-8");
+    await this.writeStorageSecureFile(this.identityReflectionsPath, `${existing.trimEnd()}${section}`);
     log.debug(`appended namespace-local reflection to ${this.identityReflectionsPath}`);
   }
 
@@ -5296,7 +5306,7 @@ export class StorageManager {
     const filePath = path.join(this.entitiesDir, `${name}.md`);
     let entity: EntityFile;
     try {
-      const content = await this.readEntityFileContent(filePath);
+      const content = await this.readStorageSecureFile(filePath);
       entity = parseEntityFile(content, this.entitySchemas);
     } catch (err) {
       if (err instanceof SecureStoreLockedError) throw err;
@@ -5313,7 +5323,7 @@ export class StorageManager {
 
     entity.relationships.push(rel);
     entity.updated = new Date().toISOString();
-    await this.writeEntityFileContent(filePath, serializeEntityFile(entity, this.entitySchemas));
+    await this.writeStorageSecureFile(filePath, serializeEntityFile(entity, this.entitySchemas));
     this.invalidateKnowledgeIndexCache();
   }
 
@@ -5329,7 +5339,7 @@ export class StorageManager {
     const filePath = path.join(this.entitiesDir, `${name}.md`);
     let entity: EntityFile;
     try {
-      const content = await this.readEntityFileContent(filePath);
+      const content = await this.readStorageSecureFile(filePath);
       entity = parseEntityFile(content, this.entitySchemas);
     } catch (err) {
       if (err instanceof SecureStoreLockedError) throw err;
@@ -5343,7 +5353,7 @@ export class StorageManager {
       entity.activity = entity.activity.slice(0, maxEntries);
     }
     entity.updated = new Date().toISOString();
-    await this.writeEntityFileContent(filePath, serializeEntityFile(entity, this.entitySchemas));
+    await this.writeStorageSecureFile(filePath, serializeEntityFile(entity, this.entitySchemas));
     this.invalidateKnowledgeIndexCache();
   }
 
@@ -5354,7 +5364,7 @@ export class StorageManager {
     const filePath = path.join(this.entitiesDir, `${name}.md`);
     let entity: EntityFile;
     try {
-      const content = await this.readEntityFileContent(filePath);
+      const content = await this.readStorageSecureFile(filePath);
       entity = parseEntityFile(content, this.entitySchemas);
     } catch (err) {
       if (err instanceof SecureStoreLockedError) throw err;
@@ -5366,7 +5376,7 @@ export class StorageManager {
     if (entity.aliases.includes(alias)) return;
     entity.aliases.push(alias);
     entity.updated = new Date().toISOString();
-    await this.writeEntityFileContent(filePath, serializeEntityFile(entity, this.entitySchemas));
+    await this.writeStorageSecureFile(filePath, serializeEntityFile(entity, this.entitySchemas));
     this.invalidateKnowledgeIndexCache();
   }
 
@@ -5388,7 +5398,7 @@ export class StorageManager {
     const filePath = path.join(this.entitiesDir, `${name}.md`);
     let entity: EntityFile;
     try {
-      const content = await this.readEntityFileContent(filePath);
+      const content = await this.readStorageSecureFile(filePath);
       entity = parseEntityFile(content, this.entitySchemas);
     } catch (err) {
       if (err instanceof SecureStoreLockedError) throw err;
@@ -5418,7 +5428,7 @@ export class StorageManager {
     entity.synthesisVersion = Math.max(0, entity.synthesisVersion ?? 0)
       + (options.incrementVersion === false ? 0 : 1);
     entity.updated = entityUpdatedAt;
-    await this.writeEntityFileContent(filePath, serializeEntityFile(entity, this.entitySchemas));
+    await this.writeStorageSecureFile(filePath, serializeEntityFile(entity, this.entitySchemas));
     await this.removeEntitySynthesisQueueEntries([
       ...new Set([name, normalizeEntityName(entity.name, entity.type)]),
     ]);
@@ -5434,7 +5444,7 @@ export class StorageManager {
     let synthesisTimelineCount: number | undefined;
     try {
       const filePath = path.join(this.entitiesDir, `${name}.md`);
-      const content = await this.readEntityFileContent(filePath);
+      const content = await this.readStorageSecureFile(filePath);
       synthesisTimelineCount = parseEntityFile(content, this.entitySchemas).timeline.length;
     } catch (err) {
       if (err instanceof SecureStoreLockedError) throw err;
@@ -5530,7 +5540,7 @@ export class StorageManager {
       if (!raw) continue;
       const serialized = serializeEntityFile(parseEntityFile(raw, this.entitySchemas), this.entitySchemas);
       if (raw.trimEnd() === serialized.trimEnd()) continue;
-      await this.writeEntityFileContent(path.join(this.entitiesDir, `${entityName}.md`), serialized);
+      await this.writeStorageSecureFile(path.join(this.entitiesDir, `${entityName}.md`), serialized);
       migrated += 1;
     }
     if (migrated > 0) {
@@ -5573,7 +5583,7 @@ export class StorageManager {
         const results = await Promise.all(
           batch.map(async (entry) => {
             try {
-              return await this.readEntityFileContent(path.join(this.entitiesDir, entry));
+              return await this.readStorageSecureFile(path.join(this.entitiesDir, entry));
             } catch (err) {
               if (err instanceof SecureStoreLockedError) throw err;
               if (!isErrnoCode(err, "ENOENT")) throw err;
@@ -5778,7 +5788,7 @@ export class StorageManager {
         for (const file of files) {
           const filePath = path.join(this.entitiesDir, file);
           try {
-            const content = await this.readEntityFileContent(filePath);
+            const content = await this.readStorageSecureFile(filePath);
             const parsed = parseEntityFile(content, this.entitySchemas);
 
             // Prefer specific types over "other"
@@ -5968,7 +5978,7 @@ export class StorageManager {
         mergedEntity.updated = mergedEntity.updated || new Date().toISOString();
 
         const canonicalPath = path.join(this.entitiesDir, `${canonical}.md`);
-        await this.writeEntityFileContent(canonicalPath, serializeEntityFile(mergedEntity, this.entitySchemas));
+        await this.writeStorageSecureFile(canonicalPath, serializeEntityFile(mergedEntity, this.entitySchemas));
 
         // Remove non-canonical files
         for (const file of files) {

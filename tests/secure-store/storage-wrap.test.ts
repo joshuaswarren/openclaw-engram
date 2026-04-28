@@ -273,12 +273,18 @@ test("migrateMemoryDirToEncrypted — only encrypts storage-secure markdown path
       path.join(dir, "artifacts", "2024-01-01", "artifact.md"),
       path.join(dir, "archive", "2024-01-01", "archived.md"),
       path.join(dir, "entities", "person.md"),
+      path.join(dir, "identity", "identity-anchor.md"),
+      path.join(dir, "identity", "reflections.md"),
+      path.join(dir, "identity", "improvement-loops.md"),
+      path.join(dir, "identity", "incidents", "2026-04-28-incident-a.md"),
+      path.join(dir, "identity", "audits", "weekly", "2026-W18.md"),
       path.join(dir, "namespaces", "team-a", "facts", "2024-01-01", "fact.md"),
       path.join(dir, "namespaces", "team-a", "entities", "person.md"),
+      path.join(dir, "namespaces", "team-a", "identity", "identity-anchor.md"),
       path.join(dir, "profile.md"),
     ];
     const plainPaths = [
-      path.join(dir, "identity", "IDENTITY.md"),
+      path.join(dir, "workspace", "IDENTITY.md"),
     ];
     for (const f of [...encryptedPaths, ...plainPaths]) {
       await mkdir(path.dirname(f), { recursive: true });
@@ -307,6 +313,14 @@ test("migrateMemoryDirToEncrypted — only encrypts storage-secure markdown path
         path.join(dir, "namespaces", "team-a"),
       ),
       "content for person.md",
+    );
+    assert.strictEqual(
+      await readMaybeEncryptedFile(
+        path.join(dir, "namespaces", "team-a", "identity", "identity-anchor.md"),
+        key,
+        path.join(dir, "namespaces", "team-a"),
+      ),
+      "content for identity-anchor.md",
     );
     for (const f of plainPaths) {
       assert.strictEqual((await readFile(f, "utf8")).startsWith("content for"), true);
@@ -557,6 +571,169 @@ test("StorageManager — locked store throws SecureStoreLockedError on readProfi
       () => storage.readProfile(),
       (err) => err instanceof SecureStoreLockedError,
     );
+  });
+});
+
+test("StorageManager — identity support files encrypt, decrypt, and fail clearly while locked", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const storage = new StorageManager(dir, []);
+    storage.setSecureStoreKey(key, true);
+    await storage.ensureDirectories();
+
+    await storage.writeIdentityAnchor("# Identity Anchor\n\n- private anchor");
+    await storage.writeIdentityReflections("## Reflection — 2026-04-28T00:00:00.000Z\n\nprivate reflection\n");
+    await storage.writeIdentityImprovementLoops("## loop-a\n\n- private loop\n");
+    const auditPath = await storage.writeIdentityAudit("weekly", "2026-W18", "private audit");
+
+    const anchorPath = path.join(dir, "identity", "identity-anchor.md");
+    const reflectionsPath = path.join(dir, "identity", "reflections.md");
+    const loopsPath = path.join(dir, "identity", "improvement-loops.md");
+
+    assert.ok(isEncryptedFile(await readFile(anchorPath)), "identity anchor should be encrypted");
+    assert.ok(isEncryptedFile(await readFile(reflectionsPath)), "identity reflections should be encrypted");
+    assert.ok(isEncryptedFile(await readFile(loopsPath)), "improvement loops should be encrypted");
+    assert.ok(isEncryptedFile(await readFile(auditPath)), "identity audit should be encrypted");
+
+    assert.match(await storage.readIdentityAnchor() ?? "", /private anchor/);
+    assert.match(await storage.readIdentityReflections() ?? "", /private reflection/);
+    assert.match(await storage.readIdentityImprovementLoops() ?? "", /private loop/);
+    assert.equal(await storage.readIdentityAudit("weekly", "2026-W18"), "private audit");
+    assert.equal(await storage.readIdentityAudit("weekly", "../escape"), null);
+
+    const lockedStorage = new StorageManager(dir, []);
+    await assert.rejects(
+      () => lockedStorage.readIdentityAnchor(),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+    await assert.rejects(
+      () => lockedStorage.readIdentityReflections(),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+    await assert.rejects(
+      () => lockedStorage.readIdentityImprovementLoops(),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+    await assert.rejects(
+      () => lockedStorage.readIdentityAudit("weekly", "2026-W18"),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+  });
+});
+
+test("StorageManager — plaintext identity support files remain readable without secure-store key", async () => {
+  await withTempDir(async (dir) => {
+    const identityDir = path.join(dir, "identity");
+    await mkdir(path.join(identityDir, "audits", "weekly"), { recursive: true });
+    await writeFile(path.join(identityDir, "identity-anchor.md"), "plain anchor", "utf8");
+    await writeFile(path.join(identityDir, "reflections.md"), "plain reflection", "utf8");
+    await writeFile(path.join(identityDir, "improvement-loops.md"), "plain loop", "utf8");
+    await writeFile(path.join(identityDir, "audits", "weekly", "2026-W18.md"), "plain audit", "utf8");
+
+    const storage = new StorageManager(dir, []);
+
+    assert.equal(await storage.readIdentityAnchor(), "plain anchor");
+    assert.equal(await storage.readIdentityReflections(), "plain reflection");
+    assert.equal(await storage.readIdentityImprovementLoops(), "plain loop");
+    assert.equal(await storage.readIdentityAudit("weekly", "2026-W18"), "plain audit");
+  });
+});
+
+test("StorageManager — continuity incidents encrypt, decrypt, and fail clearly while locked", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const storage = new StorageManager(dir, []);
+    storage.setSecureStoreKey(key, true);
+    await storage.ensureDirectories();
+
+    const incident = await storage.appendContinuityIncident({
+      symptom: "Lost continuity across reset.",
+      suspectedCause: "Encrypted support file coverage gap.",
+    });
+
+    assert.ok(isEncryptedFile(await readFile(incident.filePath!)), "continuity incident should be encrypted");
+
+    const incidents = await storage.readContinuityIncidents(10, "all");
+    assert.equal(incidents.length, 1);
+    assert.equal(incidents[0]?.id, incident.id);
+    assert.equal(incidents[0]?.symptom, "Lost continuity across reset.");
+
+    const closed = await storage.closeContinuityIncident(incident.id, {
+      fixApplied: "Routed continuity incident reads and writes through secure-store helpers.",
+      verificationResult: "Encrypted reads round-trip and locked reads fail.",
+    });
+    assert.equal(closed?.state, "closed");
+    assert.ok(isEncryptedFile(await readFile(incident.filePath!)), "closed incident should remain encrypted");
+
+    const lockedStorage = new StorageManager(dir, []);
+    await assert.rejects(
+      () => lockedStorage.readContinuityIncidents(10, "all"),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+    await assert.rejects(
+      () => lockedStorage.closeContinuityIncident(incident.id, {
+        fixApplied: "should not write while locked",
+        verificationResult: "locked",
+      }),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+  });
+});
+
+test("StorageManager — continuity incident list skips corrupted encrypted files", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const storage = new StorageManager(dir, []);
+    storage.setSecureStoreKey(key, true);
+    await storage.ensureDirectories();
+
+    const corrupted = await storage.appendContinuityIncident({
+      symptom: "This encrypted incident will be corrupted.",
+    });
+    const healthy = await storage.appendContinuityIncident({
+      symptom: "Healthy encrypted incident remains readable.",
+    });
+
+    const raw = Buffer.from(await readFile(corrupted.filePath!));
+    raw[raw.length - 1] = raw[raw.length - 1] ^ 0xff;
+    await writeFile(corrupted.filePath!, raw);
+
+    const incidents = await storage.readContinuityIncidents(10, "all");
+
+    assert.deepEqual(incidents.map((incident) => incident.id), [healthy.id]);
+    assert.equal(incidents[0]?.symptom, "Healthy encrypted incident remains readable.");
+  });
+});
+
+test("StorageManager — plaintext continuity incidents remain readable without secure-store key", async () => {
+  await withTempDir(async (dir) => {
+    const incidentsDir = path.join(dir, "identity", "incidents");
+    await mkdir(incidentsDir, { recursive: true });
+    await writeFile(
+      path.join(incidentsDir, "2026-04-28-incident-plain.md"),
+      [
+        "---",
+        'id: "incident-plain"',
+        'state: "open"',
+        'openedAt: "2026-04-28T00:00:00.000Z"',
+        'updatedAt: "2026-04-28T00:00:00.000Z"',
+        'triggerWindow: "test"',
+        "---",
+        "",
+        "## Symptom",
+        "",
+        "Plain continuity incident remains readable.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const storage = new StorageManager(dir, []);
+    const incidents = await storage.readContinuityIncidents(10, "all");
+
+    assert.equal(incidents.length, 1);
+    assert.equal(incidents[0]?.id, "incident-plain");
+    assert.equal(incidents[0]?.symptom, "Plain continuity incident remains readable.");
   });
 });
 
