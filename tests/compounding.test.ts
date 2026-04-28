@@ -5,6 +5,8 @@ import path from "node:path";
 import os from "node:os";
 import type { PluginConfig } from "../src/types.js";
 import { CompoundingEngine } from "../src/compounding/engine.js";
+import { StorageManager } from "../src/storage.js";
+import { isEncryptedFile } from "../packages/remnic-core/src/secure-store/secure-fs.js";
 
 function tmpDir(prefix: string): string {
   return path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -513,6 +515,21 @@ test("v5 compounding does not read continuity audit references when audits are d
   assert.match(report, /Weekly Compounding/);
 });
 
+test("v5 weekly synthesis ignores unreadable continuity audit references", async () => {
+  const memoryDir = tmpDir("engram-compound-unreadable-audit-ref-");
+  const sharedDir = tmpDir("engram-compound-unreadable-audit-ref-shared-");
+  await mkdir(path.join(memoryDir, "identity", "audits", "weekly", "2026-W11.md"), { recursive: true });
+  await mkdir(sharedDir, { recursive: true });
+
+  const cfg = minimalConfig(memoryDir, sharedDir);
+  cfg.continuityAuditEnabled = true;
+  const eng = new CompoundingEngine(cfg);
+
+  const res = await eng.synthesizeWeekly({ weekId: "2026-W11" });
+  const report = await readFile(res.reportPath, "utf-8");
+  assert.match(report, /Weekly Compounding/);
+});
+
 test("v5 continuity audit filters incidents by state before applying scan cap", async () => {
   const memoryDir = tmpDir("engram-continuity-audit-cap-");
   const sharedDir = tmpDir("engram-continuity-audit-cap-shared-");
@@ -564,4 +581,57 @@ test("v5 continuity audit filters incidents by state before applying scan cap", 
   const report = await readFile(res.reportPath, "utf-8");
   assert.match(report, /Open incidents: 1/);
   assert.match(report, /- continuity-0001/);
+});
+
+test("v5 continuity audit treats unreadable identity anchor as absent", async () => {
+  const memoryDir = tmpDir("engram-continuity-audit-unreadable-anchor-");
+  const sharedDir = tmpDir("engram-continuity-audit-unreadable-anchor-shared-");
+  await mkdir(path.join(memoryDir, "identity", "identity-anchor.md"), { recursive: true });
+  await mkdir(sharedDir, { recursive: true });
+
+  const cfg = minimalConfig(memoryDir, sharedDir);
+  cfg.continuityAuditEnabled = true;
+  const eng = new CompoundingEngine(cfg);
+
+  const res = await eng.synthesizeContinuityAudit({ period: "weekly", key: "2026-W10" });
+  const report = await readFile(res.reportPath, "utf-8");
+  assert.match(report, /Identity anchor drift: needs attention/);
+});
+
+test("v5 continuity audit reads encrypted identity artifacts through storage", async () => {
+  const memoryDir = tmpDir("engram-continuity-audit-encrypted-");
+  const sharedDir = tmpDir("engram-continuity-audit-encrypted-shared-");
+  await mkdir(memoryDir, { recursive: true });
+  await mkdir(sharedDir, { recursive: true });
+
+  const cfg = minimalConfig(memoryDir, sharedDir);
+  cfg.continuityAuditEnabled = true;
+  const storage = new StorageManager(memoryDir);
+  storage.setSecureStoreKey(Buffer.alloc(32, 0x4a), true);
+  await storage.ensureDirectories();
+  await storage.writeIdentityAnchor("# Identity Anchor\n\n- encrypted anchor baseline");
+  await storage.writeIdentityImprovementLoops([
+    "# Continuity Improvement Loops",
+    "",
+    "## weekly-check",
+    "cadence: weekly",
+    "purpose: Keep continuity audit honest.",
+    "status: active",
+    "killCondition: Audit no longer finds stale loops.",
+    "lastReviewed: 2026-04-28T00:00:00.000Z",
+    "",
+  ].join("\n"));
+  await storage.appendContinuityIncident({
+    symptom: "Encrypted open incident remains visible to the continuity audit.",
+  });
+
+  const eng = new CompoundingEngine(cfg, storage);
+  const res = await eng.synthesizeContinuityAudit({ period: "weekly", key: "2026-W09" });
+
+  assert.ok(isEncryptedFile(await readFile(res.reportPath)), "continuity audit report should be encrypted");
+  const report = await storage.readIdentityAudit("weekly", "2026-W09");
+  assert.match(report ?? "", /Identity anchor drift: pass/);
+  assert.match(report ?? "", /Improvement-loop coverage: pass/);
+  assert.match(report ?? "", /Open incidents: 1/);
+  assert.match(report ?? "", /- incident-/);
 });

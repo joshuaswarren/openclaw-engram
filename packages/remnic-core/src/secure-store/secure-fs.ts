@@ -534,6 +534,7 @@ const ENCRYPTABLE_STORAGE_ROOTS = new Set([
   "artifacts",
   "archive",
   "entities",
+  "identity",
 ]);
 
 const DECRYPTABLE_SIDECAR_ROOTS = new Set([

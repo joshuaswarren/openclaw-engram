@@ -7,7 +7,7 @@ import { sanitizeMemoryContent } from "../sanitize.js";
 import { StorageManager } from "../storage.js";
 import type { ContinuityIncidentRecord, PluginConfig } from "../types.js";
 import { SharedFeedbackEntrySchema, type SharedFeedbackEntry } from "../shared-context/manager.js";
-import { parseContinuityIncident, parseContinuityImprovementLoops } from "../identity-continuity.js";
+import { parseContinuityImprovementLoops } from "../identity-continuity.js";
 
 type MistakesFile = {
   version?: number;
@@ -439,14 +439,14 @@ export class CompoundingEngine {
   private readonly rubricsPath: string;
   private readonly mistakesPath: string;
   private readonly feedbackInboxPath: string;
-  private readonly identityAnchorPath: string;
-  private readonly identityIncidentsDir: string;
   private readonly identityAuditWeeklyDir: string;
   private readonly identityAuditMonthlyDir: string;
-  private readonly identityImprovementLoopsPath: string;
   private readonly memoryActionEventsPath: string;
 
-  constructor(private readonly config: PluginConfig) {
+  constructor(
+    private readonly config: PluginConfig,
+    private readonly storage: StorageManager = new StorageManager(config.memoryDir),
+  ) {
     this.weeklyDir = path.join(config.memoryDir, "compounding", "weekly");
     this.rubricsDir = path.join(config.memoryDir, "compounding", "rubrics");
     this.rubricsIndexPath = path.join(this.rubricsDir, "index.json");
@@ -455,11 +455,8 @@ export class CompoundingEngine {
     this.rubricsPath = path.join(config.memoryDir, "compounding", "rubrics.md");
     this.mistakesPath = path.join(config.memoryDir, "compounding", "mistakes.json");
     this.feedbackInboxPath = path.join(sharedContextDir(config), "feedback", "inbox.jsonl");
-    this.identityAnchorPath = path.join(config.memoryDir, "identity", "identity-anchor.md");
-    this.identityIncidentsDir = path.join(config.memoryDir, "identity", "incidents");
     this.identityAuditWeeklyDir = path.join(config.memoryDir, "identity", "audits", "weekly");
     this.identityAuditMonthlyDir = path.join(config.memoryDir, "identity", "audits", "monthly");
-    this.identityImprovementLoopsPath = path.join(config.memoryDir, "identity", "improvement-loops.md");
     this.memoryActionEventsPath = path.join(config.memoryDir, "state", "memory-actions.jsonl");
   }
 
@@ -729,13 +726,14 @@ export class CompoundingEngine {
     const period = opts?.period === "monthly" ? "monthly" : "weekly";
     const key = opts?.key?.trim() || (period === "weekly" ? isoWeekId(new Date()) : isoMonthId(new Date()));
     const nowIso = new Date().toISOString();
-    const [anchorPresent, improvementLoopsRaw, openIncidents, closedIncidents, mistakes] = await Promise.all([
-      this.readNonEmptyFile(this.identityAnchorPath),
-      this.readOptionalFile(this.identityImprovementLoopsPath),
-      this.readContinuityIncidents(200, "open"),
-      this.readContinuityIncidents(200, "closed"),
+    const [identityAnchor, improvementLoopsRaw, openIncidents, closedIncidents, mistakes] = await Promise.all([
+      this.readOptionalIdentityAnchorForAudit(),
+      this.readOptionalImprovementLoopsForAudit(),
+      this.readContinuityIncidentsForAudit(200, "open"),
+      this.readContinuityIncidentsForAudit(200, "closed"),
       this.readMistakes(),
     ]);
+    const anchorPresent = (identityAnchor ?? "").trim().length > 0;
     const improvementLoops = improvementLoopsRaw ? parseContinuityImprovementLoops(improvementLoopsRaw) : [];
     const activeLoops = improvementLoops.filter((loop) => loop.status === "active");
     const staleActiveLoops = activeLoops.filter((loop) => {
@@ -803,10 +801,7 @@ export class CompoundingEngine {
       "",
     ];
 
-    const dir = period === "weekly" ? this.identityAuditWeeklyDir : this.identityAuditMonthlyDir;
-    await mkdir(dir, { recursive: true });
-    const reportPath = path.join(dir, `${key}.md`);
-    await writeFile(reportPath, lines.join("\n"), "utf-8");
+    const reportPath = await this.storage.writeIdentityAudit(period, key, lines.join("\n"));
     return { period, key, reportPath };
   }
 
@@ -1657,52 +1652,42 @@ export class CompoundingEngine {
     entry.provenance = [...new Set((normalized.observationEntries ?? []).flatMap((item) => item.provenance))];
   }
 
-  private async readNonEmptyFile(filePath: string): Promise<boolean> {
+  private async readOptionalIdentityAnchorForAudit(): Promise<string | null> {
     try {
-      const raw = await readFile(filePath, "utf-8");
-      return raw.trim().length > 0;
-    } catch {
-      return false;
-    }
-  }
-
-  private async readOptionalFile(filePath: string): Promise<string | null> {
-    try {
-      const raw = await readFile(filePath, "utf-8");
-      return raw.trim().length > 0 ? raw : null;
+      return await this.storage.readIdentityAnchor();
     } catch {
       return null;
     }
   }
 
-  private async readContinuityIncidents(
-    limit: number = 200,
-    state?: ContinuityIncidentRecord["state"],
-  ): Promise<ContinuityIncidentRecord[]> {
-    const normalizedLimit = Number.isFinite(limit) ? limit : 0;
-    const cappedLimit = Math.max(0, Math.floor(normalizedLimit));
-    if (cappedLimit === 0) return [];
-    const incidents: ContinuityIncidentRecord[] = [];
+  private async readOptionalImprovementLoopsForAudit(): Promise<string | null> {
     try {
-      const names = await readdir(this.identityIncidentsDir);
-      const files = names.filter((n) => n.endsWith(".md")).sort().reverse();
-      for (const file of files) {
-        if (incidents.length >= cappedLimit) break;
-        const filePath = path.join(this.identityIncidentsDir, file);
-        try {
-          const raw = await readFile(filePath, "utf-8");
-          const parsed = parseContinuityIncident(raw);
-          if (!parsed) continue;
-          if (state && parsed.state !== state) continue;
-          incidents.push(parsed);
-        } catch {
-          // fail-open
-        }
-      }
+      return await this.storage.readIdentityImprovementLoops();
     } catch {
-      // fail-open
+      return null;
     }
-    return incidents;
+  }
+
+  private async readContinuityIncidentsForAudit(
+    limit: number,
+    state: "open" | "closed",
+  ): Promise<ContinuityIncidentRecord[]> {
+    try {
+      return await this.storage.readContinuityIncidents(limit, state);
+    } catch {
+      return [];
+    }
+  }
+
+  private async readOptionalIdentityAuditForReference(
+    period: "weekly" | "monthly",
+    key: string,
+  ): Promise<string | null> {
+    try {
+      return await this.storage.readIdentityAudit(period, key);
+    } catch {
+      return null;
+    }
   }
 
   private async readContinuityAuditReferences(weekId: string): Promise<{
@@ -1714,8 +1699,12 @@ export class CompoundingEngine {
     const monthId = monthIdFromIsoWeek(weekId);
     const weeklyPath = path.join(this.identityAuditWeeklyDir, `${weekId}.md`);
     const monthlyPath = path.join(this.identityAuditMonthlyDir, `${monthId}.md`);
-    const weeklyExists = await this.readNonEmptyFile(weeklyPath);
-    const monthlyExists = await this.readNonEmptyFile(monthlyPath);
+    const [weeklyAudit, monthlyAudit] = await Promise.all([
+      this.readOptionalIdentityAuditForReference("weekly", weekId),
+      this.readOptionalIdentityAuditForReference("monthly", monthId),
+    ]);
+    const weeklyExists = (weeklyAudit ?? "").trim().length > 0;
+    const monthlyExists = (monthlyAudit ?? "").trim().length > 0;
     return {
       weekId,
       monthId,

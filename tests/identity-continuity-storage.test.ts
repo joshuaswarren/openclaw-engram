@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createContinuityIncidentRecord, serializeContinuityIncident } from "../src/identity-continuity.ts";
 import { StorageManager } from "../src/storage.ts";
 
@@ -206,6 +206,38 @@ test("identity continuity close verifies frontmatter id for direct filename matc
     const spoofRaw = await readFile(path.join(incidentDir, "2026-02-01-prefix-incident-target.md"), "utf-8");
     assert.match(spoofRaw, /id: \"incident-spoof\"/);
     assert.match(spoofRaw, /state: \"open\"/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("identity continuity close skips unreadable incident entries while scanning", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-identity-close-unreadable-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const incidentDir = path.join(dir, "identity", "incidents");
+    const target = createContinuityIncidentRecord(
+      "incident-target",
+      { symptom: "target should close despite an unreadable neighbor" },
+      "2026-01-01T00:00:00.000Z",
+    );
+    await writeFile(
+      path.join(incidentDir, "2026-01-01-incident-target.md"),
+      serializeContinuityIncident(target),
+      "utf-8",
+    );
+    await mkdir(path.join(incidentDir, "9999-99-99-unreadable.md"));
+
+    const closed = await storage.closeContinuityIncident("incident-target", {
+      fixApplied: "applied fix",
+      verificationResult: "verified",
+    });
+
+    assert.ok(closed);
+    assert.equal(closed?.id, "incident-target");
+    assert.equal(closed?.state, "closed");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
