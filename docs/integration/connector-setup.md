@@ -31,7 +31,7 @@ Add to `~/.claude.json` (or project `.mcp.json`):
 ```jsonc
 {
   "mcpServers": {
-    "engram": {
+    "remnic": {
       "type": "http",
       "url": "http://localhost:4318/mcp",
       "headers": {
@@ -47,7 +47,7 @@ Add to `~/.claude.json` (or project `.mcp.json`):
 
 Restart Claude Code. Verify with: `What MCP tools do you have?`
 
-**Auto-detection:** Claude Code sends `clientInfo.name = "claude-code"` and `User-Agent: claude-code/<version>` — Engram identifies it automatically.
+**Auto-detection:** Claude Code sends `clientInfo.name = "claude-code"` and `User-Agent: claude-code/<version>` — Remnic identifies it automatically.
 
 **Capabilities:** observe, recall, store, search, entities, real-time sync
 
@@ -58,7 +58,7 @@ Restart Claude Code. Verify with: `What MCP tools do you have?`
 Add to `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.engram]
+[mcp_servers.remnic]
 url = "http://127.0.0.1:4318/mcp"
 bearer_token_env_var = "REMNIC_AUTH_TOKEN"
 # Optional: scope memory to a project/team namespace
@@ -67,7 +67,7 @@ http_headers = { "X-Engram-Namespace" = "my-project", "X-Engram-Principal" = "co
 
 See the [full Codex CLI guide](../guides/codex-cli.md) for session-start hooks and automatic recall.
 
-**Auto-detection:** Codex sends `clientInfo.name = "codex-mcp-client"` — Engram identifies it automatically.
+**Auto-detection:** Codex sends `clientInfo.name = "codex-mcp-client"` — Remnic identifies it automatically.
 
 **Capabilities:** observe, recall, store, batch
 
@@ -80,7 +80,7 @@ Add to `.cursor/mcp.json` in your project root (or `~/.cursor/mcp.json` globally
 ```jsonc
 {
   "mcpServers": {
-    "engram": {
+    "remnic": {
       "url": "http://localhost:4318/mcp",
       "headers": {
         "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
@@ -103,7 +103,7 @@ GitHub Copilot supports MCP servers in VS Code. Add to your VS Code `settings.js
 ```jsonc
 {
   "github.copilot.chat.experimental.mcpServers": {
-    "engram": {
+    "remnic": {
       "url": "http://localhost:4318/mcp",
       "headers": {
         "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
@@ -123,7 +123,7 @@ Add to your Cline MCP settings (VS Code Settings > Cline > MCP Servers):
 
 ```jsonc
 {
-  "engram": {
+  "remnic": {
     "url": "http://localhost:4318/mcp",
     "headers": {
       "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
@@ -143,7 +143,7 @@ Add to your Roo Code MCP settings:
 ```jsonc
 {
   "mcpServers": {
-    "engram": {
+    "remnic": {
       "url": "http://localhost:4318/mcp",
       "headers": {
         "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
@@ -164,7 +164,7 @@ Add to your Windsurf MCP settings (Settings > MCP):
 ```jsonc
 {
   "mcpServers": {
-    "engram": {
+    "remnic": {
       "url": "http://localhost:4318/mcp",
       "headers": {
         "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
@@ -185,7 +185,7 @@ Add to your Amp configuration:
 ```jsonc
 {
   "mcpServers": {
-    "engram": {
+    "remnic": {
       "url": "http://localhost:4318/mcp",
       "headers": {
         "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
@@ -201,19 +201,19 @@ Add to your Amp configuration:
 
 ## Replit Agent
 
-Replit Agent supports MCP natively via the **Integrations pane** (HTTP transport only — the Engram server must be publicly reachable).
+Replit Agent supports MCP natively via the **Integrations pane** (HTTP transport only — the Remnic server must be publicly reachable).
 
 ### Option A: MCP (recommended)
 
 1. In your Replit workspace, open **Integrations** > **Add MCP server**
-2. Enter the Remnic server URL: `https://your-engram-server.com/mcp`
+2. Enter the Remnic server URL: `https://your-remnic-server.com/mcp`
 3. Add custom headers:
-   - `Authorization`: `Bearer <your-engram-token>`
+   - `Authorization`: `Bearer <your-remnic-token>`
    - `X-Engram-Client-Id`: `replit` (enables auto-detection)
    - `X-Engram-Namespace`: `<your-project-name>` (optional)
 4. Click **Test & Save**
 
-Replit Agent will auto-discover all Engram MCP tools and use them contextually.
+Replit Agent will auto-discover all Remnic MCP tools and use them contextually.
 
 ### Option B: HTTP API (for custom agent code)
 
@@ -234,7 +234,7 @@ const response = await fetch(`${REMNIC_API_URL}/recall`, {
 });
 ```
 
-**Note:** Replit does not send identifying headers automatically. The `X-Engram-Client-Id: replit` header enables Engram's adapter auto-detection.
+**Note:** Replit does not send identifying headers automatically. The `X-Engram-Client-Id: replit` header enables Remnic's adapter auto-detection. The header name remains `X-Engram-*` during the v1.x compatibility window.
 
 **Capabilities:** observe, recall, store, search (via MCP or HTTP)
 
@@ -250,7 +250,7 @@ Add to your Hermes `config.yaml`:
 
 ```yaml
 mcp_servers:
-  engram:
+  remnic:
     url: "http://localhost:4318/mcp"
     headers:
       Authorization: "Bearer ${REMNIC_AUTH_TOKEN}"
@@ -259,7 +259,7 @@ mcp_servers:
       X-Engram-Namespace: "my-profile"
 ```
 
-**Auto-detection:** Hermes sends `X-Hermes-Session-Id` on API requests — Engram identifies it automatically. The `X-Engram-Client-Id: hermes` header provides a fallback for MCP-only connections.
+**Auto-detection:** Hermes sends `X-Hermes-Session-Id` on API requests — Remnic identifies it automatically. The `X-Engram-Client-Id: hermes` header provides a fallback for MCP-only connections. The `X-Engram-*` header names remain accepted during the v1.x compatibility window.
 
 ### Option B: MemoryProvider Plugin (recommended for production)
 
@@ -288,8 +288,8 @@ remnic connectors install weclone \
 
 This writes two files:
 
-- `~/.config/engram/.engram-connectors/connectors/weclone.json` — registry entry
-  used by `remnic connectors list / remove / doctor`.
+- `~/.config/engram/.engram-connectors/connectors/weclone.json` — legacy registry path
+  used by `remnic connectors list / remove / doctor` during the v1.x compatibility window.
 - `~/.remnic/connectors/weclone.json` — proxy config read by
   `remnic-weclone-proxy` at startup. A Remnic daemon auth token is minted and
   stored here so the proxy can authenticate without additional setup.
@@ -327,13 +327,16 @@ for the full config reference and architecture diagram.
 
 ## Generic MCP Client
 
-Any tool that supports the [Model Context Protocol](https://modelcontextprotocol.io/) can connect to Engram. Point your client at:
+Any tool that supports the [Model Context Protocol](https://modelcontextprotocol.io/) can connect to Remnic. Point your client at:
 
 - **MCP endpoint:** `http://localhost:4318/mcp`
 - **Auth:** `Authorization: Bearer <token>` header
 - **Transport:** HTTP (SSE for streaming)
 
 ### Available MCP Tools
+
+Most tools are currently exposed with `engram.*` names for v1.x compatibility;
+canonical `remnic.*` aliases are being added on the same MCP surface.
 
 | Tool | Description |
 |------|-------------|
@@ -413,7 +416,7 @@ The Remnic server isn't running. Start it:
 ```bash
 remnic daemon start    # standalone
 # or
-openclaw engram access http-serve --port 4318 --token "$REMNIC_AUTH_TOKEN"  # OpenClaw
+openclaw engram access http-serve --port 4318 --token "$REMNIC_AUTH_TOKEN"  # OpenClaw-hosted compatibility path
 ```
 
 ### 401 Unauthorized
@@ -431,7 +434,7 @@ Token mismatch. Verify `REMNIC_AUTH_TOKEN` matches between server and client con
 If queries are slow, enable QMD for hybrid search:
 
 ```bash
-engram doctor    # checks search backend status
+remnic doctor    # checks search backend status
 ```
 
 See [Getting Started](../getting-started.md) for QMD setup.

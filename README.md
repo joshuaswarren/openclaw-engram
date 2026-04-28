@@ -179,24 +179,24 @@ After installation, add the Remnic bridge plugin to your `openclaw.json`:
 ```jsonc
 {
   "plugins": {
-    "allow": ["openclaw-engram"],
-    "slots": { "memory": "openclaw-engram" },
+    "allow": ["openclaw-remnic"],
+    "slots": { "memory": "openclaw-remnic" },
     "entries": {
-      "openclaw-engram": {
+      "openclaw-remnic": {
         "enabled": true,
         "config": {
           // Option 1: Use OpenAI for extraction:
           "openaiApiKey": "${OPENAI_API_KEY}"
 
-          // Option 2: Use Engram's local LLM path (plugin mode only; no API key needed):
+          // Option 2: Use Remnic's local LLM path (plugin mode only; no API key needed):
           // "localLlmEnabled": true,
           // "localLlmUrl": "http://localhost:1234/v1",
           // "localLlmModel": "qwen2.5-32b-instruct"
 
           // Option 3: Use the gateway model chain (primary path in gateway mode):
           // "modelSource": "gateway",
-          // "gatewayAgentId": "engram-llm",
-          // "fastGatewayAgentId": "engram-llm-fast"
+          // "gatewayAgentId": "remnic-llm",
+          // "fastGatewayAgentId": "remnic-llm-fast"
         }
       }
     }
@@ -227,7 +227,7 @@ Default: `"low"` — only `"trivial"` content is dropped. Raise to `"normal"` or
 {
   "plugins": {
     "entries": {
-      "openclaw-engram": {
+      "openclaw-remnic": {
         "config": {
           // Allowed values: "trivial" | "low" | "normal" | "high" | "critical"
           "extractionMinImportanceLevel": "normal"
@@ -256,7 +256,7 @@ Enable it per plugin:
 {
   "plugins": {
     "entries": {
-      "openclaw-engram": {
+      "openclaw-remnic": {
         "config": {
           "inlineSourceAttributionEnabled": true,
           // Optional: customize the tag format.
@@ -282,9 +282,9 @@ See `packages/remnic-core/src/source-attribution.ts` for the helpers and `packag
 ### Verify installation
 
 ```bash
-openclaw engram setup --json         # Validates config, scaffolds directories
-openclaw engram doctor --json        # Health diagnostics with remediation hints
-openclaw engram config-review --json # Opinionated config tuning recommendations
+remnic doctor              # Health diagnostics with remediation hints
+remnic connectors doctor   # Connector-specific health checks
+remnic status              # Daemon status and local endpoint summary
 ```
 
 ## Bring your memory
@@ -347,7 +347,7 @@ Restart the gateway after running this command.
 After restarting, check the gateway log for this line:
 
 ```
-[remnic] gateway_start fired — Remnic memory plugin is active (id=openclaw-engram, memoryDir=~/.openclaw/workspace/memory/local)
+[remnic] gateway_start fired — Remnic memory plugin is active (id=openclaw-remnic, memoryDir=~/.openclaw/workspace/memory/local)
 ```
 
 On macOS:
@@ -483,7 +483,7 @@ OpenClaw remains the recommended path for most users. The standalone CLI is usef
 
 ## How It Works
 
-Engram operates in three phases:
+Remnic operates in three phases:
 
 ```
  Recall    → Before each conversation, inject relevant memories into context
@@ -508,7 +508,7 @@ Memory categories include: `fact`, `decision`, `preference`, `correction`, `rela
 
 ## Architecture
 
-Engram is organized as a monorepo with a core engine, standalone server/CLI, and native plugins for multiple AI platforms:
+Remnic is organized as a monorepo with a core engine, standalone server/CLI, and native plugins for multiple AI platforms:
 
 ```
                          ┌─────────────────┐
@@ -540,13 +540,17 @@ Engram is organized as a monorepo with a core engine, standalone server/CLI, and
 | `@remnic/export-weclone` | [![npm](https://img.shields.io/npm/v/@remnic/export-weclone)](https://www.npmjs.com/package/@remnic/export-weclone) | WeClone fine-tuning dataset exporter — optional `remnic training:export` surface |
 | `@remnic/import-weclone` | [![npm](https://img.shields.io/npm/v/@remnic/import-weclone)](https://www.npmjs.com/package/@remnic/import-weclone) | WeClone chat-history importer — optional `remnic bulk-import` source |
 | `@remnic/connector-weclone` | [![npm](https://img.shields.io/npm/v/@remnic/connector-weclone)](https://www.npmjs.com/package/@remnic/connector-weclone) | OpenAI-compatible proxy layering Remnic memory onto WeClone avatars |
+| `@remnic/import-chatgpt` | [![npm](https://img.shields.io/npm/v/@remnic/import-chatgpt)](https://www.npmjs.com/package/@remnic/import-chatgpt) | ChatGPT saved-memory and conversation-summary importer — optional `remnic import --adapter chatgpt` surface |
+| `@remnic/import-claude` | [![npm](https://img.shields.io/npm/v/@remnic/import-claude)](https://www.npmjs.com/package/@remnic/import-claude) | Claude project docs and prompt-template importer — optional `remnic import --adapter claude` surface |
+| `@remnic/import-gemini` | [![npm](https://img.shields.io/npm/v/@remnic/import-gemini)](https://www.npmjs.com/package/@remnic/import-gemini) | Google Takeout Gemini Apps Activity importer — optional `remnic import --adapter gemini` surface |
+| `@remnic/import-mem0` | [![npm](https://img.shields.io/npm/v/@remnic/import-mem0)](https://www.npmjs.com/package/@remnic/import-mem0) | mem0 REST and JSON importer — optional `remnic import --adapter mem0` surface |
 | `@remnic/plugin-openclaw` | [![npm](https://img.shields.io/npm/v/@remnic/plugin-openclaw)](https://www.npmjs.com/package/@remnic/plugin-openclaw) | OpenClaw adapter — thin bridge (embedded or delegate mode) |
 | `@remnic/plugin-claude-code` | [![npm](https://img.shields.io/npm/v/@remnic/plugin-claude-code)](https://www.npmjs.com/package/@remnic/plugin-claude-code) | Native Claude Code plugin — hooks, skills, MCP |
 | `@remnic/plugin-codex` | [![npm](https://img.shields.io/npm/v/@remnic/plugin-codex)](https://www.npmjs.com/package/@remnic/plugin-codex) | Native Codex CLI plugin — hooks, skills, MCP |
 | `@remnic/replit` | [![npm](https://img.shields.io/npm/v/@remnic/replit)](https://www.npmjs.com/package/@remnic/replit) | Replit Agent MCP connector — setup snippet + token helper |
 | `remnic-hermes` | [![PyPI](https://img.shields.io/pypi/v/remnic-hermes)](https://pypi.org/project/remnic-hermes/) | Python MemoryProvider for Hermes Agent |
 
-Remnic is installed à la carte: `@remnic/core` is the only package most users need, and optional surfaces (bench, weclone, plugins) are installed separately when you need them. Commands like `remnic bench *` and `remnic training:export` lazy-load their companion package and print an install hint if it's missing.
+Remnic is installed à la carte: most users start with `@remnic/cli`, while `@remnic/core` stays available for framework-agnostic embedding. Optional surfaces (bench, WeClone, plugins, and importers) are installed separately when you need them. Commands like `remnic bench *`, `remnic training:export`, and `remnic import --adapter <source>` lazy-load their companion package and print an install hint if it's missing.
 
 The old `@joshuaswarren/openclaw-engram` package is **deprecated**. Use `@remnic/plugin-openclaw` for OpenClaw installs and `@remnic/*` for standalone or multi-platform use.
 
@@ -558,7 +562,7 @@ All memory lives on your filesystem as plain markdown files. No cloud dependency
 
 ### A real upgrade from default OpenClaw memory
 
-OpenClaw's built-in memory is basic — it works for getting started, but lacks semantic search, entity tracking, lifecycle management, governance, and multi-agent isolation. Engram is a drop-in replacement that brings all of those capabilities while keeping the same local-first philosophy.
+OpenClaw's built-in memory is basic — it works for getting started, but lacks semantic search, entity tracking, lifecycle management, governance, and multi-agent isolation. Remnic is a drop-in replacement that brings all of those capabilities while keeping the same local-first philosophy.
 
 ### Smart recall, not keyword search
 
@@ -595,7 +599,7 @@ Use a preset to jump to a recommended level: `conservative`, `balanced`, `resear
 
 ### Standalone Multi-Tenant Server
 
-Run Engram as a standalone HTTP server that multiple agent harnesses share. Isolate tenants with namespace policies, feed conversations from any client via the observe endpoint, and search archived history with LCM full-text search. Works with OpenClaw, Codex CLI, Claude Code, and custom HTTP agents. See the [Standalone Server Guide](docs/guides/standalone-server.md).
+Run Remnic as a standalone HTTP server that multiple agent harnesses share. Isolate tenants with namespace policies, feed conversations from any client via the observe endpoint, and search archived history with LCM full-text search. Works with OpenClaw, Codex CLI, Claude Code, and custom HTTP agents. See the [Standalone Server Guide](docs/guides/standalone-server.md).
 
 ### Built for production
 
@@ -690,7 +694,7 @@ Enable it in your `openclaw.json`:
 {
   "plugins": {
     "entries": {
-      "openclaw-engram": {
+      "openclaw-remnic": {
         "config": {
           "lcmEnabled": true
           // All other LCM settings have sensible defaults
@@ -705,7 +709,7 @@ See the [LCM Guide](docs/guides/lossless-context-management.md) for architecture
 
 ### Parallel Specialized Retrieval (opt-in)
 
-Engram's default retrieval runs a single hybrid search pass. Parallel Specialized Retrieval (inspired by [Supermemory's ASMR technique](https://blog.supermemory.ai/we-broke-the-frontier-in-agent-memory-introducing-99-sota-memory-system/)) runs three specialized agents in parallel so total latency equals `max(agents)` not `sum(agents)`.
+Remnic's default retrieval runs a single hybrid search pass. Parallel Specialized Retrieval (inspired by [Supermemory's ASMR technique](https://blog.supermemory.ai/we-broke-the-frontier-in-agent-memory-introducing-99-sota-memory-system/)) runs three specialized agents in parallel so total latency equals `max(agents)` not `sum(agents)`.
 
 | Agent | What It Does | Cost |
 |-------|-------------|------|
@@ -723,7 +727,7 @@ Enable it in your `openclaw.json`:
 {
   "plugins": {
     "entries": {
-      "openclaw-engram": {
+      "openclaw-remnic": {
         "config": {
           "parallelRetrievalEnabled": true
           // Optional tuning:
@@ -754,7 +758,7 @@ Enable it in your `openclaw.json`:
 {
   "plugins": {
     "entries": {
-      "openclaw-engram": {
+      "openclaw-remnic": {
         "config": {
           "semanticConsolidationEnabled": true
           // Optional tuning:
@@ -842,6 +846,9 @@ For namespace-enabled deployments, configure `server.principal` in `remnic.confi
 ## CLI Reference
 
 ```bash
+# OpenClaw-hosted compatibility commands still use the `openclaw engram`
+# namespace during the v1.x rename window. Standalone commands use `remnic`.
+#
 # Setup & diagnostics
 openclaw engram setup              # Guided first-run setup
 openclaw engram doctor             # Health diagnostics with remediation hints
@@ -923,12 +930,12 @@ See the [full CLI reference](docs/api.md#cli-commands) for all commands.
 
 ## Configuration
 
-All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.config`. The table below shows the most commonly changed settings — Engram has **60+ configuration options** covering search backends, capture modes, memory OS features, namespaces, governance, benchmarking, and more.
+OpenClaw plugin settings live in `openclaw.json` under `plugins.entries.openclaw-remnic.config` (with a legacy `openclaw-engram` fallback during the rename window). Standalone settings live in `remnic.config.json` or `~/.config/remnic/config.json`. The table below shows the most commonly changed settings — Remnic has **60+ configuration options** covering search backends, capture modes, memory OS features, namespaces, governance, benchmarking, and more.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `openaiApiKey` | `(env)` | OpenAI API key (optional when using a local LLM) |
-| `localLlmEnabled` | `false` | Enable Engram's local LLM path when `modelSource` is `plugin` |
+| `localLlmEnabled` | `false` | Enable Remnic's local LLM path when `modelSource` is `plugin` |
 | `localLlmUrl` | unset | Local LLM endpoint (e.g., `http://localhost:1234/v1`) |
 | `localLlmModel` | unset | Local model name (e.g., `qwen2.5-32b-instruct`) |
 | `model` | `gpt-5.2` | OpenAI model for extraction when `modelSource` is `plugin` and local LLM is disabled |
@@ -981,7 +988,7 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 - [Search Backends](docs/search-backends.md) — Choosing and configuring search engines
 - [Writing a Search Backend](docs/writing-a-search-backend.md) — Build your own adapter
 - [API Reference](docs/api.md) — HTTP, MCP, and CLI documentation
-- [Codex CLI Integration](docs/guides/codex-cli.md) — Setup Engram with OpenAI's Codex
+- [Codex CLI Integration](docs/guides/codex-cli.md) — Set up Remnic with OpenAI's Codex
 - [Standalone Server Guide](docs/guides/standalone-server.md) — Multi-tenant HTTP server for multiple agent harnesses
 - [Local LLM Guide](docs/guides/local-llm.md) — Local-first extraction and reranking
 - [Cost Control Guide](docs/guides/cost-control.md) — Budget mappings and presets
