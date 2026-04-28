@@ -32,7 +32,6 @@ type ActionOutcomeCounts = {
   applied: number;
   skipped: number;
   failed: number;
-  unknown: number;
 };
 
 type ActionOutcomeSummary = {
@@ -161,7 +160,7 @@ export interface CompoundingPromotionReport {
 type WeeklyActionEvent = {
   line: number;
   action: string;
-  outcome: "applied" | "skipped" | "failed" | "unknown";
+  outcome: "applied" | "skipped" | "failed";
   policyDecision: "deny" | "defer" | null;
   namespace: string;
   reason: string | null;
@@ -996,42 +995,21 @@ export class CompoundingEngine {
 
   private async readActionEventsForWeek(weekId: string): Promise<WeeklyActionEvent[]> {
     const out: WeeklyActionEvent[] = [];
-    try {
-      const raw = await readFile(this.memoryActionEventsPath, "utf-8");
-      const lines = raw.split("\n");
-      for (let idx = 0; idx < lines.length; idx += 1) {
-        const line = lines[idx];
-        if (!line.trim()) continue;
-        try {
-          const parsed = JSON.parse(line) as {
-            timestamp?: string;
-            action?: string;
-            outcome?: string;
-            policyDecision?: string;
-            namespace?: string;
-            reason?: string;
-          };
-          if (typeof parsed.timestamp !== "string" || typeof parsed.action !== "string") continue;
-          const ts = new Date(parsed.timestamp);
-          if (!Number.isFinite(ts.getTime()) || isoWeekId(ts) !== weekId) continue;
-          out.push({
-            line: idx + 1,
-            action: parsed.action,
-            outcome: parsed.outcome === "applied" || parsed.outcome === "skipped" || parsed.outcome === "failed"
-              ? parsed.outcome
-              : "unknown",
-            policyDecision: parsed.policyDecision === "deny" || parsed.policyDecision === "defer"
-              ? parsed.policyDecision
-              : null,
-            namespace: typeof parsed.namespace === "string" && parsed.namespace.length > 0 ? parsed.namespace : "default",
-            reason: typeof parsed.reason === "string" ? parsed.reason : null,
-          });
-        } catch {
-          // Ignore malformed rows (fail-open).
-        }
-      }
-    } catch {
-      // Missing action telemetry is allowed.
+    const rows = await this.storage.readMemoryActionEventRows(Number.MAX_SAFE_INTEGER);
+    for (const row of rows) {
+      const event = row.event;
+      const ts = new Date(event.timestamp);
+      if (!Number.isFinite(ts.getTime()) || isoWeekId(ts) !== weekId) continue;
+      out.push({
+        line: row.line,
+        action: event.action,
+        outcome: event.outcome,
+        policyDecision: event.policyDecision === "deny" || event.policyDecision === "defer"
+          ? event.policyDecision
+          : null,
+        namespace: typeof event.namespace === "string" && event.namespace.length > 0 ? event.namespace : "default",
+        reason: typeof event.reason === "string" ? event.reason : null,
+      });
     }
     return out;
   }
@@ -1041,20 +1019,19 @@ export class CompoundingEngine {
     for (const event of events) {
       const key = event.action;
       const acc = byAction.get(key) ?? {
-        counts: { applied: 0, skipped: 0, failed: 0, unknown: 0 },
+        counts: { applied: 0, skipped: 0, failed: 0 },
         provenance: new Set<string>(),
       };
       if (event.outcome === "applied") acc.counts.applied += 1;
       else if (event.outcome === "skipped") acc.counts.skipped += 1;
-      else if (event.outcome === "failed") acc.counts.failed += 1;
-      else acc.counts.unknown += 1;
+      else acc.counts.failed += 1;
       acc.provenance.add(`${path.basename(this.memoryActionEventsPath)}:L${event.line}`);
       byAction.set(key, acc);
     }
 
     const out: ActionOutcomeSummary[] = [];
     for (const [action, data] of byAction.entries()) {
-      const total = data.counts.applied + data.counts.skipped + data.counts.failed + data.counts.unknown;
+      const total = data.counts.applied + data.counts.skipped + data.counts.failed;
       if (total <= 0) continue;
       // Conservative weighting: reward applied, penalize skipped/failed.
       const weightedScore = Number((((data.counts.applied * 1) - (data.counts.skipped * 0.5) - (data.counts.failed * 1.5)) / total).toFixed(3));
@@ -1098,7 +1075,7 @@ export class CompoundingEngine {
       if (item.total < 3) continue;
       if (item.weightedScore < 0.3) continue;
       const content = normalizePromotedGuidanceContent(
-        `Prefer ${item.action} when the same workflow recurs; this week's outcomes were applied=${item.counts.applied}, skipped=${item.counts.skipped}, failed=${item.counts.failed}, unknown=${item.counts.unknown}.`,
+        `Prefer ${item.action} when the same workflow recurs; this week's outcomes were applied=${item.counts.applied}, skipped=${item.counts.skipped}, failed=${item.counts.failed}.`,
       );
       upsert({
         id: stablePromotionCandidateId("action-outcome", item.action, content),
@@ -1380,7 +1357,7 @@ export class CompoundingEngine {
     } else {
       for (const item of outcomeSummary.slice(0, 20)) {
         lines.push(
-          `- ${item.action}: applied=${item.counts.applied}, skipped=${item.counts.skipped}, failed=${item.counts.failed}, unknown=${item.counts.unknown}, weight=${item.weightedScore} _(source: ${item.provenance.join(", ")})_`,
+          `- ${item.action}: applied=${item.counts.applied}, skipped=${item.counts.skipped}, failed=${item.counts.failed}, weight=${item.weightedScore} _(source: ${item.provenance.join(", ")})_`,
         );
       }
     }
@@ -1393,7 +1370,7 @@ export class CompoundingEngine {
       } else {
         for (const candidate of promotionCandidates) {
           const outcomeSummaryText = candidate.outcome
-            ? ` outcomes[a=${candidate.outcome.applied}, s=${candidate.outcome.skipped}, f=${candidate.outcome.failed}, u=${candidate.outcome.unknown}]`
+            ? ` outcomes[a=${candidate.outcome.applied}, s=${candidate.outcome.skipped}, f=${candidate.outcome.failed}]`
             : "";
           lines.push(
             `- [${candidate.sourceType}] ${candidate.subject} -> ${candidate.content} (category=${candidate.category}, score=${candidate.score}, id=${candidate.id}): ${candidate.rationale}${outcomeSummaryText} _(source: ${candidate.provenance.join(", ")})_`,
@@ -1483,7 +1460,7 @@ export class CompoundingEngine {
       };
       this.addRubricObservation(
         workflowEntry,
-        `Outcome weight=${item.weightedScore} (applied=${item.counts.applied}, skipped=${item.counts.skipped}, failed=${item.counts.failed}, unknown=${item.counts.unknown})`,
+        `Outcome weight=${item.weightedScore} (applied=${item.counts.applied}, skipped=${item.counts.skipped}, failed=${item.counts.failed})`,
         ...item.provenance,
       );
       byWorkflow.set(item.action, workflowEntry);
@@ -1545,7 +1522,7 @@ export class CompoundingEngine {
     } else {
       for (const item of outcomeSummary.slice(0, 20)) {
         lines.push(
-          `- ${item.action}: weight=${item.weightedScore} (applied=${item.counts.applied}, skipped=${item.counts.skipped}, failed=${item.counts.failed}, unknown=${item.counts.unknown})`,
+          `- ${item.action}: weight=${item.weightedScore} (applied=${item.counts.applied}, skipped=${item.counts.skipped}, failed=${item.counts.failed})`,
         );
       }
     }

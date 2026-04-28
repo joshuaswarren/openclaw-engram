@@ -2201,8 +2201,7 @@ export class Orchestrator {
 
       // Initialize content-hash dedup index
       if (this.config.factDeduplicationEnabled) {
-        const stateDir = path.join(this.config.memoryDir, "state");
-        this.contentHashIndex = new ContentHashIndex(stateDir);
+        this.contentHashIndex = this.storage.createContentHashIndex();
         await this.contentHashIndex.load();
         log.info(
           `content-hash dedup: loaded ${this.contentHashIndex.size} hashes`,

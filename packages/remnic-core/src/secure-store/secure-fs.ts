@@ -309,7 +309,7 @@ export interface DecryptResult {
 }
 
 /**
- * Walk `dir` recursively, find encryptable `.md` files that are not
+ * Walk `dir` recursively, find encryptable storage-managed files that are not
  * yet encrypted, and re-write them as encrypted files under `key`.
  *
  * Safety rules per CLAUDE.md gotchas #54 and #25:
@@ -336,8 +336,8 @@ export async function migrateMemoryDirToEncrypted(
 ): Promise<MigrateResult> {
   const result: MigrateResult = { encrypted: 0, skipped: 0, errors: [] };
 
-  const mdFiles = await collectMdFiles(dir);
-  for (const filePath of mdFiles) {
+  const files = await collectEncryptableStorageFiles(dir);
+  for (const filePath of files) {
     try {
       const buf = await readFile(filePath);
       if (isEncryptedFile(buf)) {
@@ -439,13 +439,12 @@ export async function decryptMemoryDirToPlaintext(
 // ---------------------------------------------------------------------------
 
 /**
- * Recursively collect `.md` files under `dir` that are read through
- * the storage-layer secure-store helpers, excluding symlinked entries
- * and `.secure-store/` metadata.
+ * Recursively collect files under `dir` that are read through the
+ * storage-layer secure-store helpers, excluding symlinked entries and
+ * `.secure-store/` metadata.
  */
-async function collectMdFiles(dir: string, rootDir = dir): Promise<string[]> {
-  const files = await collectStorageManagedFiles(dir, isEncryptableStoragePath, rootDir);
-  return files.filter((filePath) => path.basename(filePath).endsWith(".md"));
+async function collectEncryptableStorageFiles(dir: string, rootDir = dir): Promise<string[]> {
+  return collectStorageManagedFiles(dir, isEncryptableStoragePath, rootDir);
 }
 
 /**
@@ -494,8 +493,10 @@ function isEncryptableStoragePath(filePath: string, rootDir: string): boolean {
   if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return false;
   const normalized = normalizeStorageRelativePath(rel);
   if (normalized === "profile.md") return true;
+  if (isEncryptableStateSidecar(normalized)) return true;
+  if (isEncryptableSummarySidecar(normalized)) return true;
   const firstSegment = normalized.split("/", 1)[0];
-  return ENCRYPTABLE_STORAGE_ROOTS.has(firstSegment);
+  return ENCRYPTABLE_MARKDOWN_STORAGE_ROOTS.has(firstSegment) && normalized.endsWith(".md");
 }
 
 function isDecryptableStoragePath(filePath: string, rootDir: string): boolean {
@@ -526,7 +527,7 @@ function storageAadRootForFile(filePath: string, rootDir: string): string {
   return rootDir;
 }
 
-const ENCRYPTABLE_STORAGE_ROOTS = new Set([
+const ENCRYPTABLE_MARKDOWN_STORAGE_ROOTS = new Set([
   "facts",
   "corrections",
   "procedures",
@@ -536,6 +537,31 @@ const ENCRYPTABLE_STORAGE_ROOTS = new Set([
   "entities",
   "identity",
 ]);
+
+const ENCRYPTABLE_STATE_SIDECARS = new Set([
+  "state/behavior-signals.jsonl",
+  "state/buffer-surprise-ledger.jsonl",
+  "state/buffer.json",
+  "state/compression-guideline-draft-state.json",
+  "state/compression-guideline-state.json",
+  "state/compression-guidelines.draft.md",
+  "state/compression-guidelines.md",
+  "state/entity-synthesis-queue.json",
+  "state/fact-hashes.txt",
+  "state/memory-actions.jsonl",
+  "state/memory-lifecycle-ledger.jsonl",
+  "state/meta.json",
+  "state/reextract-jobs.jsonl",
+  "state/topics.json",
+]);
+
+function isEncryptableStateSidecar(normalized: string): boolean {
+  return ENCRYPTABLE_STATE_SIDECARS.has(normalized);
+}
+
+function isEncryptableSummarySidecar(normalized: string): boolean {
+  return normalized.startsWith("summaries/") && normalized.endsWith(".json");
+}
 
 const DECRYPTABLE_SIDECAR_ROOTS = new Set([
   "state",

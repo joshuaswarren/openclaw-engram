@@ -5,6 +5,7 @@ import path from "node:path";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { parseConfig } from "../src/config.js";
 import { registerCli } from "../src/cli.js";
+import { StorageManager } from "../src/storage.js";
 import { clearAuthTokenSecretCache } from "../packages/remnic-core/src/resolve-auth-token.js";
 import type { OperatorToolkitOrchestrator } from "../src/operator-toolkit.js";
 
@@ -87,6 +88,7 @@ async function makeFixture(
 
   const orchestrator: OperatorToolkitOrchestrator = {
     config,
+    storage: new StorageManager(memoryDir),
     qmd: {
       async probe() {
         return config.qmdEnabled;

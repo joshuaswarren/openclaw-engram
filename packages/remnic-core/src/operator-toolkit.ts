@@ -686,7 +686,7 @@ function removeManagedCaptureInstructions(existing: string): { content: string; 
 export async function runOperatorSetup(options: OperatorSetupOptions): Promise<OperatorSetupReport> {
   const now = options.now ?? new Date();
   const configStatus = await loadCliPluginConfig(options.configPath);
-  const storage = new StorageManager(options.orchestrator.config.memoryDir);
+  const storage = options.orchestrator.storage;
   await storage.ensureDirectories();
   await mkdir(options.orchestrator.config.workspaceDir, { recursive: true });
 
@@ -1022,6 +1022,7 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   const configStatus = await loadCliPluginConfig(options.configPath);
   const checks: OperatorDoctorCheck[] = [];
   const config = options.orchestrator.config;
+  const storage = options.orchestrator.storage;
   const configReview = await buildOperatorConfigReviewReport({
     now,
     configStatus,
@@ -1120,7 +1121,7 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
     details: conversationIndex,
   });
 
-  const meta = await new StorageManager(config.memoryDir).loadMeta();
+  const meta = await storage.loadMeta();
   checks.push({
     key: "maintenance",
     status: meta.lastExtractionAt || meta.lastConsolidationAt ? "ok" : "warn",
@@ -1206,14 +1207,14 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // Beta(1,1) prior — but surfacing the count helps operators understand how
   // much history will bootstrap the scoring pipeline landed in later PRs.
   // This is an informational check, never an error.
-  checks.push(await summarizeMemoryWorthLegacyCounters(new StorageManager(config.memoryDir)));
+  checks.push(await summarizeMemoryWorthLegacyCounters(storage));
 
   // Buffer surprise telemetry distribution (issue #563 PR 3).
   // Surfaces recent surprise scores so operators can calibrate the
   // `bufferSurpriseThreshold` from real traffic. Never an error — an empty
   // ledger is the expected state until the flag is turned on.
   checks.push(
-    await summarizeBufferSurpriseDistribution(new StorageManager(config.memoryDir), config),
+    await summarizeBufferSurpriseDistribution(storage, config),
   );
 
   // Consolidation provenance integrity (issue #561 PR 4).
@@ -1227,7 +1228,7 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // `versioningSidecarDir` into the scan so deployments that override
   // the default `.versions` directory get accurate results instead of
   // false-missing warnings.
-  checks.push(await summarizeConsolidationProvenance(new StorageManager(config.memoryDir), config));
+  checks.push(await summarizeConsolidationProvenance(storage, config));
 
   // Graph-edge decay maintenance status (issue #681 PR 2/3).
   // Reports whether the periodic decay job has run and surfaces last-run
@@ -1242,7 +1243,7 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // Dreams phases thresholds and last-run timestamps (issue #678 PR 2/4).
   // Surfaces per-phase: enabled status, cadence, threshold values, and the
   // best-available last-run timestamp for each of the three pipeline phases.
-  checks.push(await summarizeDreamsPhases(config));
+  checks.push(await summarizeDreamsPhases(config, storage));
 
   // Security mitigation status (issue #565).
   // Reports whether the cross-namespace budget and anomaly detection
@@ -1608,9 +1609,9 @@ export async function summarizeTierDistribution(
  */
 export async function summarizeDreamsPhases(
   config: Pick<PluginConfig, "memoryDir" | "dreamsPhases">,
+  storage: StorageManager = new StorageManager(config.memoryDir),
 ): Promise<OperatorDoctorCheck> {
   const phases: DreamsPhasesConfig = config.dreamsPhases;
-  const storage = new StorageManager(config.memoryDir);
 
   // Load meta.json for best-available last-run timestamps.
   const meta = await storage.loadMeta();

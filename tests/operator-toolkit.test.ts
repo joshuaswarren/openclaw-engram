@@ -63,6 +63,7 @@ async function makeFixture(overrides: Record<string, unknown> = {}): Promise<{
   await writeFile(configPath, openclawConfigDocument(rawConfig), "utf-8");
   const orchestrator: OperatorToolkitOrchestrator = {
     config,
+    storage: new StorageManager(memoryDir),
     qmd: {
       async probe() {
         return config.qmdEnabled;

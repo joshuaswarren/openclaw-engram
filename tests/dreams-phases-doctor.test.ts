@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { parseConfig } from "../src/config.js";
+import { StorageManager } from "../src/storage.js";
 import {
   runOperatorDoctor,
   summarizeDreamsPhases,
@@ -55,6 +56,7 @@ async function makeFixture(overrides: Record<string, unknown> = {}): Promise<{
   );
   const orchestrator: OperatorToolkitOrchestrator = {
     config,
+    storage: new StorageManager(memoryDir),
     qmd: {
       async probe() { return false; },
       isAvailable() { return false; },
@@ -254,6 +256,38 @@ test("runOperatorDoctor: includes dreams_phases check", async () => {
       dreamsCheck.details && typeof dreamsCheck.details === "object",
       "dreams_phases check must have details",
     );
+  } finally {
+    if (savedToken !== undefined) {
+      process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN = savedToken;
+    }
+  }
+});
+
+test("runOperatorDoctor: reads encrypted meta through orchestrator storage", async () => {
+  const savedToken = process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN;
+  delete process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN;
+  try {
+    const fixture = await makeFixture();
+    const key = Buffer.alloc(32, 0x7d);
+    fixture.orchestrator.storage.setSecureStoreKey(key, true);
+    await fixture.orchestrator.storage.saveMeta({
+      extractionCount: 3,
+      lastExtractionAt: "2026-04-28T00:00:00.000Z",
+      lastConsolidationAt: null,
+      totalMemories: 2,
+      totalEntities: 1,
+      processedExtractionFingerprints: [],
+    });
+
+    const report = await runOperatorDoctor({
+      orchestrator: fixture.orchestrator,
+      configPath: fixture.configPath,
+    });
+    const maintenance = report.checks.find((c) => c.key === "maintenance");
+    assert.equal(maintenance?.status, "ok");
+    const dreamsCheck = report.checks.find((c) => c.key === "dreams_phases");
+    const details = dreamsCheck?.details as { lightSleep?: { lastRun?: string | null } } | undefined;
+    assert.equal(details?.lightSleep?.lastRun, "2026-04-28T00:00:00.000Z");
   } finally {
     if (savedToken !== undefined) {
       process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN = savedToken;

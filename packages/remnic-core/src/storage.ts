@@ -9,6 +9,7 @@ import { sanitizeMemoryContent } from "./sanitize.js";
 import { createVersion as createPageVersion, type VersioningConfig, type VersionTrigger } from "./page-versioning.js";
 import {
   SecureStoreLockedError,
+  isEncryptedFile,
   readMaybeEncryptedFile,
   writeMaybeEncryptedFile,
 } from "./secure-store/secure-fs.js";
@@ -996,15 +997,26 @@ export class ContentHashIndex {
   private hashes: Set<string> = new Set();
   private dirty = false;
   private readonly filePath: string;
+  private readonly secureStoreKeyProvider: () => Buffer | null;
+  private readonly secureStoreWriteKeyProvider: () => Buffer | null;
+  private readonly memoryDir: string;
 
-  constructor(stateDir: string) {
+  constructor(
+    stateDir: string,
+    secureStoreKeyProvider: () => Buffer | null = () => null,
+    secureStoreWriteKeyProvider: () => Buffer | null = secureStoreKeyProvider,
+    memoryDir: string = path.dirname(stateDir),
+  ) {
     this.filePath = path.join(stateDir, "fact-hashes.txt");
+    this.secureStoreKeyProvider = secureStoreKeyProvider;
+    this.secureStoreWriteKeyProvider = secureStoreWriteKeyProvider;
+    this.memoryDir = memoryDir;
   }
 
   /** Load existing hashes from disk. Safe to call multiple times. */
   async load(): Promise<void> {
     try {
-      const raw = await readFile(this.filePath, "utf-8");
+      const raw = await readMaybeEncryptedFile(this.filePath, this.secureStoreKeyProvider(), this.memoryDir);
       for (const line of raw.split("\n")) {
         const trimmed = line.trim();
         if (trimmed.length > 0) {
@@ -1012,7 +1024,9 @@ export class ContentHashIndex {
         }
       }
       log.debug(`content-hash index: loaded ${this.hashes.size} hashes`);
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       log.debug("content-hash index: no existing index — starting fresh");
     }
   }
@@ -1039,7 +1053,13 @@ export class ContentHashIndex {
   async save(): Promise<void> {
     if (!this.dirty) return;
     await mkdir(path.dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, [...this.hashes].join("\n") + "\n", "utf-8");
+    await writeMaybeEncryptedFile(
+      this.filePath,
+      [...this.hashes].join("\n") + "\n",
+      this.secureStoreWriteKeyProvider(),
+      {},
+      this.memoryDir,
+    );
     this.dirty = false;
     log.debug(`content-hash index: saved ${this.hashes.size} hashes`);
   }
@@ -2195,6 +2215,7 @@ export class StorageManager {
   private factHashIndexLoadPromise: Promise<ContentHashIndex> | null = null;
   private factHashIndexAuthoritative: boolean | null = null;
   private factHashIndexAuthoritativePromise: Promise<void> | null = null;
+  private readonly secureAppendChains = new Map<string, Promise<void>>();
   /** Optional: set by the orchestrator after construction to enable template-aware citation stripping during legacy hash rebuild. */
   citationTemplate: string = DEFAULT_CITATION_FORMAT;
 
@@ -2448,6 +2469,56 @@ export class StorageManager {
   private writeStorageSecureFile(filePath: string, content: string): Promise<void> {
     return writeMaybeEncryptedFile(filePath, content, this.resolveWriteKey(), {}, this.baseDir);
   }
+  createContentHashIndex(): ContentHashIndex {
+    return new ContentHashIndex(
+      this.stateDir,
+      () => this._secureStoreKey,
+      () => this.resolveWriteKey(),
+      this.baseDir,
+    );
+  }
+
+  private async appendStorageSecureFile(filePath: string, content: string): Promise<void> {
+    const previous = this.secureAppendChains.get(filePath) ?? Promise.resolve();
+    const current = previous
+      .catch(() => undefined)
+      .then(() => this.appendStorageSecureFileUnlocked(filePath, content));
+    const next = current.catch(() => undefined);
+    this.secureAppendChains.set(filePath, next);
+    try {
+      await current;
+    } finally {
+      if (this.secureAppendChains.get(filePath) === next) {
+        this.secureAppendChains.delete(filePath);
+      }
+    }
+  }
+
+  private async appendStorageSecureFileUnlocked(filePath: string, content: string): Promise<void> {
+    const writeKey = this.resolveWriteKey();
+    await mkdir(path.dirname(filePath), { recursive: true });
+    if (writeKey === null) {
+      try {
+        if (isEncryptedFile(await readFile(filePath))) {
+          const existing = await this.readStorageSecureFile(filePath);
+          await writeMaybeEncryptedFile(filePath, `${existing}${content}`, null, {}, this.baseDir);
+          return;
+        }
+      } catch (err) {
+        if (!isErrnoCode(err, "ENOENT")) throw err;
+      }
+      await appendFile(filePath, content, "utf-8");
+      return;
+    }
+
+    let existing = "";
+    try {
+      existing = await this.readStorageSecureFile(filePath);
+    } catch (err) {
+      if (!isErrnoCode(err, "ENOENT")) throw err;
+    }
+    await writeMaybeEncryptedFile(filePath, `${existing}${content}`, writeKey, {}, this.baseDir);
+  }
   private get stateDir(): string {
     return path.join(this.baseDir, "state");
   }
@@ -2463,7 +2534,7 @@ export class StorageManager {
       return this.factHashIndex;
     }
     if (!this.factHashIndexLoadPromise) {
-      const index = new ContentHashIndex(this.stateDir);
+      const index = this.createContentHashIndex();
       this.factHashIndexLoadPromise = index
         .load()
         .then(() => {
@@ -4217,9 +4288,11 @@ export class StorageManager {
   async loadBuffer(): Promise<BufferState> {
     const bufferPath = path.join(this.stateDir, "buffer.json");
     try {
-      const raw = await readFile(bufferPath, "utf-8");
+      const raw = await this.readStorageSecureFile(bufferPath);
       return JSON.parse(raw) as BufferState;
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return { turns: [], lastExtractionAt: null, extractionCount: 0 };
     }
   }
@@ -4227,13 +4300,13 @@ export class StorageManager {
   async saveBuffer(state: BufferState): Promise<void> {
     await this.ensureDirectories();
     const bufferPath = path.join(this.stateDir, "buffer.json");
-    await writeFile(bufferPath, JSON.stringify(state, null, 2), "utf-8");
+    await this.writeStorageSecureFile(bufferPath, JSON.stringify(state, null, 2));
   }
 
   async loadMeta(): Promise<MetaState> {
     const metaPath = path.join(this.stateDir, "meta.json");
     try {
-      const raw = await readFile(metaPath, "utf-8");
+      const raw = await this.readStorageSecureFile(metaPath);
       const parsed = JSON.parse(raw) as MetaState;
       return {
         extractionCount:
@@ -4263,7 +4336,9 @@ export class StorageManager {
               }))
           : [],
       };
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return {
         extractionCount: 0,
         lastExtractionAt: null,
@@ -4278,7 +4353,7 @@ export class StorageManager {
   async saveMeta(state: MetaState): Promise<void> {
     await this.ensureDirectories();
     const metaPath = path.join(this.stateDir, "meta.json");
-    await writeFile(metaPath, JSON.stringify(state, null, 2), "utf-8");
+    await this.writeStorageSecureFile(metaPath, JSON.stringify(state, null, 2));
   }
 
   async appendMemoryActionEvents(events: MemoryActionEvent[]): Promise<number> {
@@ -4294,7 +4369,7 @@ export class StorageManager {
       return `${JSON.stringify(normalized)}\n`;
     }).join("");
 
-    await appendFile(this.memoryActionsPath, payload, "utf-8");
+    await this.appendStorageSecureFile(this.memoryActionsPath, payload);
     return events.length;
   }
 
@@ -4311,7 +4386,7 @@ export class StorageManager {
       return `${JSON.stringify(normalized)}\n`;
     }).join("");
 
-    await appendFile(this.memoryLifecycleLedgerPath, payload, "utf-8");
+    await this.appendStorageSecureFile(this.memoryLifecycleLedgerPath, payload);
     return events.length;
   }
 
@@ -4345,7 +4420,7 @@ export class StorageManager {
       })
       .join("");
 
-    await appendFile(this.bufferSurpriseLedgerPath, payload, "utf-8");
+    await this.appendStorageSecureFile(this.bufferSurpriseLedgerPath, payload);
     return events.length;
   }
 
@@ -4385,8 +4460,9 @@ export class StorageManager {
   ): Promise<BufferSurpriseEvent[]> {
     let raw: string;
     try {
-      raw = await readFile(this.bufferSurpriseLedgerPath, "utf-8");
+      raw = await this.readStorageSecureFile(this.bufferSurpriseLedgerPath);
     } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "ENOENT") return [];
       throw err;
@@ -4440,7 +4516,7 @@ export class StorageManager {
 
     let existingKeys = new Set<string>();
     try {
-      const raw = await readFile(this.behaviorSignalsPath, "utf-8");
+      const raw = await this.readStorageSecureFile(this.behaviorSignalsPath);
       const lines = raw.split("\n");
       for (const line of lines) {
         const row = line.trim();
@@ -4454,7 +4530,9 @@ export class StorageManager {
           // Ignore malformed rows (fail-open).
         }
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       existingKeys = new Set<string>();
     }
 
@@ -4472,7 +4550,7 @@ export class StorageManager {
 
     if (deduped.length === 0) return 0;
     const payload = deduped.map((event) => `${JSON.stringify(event)}\n`).join("");
-    await appendFile(this.behaviorSignalsPath, payload, "utf-8");
+    await this.appendStorageSecureFile(this.behaviorSignalsPath, payload);
     return deduped.length;
   }
 
@@ -4482,9 +4560,11 @@ export class StorageManager {
     const filePath = path.join(this.stateDir, "reextract-jobs.jsonl");
     const lines = events.map((event) => JSON.stringify(event)).join("\n") + "\n";
     try {
-      await appendFile(filePath, lines, "utf-8");
+      await this.appendStorageSecureFile(filePath, lines);
       return events.length;
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return 0;
     }
   }
@@ -4493,7 +4573,7 @@ export class StorageManager {
     const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(1000, Math.floor(limit))) : 200;
     const filePath = path.join(this.stateDir, "reextract-jobs.jsonl");
     try {
-      const raw = await readFile(filePath, "utf-8");
+      const raw = await this.readStorageSecureFile(filePath);
       const lines = raw.split("\n").filter((line) => line.trim().length > 0);
       const parsed: ReextractJobRequest[] = [];
       for (const line of lines) {
@@ -4521,7 +4601,9 @@ export class StorageManager {
         }
       }
       return parsed.slice(-safeLimit);
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return [];
     }
   }
@@ -4531,7 +4613,7 @@ export class StorageManager {
     if (cappedLimit === 0) return [];
 
     try {
-      const raw = await readFile(this.behaviorSignalsPath, "utf-8");
+      const raw = await this.readStorageSecureFile(this.behaviorSignalsPath);
       const out: BehaviorSignalEvent[] = [];
       const lines = raw.split("\n");
       for (let i = lines.length - 1; i >= 0 && out.length < cappedLimit; i -= 1) {
@@ -4557,44 +4639,61 @@ export class StorageManager {
         }
       }
       return out.reverse();
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return [];
     }
   }
 
   async readMemoryActionEvents(limit: number = 200): Promise<MemoryActionEvent[]> {
+    return (await this.readMemoryActionEventRows(limit)).map((row) => row.event);
+  }
+
+  async readMemoryActionEventRows(limit: number = 200): Promise<Array<{ line: number; event: MemoryActionEvent }>> {
     const cappedLimit = Math.max(0, Math.floor(limit));
     if (cappedLimit === 0) return [];
 
     try {
-      const raw = await readFile(this.memoryActionsPath, "utf-8");
-      const out: MemoryActionEvent[] = [];
+      const raw = await this.readStorageSecureFile(this.memoryActionsPath);
+      const out: Array<{ line: number; event: MemoryActionEvent }> = [];
       const lines = raw.split("\n");
       for (let i = lines.length - 1; i >= 0 && out.length < cappedLimit; i -= 1) {
         const line = lines[i]?.trim();
         if (!line) continue;
         try {
           const parsed = JSON.parse(line) as Partial<MemoryActionEvent>;
+          const outcome = parsed.outcome === "applied" || parsed.outcome === "skipped" || parsed.outcome === "failed"
+            ? parsed.outcome
+            : null;
           if (
             typeof parsed.timestamp === "string" &&
             typeof parsed.action === "string" &&
-            typeof parsed.outcome === "string"
+            outcome !== null
           ) {
-            out.push(parsed as MemoryActionEvent);
+            out.push({
+              line: i + 1,
+              event: {
+                ...parsed,
+                outcome,
+              } as MemoryActionEvent,
+            });
           }
         } catch {
           // Ignore malformed rows (fail-open).
         }
       }
       return out.reverse();
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return [];
     }
   }
 
   async readAllMemoryLifecycleEvents(): Promise<MemoryLifecycleEvent[]> {
     try {
-      const raw = await readFile(this.memoryLifecycleLedgerPath, "utf-8");
+      const raw = await this.readStorageSecureFile(this.memoryLifecycleLedgerPath);
       const out: MemoryLifecycleEvent[] = [];
       const lines = raw.split("\n");
       for (const line of lines) {
@@ -4617,7 +4716,9 @@ export class StorageManager {
         }
       }
       return sortMemoryLifecycleEvents(out);
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return [];
     }
   }
@@ -4631,26 +4732,30 @@ export class StorageManager {
 
   async writeCompressionGuidelines(content: string): Promise<void> {
     await this.ensureDirectories();
-    await writeFile(this.compressionGuidelinesPath, content, "utf-8");
+    await this.writeStorageSecureFile(this.compressionGuidelinesPath, content);
   }
 
   async readCompressionGuidelines(): Promise<string | null> {
     try {
-      return await readFile(this.compressionGuidelinesPath, "utf-8");
-    } catch {
+      return await this.readStorageSecureFile(this.compressionGuidelinesPath);
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return null;
     }
   }
 
   async writeCompressionGuidelineDraft(content: string): Promise<void> {
     await this.ensureDirectories();
-    await writeFile(this.compressionGuidelineDraftPath, content, "utf-8");
+    await this.writeStorageSecureFile(this.compressionGuidelineDraftPath, content);
   }
 
   async readCompressionGuidelineDraft(): Promise<string | null> {
     try {
-      return await readFile(this.compressionGuidelineDraftPath, "utf-8");
-    } catch {
+      return await this.readStorageSecureFile(this.compressionGuidelineDraftPath);
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return null;
     }
   }
@@ -4659,14 +4764,14 @@ export class StorageManager {
     state: CompressionGuidelineOptimizerState,
   ): Promise<void> {
     await this.ensureDirectories();
-    await writeFile(this.compressionGuidelineStatePath, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
+    await this.writeStorageSecureFile(this.compressionGuidelineStatePath, `${JSON.stringify(state, null, 2)}\n`);
   }
 
   async writeCompressionGuidelineDraftState(
     state: CompressionGuidelineOptimizerState,
   ): Promise<void> {
     await this.ensureDirectories();
-    await writeFile(this.compressionGuidelineDraftStatePath, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
+    await this.writeStorageSecureFile(this.compressionGuidelineDraftStatePath, `${JSON.stringify(state, null, 2)}\n`);
   }
 
   async readCompressionGuidelineOptimizerState(): Promise<CompressionGuidelineOptimizerState | null> {
@@ -4759,7 +4864,7 @@ export class StorageManager {
     };
 
     try {
-      const raw = await readFile(filePath, "utf-8");
+      const raw = await this.readStorageSecureFile(filePath);
       const parsed = JSON.parse(raw) as Partial<CompressionGuidelineOptimizerState>;
       const sourceWindow = parsed?.sourceWindow as Partial<CompressionGuidelineOptimizerState["sourceWindow"]>;
       const eventCounts = parsed?.eventCounts as Partial<CompressionGuidelineOptimizerState["eventCounts"]>;
@@ -4815,7 +4920,9 @@ export class StorageManager {
         ...(actionSummaries ? { actionSummaries } : {}),
         ...(ruleUpdates ? { ruleUpdates } : {}),
       };
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return null;
     }
   }
@@ -5460,12 +5567,14 @@ export class StorageManager {
 
   async readEntitySynthesisQueue(): Promise<string[]> {
     try {
-      const raw = await readFile(this.entitySynthesisQueuePath, "utf-8");
+      const raw = await this.readStorageSecureFile(this.entitySynthesisQueuePath);
       const parsed = JSON.parse(raw) as { entityNames?: unknown };
       return Array.isArray(parsed.entityNames)
         ? parsed.entityNames.filter((value): value is string => typeof value === "string")
         : [];
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return [];
     }
   }
@@ -5493,7 +5602,7 @@ export class StorageManager {
       .map(({ entityName }) => entityName);
 
     await mkdir(this.stateDir, { recursive: true });
-    await writeFile(
+    await this.writeStorageSecureFile(
       this.entitySynthesisQueuePath,
       JSON.stringify(
         {
@@ -5503,7 +5612,6 @@ export class StorageManager {
         null,
         2,
       ) + "\n",
-      "utf-8",
     );
     return staleEntityNames;
   }
@@ -5515,7 +5623,7 @@ export class StorageManager {
     const removals = new Set(entityNames);
     const nextQueue = queue.filter((name) => !removals.has(name));
     await mkdir(this.stateDir, { recursive: true });
-    await writeFile(
+    await this.writeStorageSecureFile(
       this.entitySynthesisQueuePath,
       JSON.stringify(
         {
@@ -5525,7 +5633,6 @@ export class StorageManager {
         null,
         2,
       ) + "\n",
-      "utf-8",
     );
   }
 
@@ -6063,7 +6170,7 @@ export class StorageManager {
 
       const fileContent = `${serializeFrontmatter(newFm)}\n\n${memory.content}\n`;
       try {
-        await writeFile(memory.path, fileContent, "utf-8");
+        await this.writeStorageSecureFile(memory.path, fileContent);
         updated++;
       } catch (err) {
         log.debug(`failed to update access tracking for ${entry.memoryId}: ${err}`);
@@ -6245,7 +6352,7 @@ export class StorageManager {
       filePath = path.join(this.factsDir, today, `${id}.md`);
     }
 
-    await writeFile(filePath, fileContent, "utf-8");
+    await this.writeStorageSecureFile(filePath, fileContent);
     log.debug(`wrote chunk ${id} (${chunkIndex + 1}/${chunkTotal}) to ${filePath}`);
     return id;
   }
@@ -6333,7 +6440,7 @@ export class StorageManager {
   async writeSummary(summary: MemorySummary): Promise<void> {
     await mkdir(this.summariesDir, { recursive: true });
     const filePath = path.join(this.summariesDir, `${summary.id}.json`);
-    await writeFile(filePath, JSON.stringify(summary, null, 2), "utf-8");
+    await this.writeStorageSecureFile(filePath, JSON.stringify(summary, null, 2));
     log.debug(`wrote summary ${summary.id}`);
   }
 
@@ -6348,12 +6455,14 @@ export class StorageManager {
       for (const file of files) {
         if (!file.endsWith(".json")) continue;
         const filePath = path.join(this.summariesDir, file);
-        const raw = await readFile(filePath, "utf-8");
+        const raw = await this.readStorageSecureFile(filePath);
         summaries.push(JSON.parse(raw) as MemorySummary);
       }
 
       return summaries;
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return [];
     }
   }
@@ -6381,7 +6490,7 @@ export class StorageManager {
       const fileContent = `${serializeFrontmatter(updatedFm)}\n\n${memory.content}\n`;
 
       try {
-        await writeFile(memory.path, fileContent, "utf-8");
+        await this.writeStorageSecureFile(memory.path, fileContent);
         await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.archiveMemories", {
           memoryId: id,
           eventType: "archived",
@@ -6415,7 +6524,7 @@ export class StorageManager {
   async saveTopics(topics: TopicScore[]): Promise<void> {
     const metaPath = path.join(this.stateDir, "topics.json");
     await mkdir(this.stateDir, { recursive: true });
-    await writeFile(metaPath, JSON.stringify({ topics, updatedAt: new Date().toISOString() }, null, 2), "utf-8");
+    await this.writeStorageSecureFile(metaPath, JSON.stringify({ topics, updatedAt: new Date().toISOString() }, null, 2));
     log.debug(`saved ${topics.length} topic scores`);
   }
 
@@ -6425,9 +6534,11 @@ export class StorageManager {
   async loadTopics(): Promise<{ topics: TopicScore[]; updatedAt: string | null }> {
     const metaPath = path.join(this.stateDir, "topics.json");
     try {
-      const raw = await readFile(metaPath, "utf-8");
+      const raw = await this.readStorageSecureFile(metaPath);
       return JSON.parse(raw) as { topics: TopicScore[]; updatedAt: string | null };
-    } catch {
+    } catch (err) {
+      if (err instanceof SecureStoreLockedError) throw err;
+      if (!isErrnoCode(err, "ENOENT")) throw err;
       return { topics: [], updatedAt: null };
     }
   }
