@@ -4518,8 +4518,9 @@ export class EngramAccessService {
    * Export a capsule archive from the orchestrator's memory directory.
    *
    * HTTP and future MCP surfaces use this rather than calling the transfer
-   * helper directly so namespace ACL checks stay consistent with other read
-   * surfaces. The exporter still owns archive construction and validation.
+   * helper directly so namespace ACL checks stay consistent with the archive
+   * write side effect. The exporter still owns archive construction and
+   * validation.
    */
   async capsuleExport(
     opts: Omit<ExportCapsuleOptions, "root" | "memoryDir"> & {
