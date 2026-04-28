@@ -3,6 +3,8 @@
 // field-level detail so consumers get clear feedback on malformed requests.
 
 import { z } from "zod";
+import { isValidCapsuleSince } from "./transfer/capsule-export.js";
+import { CAPSULE_ID_PATTERN } from "./transfer/types.js";
 
 // ---------------------------------------------------------------------------
 // Error formatting
@@ -248,6 +250,58 @@ export const daySummaryRequestSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Capsule export
+// ---------------------------------------------------------------------------
+
+const capsuleTopLevelSegmentSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .refine(
+    (value) => !value.includes("/") && !value.includes("\\"),
+    "must be a top-level directory name without path separators",
+  );
+
+const capsulePeerIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256)
+  .refine(
+    (value) => value !== "." && value !== ".." && !value.includes("/") && !value.includes("\\"),
+    "must be a plain peer id without path separators",
+  );
+
+const capsuleIsoSinceSchema = z
+  .string()
+  .trim()
+  .min(1, "since must be a non-empty ISO 8601 timestamp")
+  .max(128)
+  .refine(
+    isValidCapsuleSince,
+    "since must be a valid ISO 8601 timestamp with no calendar overflow",
+  );
+
+export const capsuleExportRequestSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "name is required")
+    .max(64, "name must be 64 characters or fewer")
+    .regex(
+      CAPSULE_ID_PATTERN,
+      "name must be alphanumeric with single dashes (no spaces, no leading/trailing dashes)",
+    ),
+  namespace: namespaceSchema,
+  since: capsuleIsoSinceSchema.optional(),
+  includeKinds: z.array(capsuleTopLevelSegmentSchema).max(50).optional(),
+  peerIds: z.array(capsulePeerIdSchema).max(100).optional(),
+  includeTranscripts: z.boolean().optional(),
+  encrypt: z.boolean().optional(),
+});
+
+// ---------------------------------------------------------------------------
 // Inferred types
 // ---------------------------------------------------------------------------
 
@@ -262,6 +316,7 @@ export type TrustZonePromoteRequest = z.infer<typeof trustZonePromoteRequestSche
 export type TrustZoneDemoSeedRequest = z.infer<typeof trustZoneDemoSeedRequestSchema>;
 export type LcmSearchRequest = z.infer<typeof lcmSearchRequestSchema>;
 export type DaySummaryRequest = z.infer<typeof daySummaryRequestSchema>;
+export type CapsuleExportRequest = z.infer<typeof capsuleExportRequestSchema>;
 
 // ---------------------------------------------------------------------------
 // Validation helper
@@ -278,7 +333,8 @@ export type SchemaName =
   | "trustZonePromote"
   | "trustZoneDemoSeed"
   | "lcmSearch"
-  | "daySummary";
+  | "daySummary"
+  | "capsuleExport";
 
 export type SchemaTypeFor<N extends SchemaName> =
   N extends "recall" ? RecallRequest
@@ -292,6 +348,7 @@ export type SchemaTypeFor<N extends SchemaName> =
   : N extends "trustZoneDemoSeed" ? TrustZoneDemoSeedRequest
   : N extends "lcmSearch" ? LcmSearchRequest
   : N extends "daySummary" ? DaySummaryRequest
+  : N extends "capsuleExport" ? CapsuleExportRequest
   : never;
 
 const schemas: Record<SchemaName, z.ZodTypeAny> = {
@@ -306,6 +363,7 @@ const schemas: Record<SchemaName, z.ZodTypeAny> = {
   trustZoneDemoSeed: trustZoneDemoSeedRequestSchema,
   lcmSearch: lcmSearchRequestSchema,
   daySummary: daySummaryRequestSchema,
+  capsuleExport: capsuleExportRequestSchema,
 };
 
 /**
