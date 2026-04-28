@@ -3,6 +3,7 @@ import type { LiveConnectorsConfig } from "./types.js";
 
 const LIVE_CONNECTOR_CRON_ID = "engram-live-connectors-sync";
 const DEFAULT_LIVE_CONNECTOR_CRON_EXPR = "*/5 * * * *";
+const ENABLED_LIVE_CONNECTOR_CRON_EXPR = "* * * * *";
 
 export async function ensureLiveConnectorCron(
   jobsPath: string,
@@ -50,23 +51,14 @@ export function liveConnectorCronExprForConfig(
   connectors: LiveConnectorsConfig | undefined,
 ): string {
   if (connectors === undefined) return DEFAULT_LIVE_CONNECTOR_CRON_EXPR;
-  const intervals = [
+  const hasEnabledConnector = [
     connectors.googleDrive,
     connectors.notion,
     connectors.gmail,
     connectors.github,
-  ]
-    .filter((connector) => connector.enabled)
-    .map((connector) => connector.pollIntervalMs)
-    .filter((value): value is number => Number.isFinite(value) && value > 0);
+  ].some((connector) => connector.enabled);
 
-  if (intervals.length === 0) return DEFAULT_LIVE_CONNECTOR_CRON_EXPR;
-  return pollIntervalMsToCronExpr(Math.min(...intervals));
-}
-
-function pollIntervalMsToCronExpr(pollIntervalMs: number): string {
-  const intervalMinutes = Math.max(1, Math.floor(pollIntervalMs / 60_000));
-  if (intervalMinutes <= 1) return "* * * * *";
-  if (intervalMinutes <= 59) return `*/${intervalMinutes} * * * *`;
-  return "0 * * * *";
+  return hasEnabledConnector
+    ? ENABLED_LIVE_CONNECTOR_CRON_EXPR
+    : DEFAULT_LIVE_CONNECTOR_CRON_EXPR;
 }

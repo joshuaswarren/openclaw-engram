@@ -40,7 +40,7 @@ test("OpenClaw live connector cron registers once and calls engram.live_connecto
   }
 });
 
-test("OpenClaw live connector cron derives cadence from enabled connector intervals", () => {
+test("OpenClaw live connector cron uses one-minute base cadence when connectors are enabled", () => {
   const connectors = {
     googleDrive: { enabled: false, pollIntervalMs: 60_000 },
     notion: { enabled: true, pollIntervalMs: 120_000 },
