@@ -140,10 +140,28 @@ interface MockApi {
   _hookHandlers: Map<string, unknown>;
   _registeredToolCount: number;
   _registeredToolNames: string[];
+  _registeredToolSpecs: unknown[];
   _registeredServiceIds: string[];
   _memoryPromptSectionRegistered: boolean;
   _registeredMemoryCapability?: any;
   _registeredCommands: unknown[];
+}
+
+function validateOpenClawPluginTool(tool: unknown): string | null {
+  if (!tool || typeof tool !== "object" || Array.isArray(tool)) {
+    return "tool must be an object";
+  }
+  const spec = tool as { name?: unknown; execute?: unknown; parameters?: unknown };
+  if (typeof spec.name !== "string" || spec.name.trim().length === 0) {
+    return "missing non-empty name";
+  }
+  if (typeof spec.execute !== "function") {
+    return `${spec.name} missing execute function`;
+  }
+  if (!spec.parameters || typeof spec.parameters !== "object" || Array.isArray(spec.parameters)) {
+    return `${spec.name} missing parameters object`;
+  }
+  return null;
 }
 
 function buildNewSdkApi(label: string): MockApi {
@@ -156,11 +174,13 @@ function buildNewSdkApi(label: string): MockApi {
     _hookHandlers: new Map(),
     _registeredToolCount: 0,
     _registeredToolNames: [],
+    _registeredToolSpecs: [],
     _registeredServiceIds: [],
     _memoryPromptSectionRegistered: false,
     _registeredCommands: [],
     registerTool(spec: unknown) {
       api._registeredToolCount++;
+      api._registeredToolSpecs.push(spec);
       if (spec && typeof spec === "object" && typeof (spec as { name?: unknown }).name === "string") {
         api._registeredToolNames.push((spec as { name: string }).name);
       }
@@ -196,11 +216,13 @@ function buildLegacySdkApi(label: string): MockApi {
     _hookHandlers: new Map(),
     _registeredToolCount: 0,
     _registeredToolNames: [],
+    _registeredToolSpecs: [],
     _registeredServiceIds: [],
     _memoryPromptSectionRegistered: false,
     _registeredCommands: [],
     registerTool(spec: unknown) {
       api._registeredToolCount++;
+      api._registeredToolSpecs.push(spec);
       if (spec && typeof spec === "object" && typeof (spec as { name?: unknown }).name === "string") {
         api._registeredToolNames.push((spec as { name: string }).name);
       }
@@ -399,6 +421,27 @@ test("new SDK registers active-memory tool names and slash commands", async () =
       api._registeredToolNames.includes("memory_get"),
       "memory_get should be registered for OpenClaw active-memory routing",
     );
+    for (const tool of api._registeredToolSpecs) {
+      const name =
+        tool && typeof tool === "object" && typeof (tool as { name?: unknown }).name === "string"
+          ? (tool as { name: string }).name
+          : "<unknown>";
+      assert.equal(
+        validateOpenClawPluginTool(tool),
+        null,
+        `${name} should satisfy OpenClaw's plugin tool validator`,
+      );
+    }
+    for (const toolName of ["memory_search", "memory_get"]) {
+      const tool = api._registeredToolSpecs.find((spec) =>
+        spec && typeof spec === "object" && (spec as { name?: unknown }).name === toolName
+      );
+      assert.equal(
+        validateOpenClawPluginTool(tool),
+        null,
+        `${toolName} should satisfy OpenClaw's plugin tool validator`,
+      );
+    }
     assert.ok(
       api._registeredCommands.length > 0,
       "registerCommand should be used when available for session-scoped recall toggles",

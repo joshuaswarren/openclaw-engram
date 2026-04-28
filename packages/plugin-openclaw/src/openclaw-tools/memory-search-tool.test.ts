@@ -3,6 +3,32 @@ import test from "node:test";
 
 import { buildMemorySearchTool } from "./memory-search-tool.js";
 
+function validateOpenClawPluginTool(tool: unknown): string | null {
+  if (!tool || typeof tool !== "object" || Array.isArray(tool)) {
+    return "tool must be an object";
+  }
+  const spec = tool as { name?: unknown; execute?: unknown; parameters?: unknown };
+  if (typeof spec.name !== "string" || spec.name.trim().length === 0) {
+    return "missing non-empty name";
+  }
+  if (typeof spec.execute !== "function") {
+    return `${spec.name} missing execute function`;
+  }
+  if (!spec.parameters || typeof spec.parameters !== "object" || Array.isArray(spec.parameters)) {
+    return `${spec.name} missing parameters object`;
+  }
+  return null;
+}
+
+test("memory-search tool exposes parameters for OpenClaw plugin validation", () => {
+  const tool = buildMemorySearchTool({} as never, {
+    recallForActiveMemory: async () => ({ results: [], truncated: false }),
+  });
+
+  assert.equal(validateOpenClawPluginTool(tool), null);
+  assert.equal(tool.parameters, tool.inputSchema);
+});
+
 test("memory-search tool uses ctx session key and returns a structured JSON payload", async () => {
   let received: Record<string, unknown> | null = null;
   const tool = buildMemorySearchTool(
