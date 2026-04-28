@@ -134,7 +134,7 @@ export async function runMemoryArenaBenchmark(
           );
           const answered = await answerBenchmarkQuestion({
             question: benchmarkQuestion,
-            recalledText: answerContext,
+            recalledText: options.system.responder ? answerContext : recalledText,
             responder: options.system.responder,
             answerMode: "strict",
           });

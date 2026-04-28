@@ -65,7 +65,7 @@ function amaResult(): BenchmarkResult {
           taskId: "q3",
           question: "What happened?",
           expected: "unknown",
-          actual: "",
+          actual: "(error: recall failed)",
           scores: { llm_judge: 0 },
           latencyMs: 1,
           tokens: { input: 0, output: 0 },
@@ -89,6 +89,16 @@ test("buildAmaBenchLeaderboardRows groups answers by episode in task order", () 
       answer_list: ["unknown"],
     },
   ]);
+});
+
+test("buildAmaBenchLeaderboardRows rejects missing episode ids instead of undercounting", () => {
+  const result = amaResult();
+  delete result.results.tasks[0]!.details;
+
+  assert.throws(
+    () => buildAmaBenchLeaderboardRows(result),
+    /requires details\.episodeId/,
+  );
 });
 
 test("serializeJsonl emits one valid JSON object per line", () => {

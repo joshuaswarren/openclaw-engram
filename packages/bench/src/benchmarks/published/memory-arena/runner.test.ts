@@ -259,3 +259,65 @@ test("MemoryArena passes the live task prompt into answer context", async () => 
     await rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("MemoryArena no-responder runs do not score the live task prompt as recall", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "remnic-memory-arena-"));
+  const datasetPath = path.join(tempDir, "bundled_shopping.jsonl");
+
+  try {
+    await writeFile(
+      datasetPath,
+      JSON.stringify({
+        id: 10,
+        category: "bundled_shopping",
+        questions: [
+          "Product options include ASIN A. Which item should be purchased?",
+        ],
+        answers: ["ASIN A"],
+      }) + "\n",
+      "utf8",
+    );
+
+    const result = await runMemoryArenaBenchmark({
+      benchmark: memoryArenaDefinition,
+      mode: "full",
+      datasetDir: tempDir,
+      system: {
+        async store() {},
+        async recall() {
+          return "Prior memory context without the answer.";
+        },
+        async search() {
+          return [];
+        },
+        async reset() {},
+        async destroy() {},
+        async getStats() {
+          return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: 0 };
+        },
+        judge: {
+          async score() {
+            return 0;
+          },
+          async scoreWithMetrics() {
+            return {
+              score: 0,
+              tokens: { input: 0, output: 0 },
+              latencyMs: 0,
+              model: "judge-smoke",
+            };
+          },
+        },
+      },
+    });
+
+    assert.equal(result.results.tasks[0]?.actual, "Prior memory context without the answer.");
+    assert.equal(result.results.tasks[0]?.scores.contains_answer, 0);
+    assert.match(
+      String(result.results.tasks[0]?.details?.answerContext ?? ""),
+      /Product options include ASIN A/,
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});

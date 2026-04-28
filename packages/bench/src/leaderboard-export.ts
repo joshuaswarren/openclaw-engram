@@ -57,7 +57,9 @@ export function buildAmaBenchLeaderboardRows(
   result.results.tasks.forEach((task, taskIndex) => {
     const episodeId = amaBenchEpisodeIdForTask(task);
     if (episodeId === undefined) {
-      return;
+      throw new Error(
+        `AMA-Bench leaderboard export requires details.episodeId for every task; missing on ${task.taskId}.`,
+      );
     }
 
     const existing = rowsByEpisode.get(episodeId);
@@ -97,5 +99,8 @@ function amaBenchEpisodeIdForTask(task: TaskResult): number | string | undefined
 
 function normalizeAmaBenchAnswer(answer: string): string {
   const trimmed = answer.trim();
+  if (/^\(error:/i.test(trimmed)) {
+    return "unknown";
+  }
   return trimmed.length > 0 ? trimmed : "unknown";
 }
