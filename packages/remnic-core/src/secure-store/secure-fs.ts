@@ -299,6 +299,15 @@ export interface MigrateResult {
   errors: Array<{ filePath: string; error: string }>;
 }
 
+export interface DecryptResult {
+  /** Number of files successfully decrypted back to plaintext. */
+  decrypted: number;
+  /** Number of files already plaintext (skipped). */
+  skipped: number;
+  /** Files that failed to decrypt (path → error message). */
+  errors: Array<{ filePath: string; error: string }>;
+}
+
 /**
  * Walk `dir` recursively, find encryptable `.md` files that are not
  * yet encrypted, and re-write them as encrypted files under `key`.
@@ -344,7 +353,7 @@ export async function migrateMemoryDirToEncrypted(
         }
       }
       const content = buf.toString("utf8");
-      const aad = filePathAad(filePath, dir);
+      const aad = filePathAad(filePath, storageAadRootForFile(filePath, dir));
       const encrypted = encryptFileBody(content, key, aad);
 
       // Atomic write: temp → rename (gotcha #54).
@@ -374,6 +383,57 @@ export async function migrateMemoryDirToEncrypted(
   return result;
 }
 
+/**
+ * Walk `dir` recursively, find storage-managed encrypted files, and
+ * re-write them as plaintext under the same paths.
+ *
+ * This is the reversible counterpart to {@link migrateMemoryDirToEncrypted}.
+ * It only touches files under the same storage-managed roots, skips
+ * plaintext files, skips symlinks, excludes `.secure-store/`, and writes
+ * each plaintext replacement via temp-file + rename so a per-file failure
+ * leaves the ciphertext intact.
+ */
+export async function decryptMemoryDirToPlaintext(
+  dir: string,
+  key: Buffer,
+): Promise<DecryptResult> {
+  const result: DecryptResult = { decrypted: 0, skipped: 0, errors: [] };
+
+  const files = await collectStorageManagedFiles(dir, isDecryptableStoragePath);
+  for (const filePath of files) {
+    try {
+      const buf = await readFile(filePath);
+      if (!isEncryptedFile(buf)) {
+        result.skipped++;
+        continue;
+      }
+
+      const aad = filePathAad(filePath, storageAadRootForFile(filePath, dir));
+      const plaintext = decryptFileBody(buf, key, aad);
+      const tempPath = `${filePath}.dec-tmp-${process.pid}-${Date.now()}`;
+      try {
+        await writeFile(tempPath, plaintext, { mode: 0o600 });
+        await rename(tempPath, filePath);
+        result.decrypted++;
+      } catch (writeErr) {
+        try {
+          await unlink(tempPath);
+        } catch {
+          // ignore cleanup errors; original ciphertext is still intact.
+        }
+        throw writeErr;
+      }
+    } catch (err) {
+      result.errors.push({
+        filePath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -384,6 +444,21 @@ export async function migrateMemoryDirToEncrypted(
  * and `.secure-store/` metadata.
  */
 async function collectMdFiles(dir: string, rootDir = dir): Promise<string[]> {
+  const files = await collectStorageManagedFiles(dir, isEncryptableStoragePath, rootDir);
+  return files.filter((filePath) => path.basename(filePath).endsWith(".md"));
+}
+
+/**
+ * Recursively collect regular files under storage-managed roots, excluding
+ * symlinked entries and `.secure-store/` metadata. This broader collector is
+ * used by the decrypt/disable path so future encrypted sidecars can be
+ * restored without requiring extension-specific logic.
+ */
+async function collectStorageManagedFiles(
+  dir: string,
+  includeFile: (filePath: string, rootDir: string) => boolean,
+  rootDir = dir,
+): Promise<string[]> {
   const results: string[] = [];
   let names: string[];
   try {
@@ -405,9 +480,9 @@ async function collectMdFiles(dir: string, rootDir = dir): Promise<string[]> {
       continue;
     }
     if (isDir) {
-      const sub = await collectMdFiles(full, rootDir);
+      const sub = await collectStorageManagedFiles(full, includeFile, rootDir);
       results.push(...sub);
-    } else if (isFile && name.endsWith(".md") && isEncryptableStoragePath(full, rootDir)) {
+    } else if (isFile && includeFile(full, rootDir)) {
       results.push(full);
     }
   }
@@ -417,10 +492,38 @@ async function collectMdFiles(dir: string, rootDir = dir): Promise<string[]> {
 function isEncryptableStoragePath(filePath: string, rootDir: string): boolean {
   const rel = path.relative(rootDir, filePath);
   if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return false;
-  const normalized = rel.split(path.sep).join("/");
+  const normalized = normalizeStorageRelativePath(rel);
   if (normalized === "profile.md") return true;
   const firstSegment = normalized.split("/", 1)[0];
   return ENCRYPTABLE_STORAGE_ROOTS.has(firstSegment);
+}
+
+function isDecryptableStoragePath(filePath: string, rootDir: string): boolean {
+  if (isEncryptableStoragePath(filePath, rootDir)) return true;
+  const rel = path.relative(rootDir, filePath);
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return false;
+  const normalized = normalizeStorageRelativePath(rel);
+  const firstSegment = normalized.split("/", 1)[0];
+  return DECRYPTABLE_SIDECAR_ROOTS.has(firstSegment);
+}
+
+function normalizeStorageRelativePath(rel: string): string {
+  const normalized = rel.split(path.sep).join("/");
+  const parts = normalized.split("/");
+  if (parts[0] === "namespaces" && parts.length >= 3) {
+    return parts.slice(2).join("/");
+  }
+  return normalized;
+}
+
+function storageAadRootForFile(filePath: string, rootDir: string): string {
+  const rel = path.relative(rootDir, filePath);
+  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) return rootDir;
+  const parts = rel.split(path.sep);
+  if (parts[0] === "namespaces" && parts.length >= 3 && parts[1]) {
+    return path.join(rootDir, "namespaces", parts[1]);
+  }
+  return rootDir;
 }
 
 const ENCRYPTABLE_STORAGE_ROOTS = new Set([
@@ -430,4 +533,11 @@ const ENCRYPTABLE_STORAGE_ROOTS = new Set([
   "reasoning-traces",
   "artifacts",
   "archive",
+]);
+
+const DECRYPTABLE_SIDECAR_ROOTS = new Set([
+  "state",
+  "indexes",
+  "index",
+  "provenance",
 ]);

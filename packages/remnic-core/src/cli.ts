@@ -8792,6 +8792,42 @@ export function registerCli(
           }
         });
 
+      async function runSecureStoreDisableCommand(options: Record<string, unknown>): Promise<void> {
+        const { runSecureStoreDisable, renderDisableReport } = await import(
+          "./secure-store/index.js"
+        );
+        const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+        const report = await runSecureStoreDisable({ memoryDir });
+        if (options.json === true) {
+          console.log(JSON.stringify(report, null, 2));
+        } else {
+          console.log(renderDisableReport(report));
+        }
+        if (!report.ok) {
+          process.exitCode = 1;
+        }
+      }
+
+      secureStoreCmd
+        .command("disable")
+        .description(
+          "Decrypt storage-managed secure-store files back to plaintext. Requires an initialized, unlocked secure-store and keeps .secure-store metadata in place.",
+        )
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          await runSecureStoreDisableCommand(options);
+        });
+
+      secureStoreCmd
+        .command("decrypt")
+        .description("Alias for `secure-store disable`.")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          await runSecureStoreDisableCommand(options);
+        });
+
       secureStoreCmd
         .command("status")
         .description(

@@ -22,6 +22,7 @@ import {
   SecureStoreDecryptError,
   SecureStoreLockedError,
   decryptFileBody,
+  decryptMemoryDirToPlaintext,
   encryptFileBody,
   isEncryptedFile,
   migrateMemoryDirToEncrypted,
@@ -271,6 +272,7 @@ test("migrateMemoryDirToEncrypted — only encrypts storage-secure markdown path
       path.join(dir, "facts", "2024-01-01", "fact.md"),
       path.join(dir, "artifacts", "2024-01-01", "artifact.md"),
       path.join(dir, "archive", "2024-01-01", "archived.md"),
+      path.join(dir, "namespaces", "team-a", "facts", "2024-01-01", "fact.md"),
       path.join(dir, "profile.md"),
     ];
     const plainPaths = [
@@ -289,6 +291,14 @@ test("migrateMemoryDirToEncrypted — only encrypts storage-secure markdown path
     for (const f of encryptedPaths) {
       assert.ok(isEncryptedFile(await readFile(f)), `${f} should be encrypted`);
     }
+    assert.strictEqual(
+      await readMaybeEncryptedFile(
+        path.join(dir, "namespaces", "team-a", "facts", "2024-01-01", "fact.md"),
+        key,
+        path.join(dir, "namespaces", "team-a"),
+      ),
+      "content for fact.md",
+    );
     for (const f of plainPaths) {
       assert.strictEqual((await readFile(f, "utf8")).startsWith("content for"), true);
     }
@@ -341,6 +351,67 @@ test("migrateMemoryDirToEncrypted — decryptable after migration", async () => 
     const decrypted = await readMaybeEncryptedFile(filePath, key, dir);
     assert.strictEqual(decrypted, originalContent);
   });
+});
+
+test("decryptMemoryDirToPlaintext — decrypts encrypted files and is idempotent", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const encryptedFile = path.join(dir, "facts", "2024-01-01", "fact.md");
+    const namespacedFile = path.join(dir, "namespaces", "team-a", "facts", "2024-01-01", "fact.md");
+    const plaintextFile = path.join(dir, "facts", "2024-01-01", "plain.md");
+    const stateFile = path.join(dir, "state", "fact-hashes.txt");
+    await mkdir(path.dirname(encryptedFile), { recursive: true });
+    await mkdir(path.dirname(namespacedFile), { recursive: true });
+    await mkdir(path.dirname(stateFile), { recursive: true });
+    await writeMaybeEncryptedFile(encryptedFile, "encrypted fact", key, {}, dir);
+    await writeMaybeEncryptedFile(
+      namespacedFile,
+      "encrypted namespaced fact",
+      key,
+      {},
+      path.join(dir, "namespaces", "team-a"),
+    );
+    await writeFile(plaintextFile, "already plain", "utf8");
+    await writeMaybeEncryptedFile(stateFile, "encrypted state", key, {}, dir);
+
+    const first = await decryptMemoryDirToPlaintext(dir, key);
+    assert.strictEqual(first.decrypted, 3);
+    assert.strictEqual(first.skipped, 1);
+    assert.strictEqual(first.errors.length, 0);
+    assert.strictEqual(await readFile(encryptedFile, "utf8"), "encrypted fact");
+    assert.strictEqual(await readFile(namespacedFile, "utf8"), "encrypted namespaced fact");
+    assert.strictEqual(await readFile(plaintextFile, "utf8"), "already plain");
+    assert.strictEqual(await readFile(stateFile, "utf8"), "encrypted state");
+
+    const second = await decryptMemoryDirToPlaintext(dir, key);
+    assert.strictEqual(second.decrypted, 0);
+    assert.strictEqual(second.skipped, 4);
+    assert.strictEqual(second.errors.length, 0);
+  });
+});
+
+test("decryptMemoryDirToPlaintext — skips symlinked directories and secure metadata", async () => {
+  const outside = await mkdtemp(path.join(os.tmpdir(), "remnic-secure-outside-"));
+  try {
+    await withTempDir(async (dir) => {
+      const key = makeKey();
+      const outsideFile = path.join(outside, "outside.md");
+      await writeMaybeEncryptedFile(outsideFile, "outside content", key, {}, outside);
+      await symlink(outside, path.join(dir, "facts"), "dir");
+      const metadataFile = path.join(dir, ".secure-store", "header.md");
+      await mkdir(path.dirname(metadataFile), { recursive: true });
+      await writeMaybeEncryptedFile(metadataFile, "metadata content", key, {}, dir);
+
+      const result = await decryptMemoryDirToPlaintext(dir, key);
+
+      assert.strictEqual(result.decrypted, 0);
+      assert.strictEqual(result.errors.length, 0);
+      assert.strictEqual(isEncryptedFile(await readFile(outsideFile)), true);
+      assert.strictEqual(isEncryptedFile(await readFile(metadataFile)), true);
+    });
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
 });
 
 test("migrateMemoryDirToEncrypted — invokes onBeforeEncrypt callback", async () => {

@@ -25,6 +25,7 @@ import {
   keyring,
   parseHeader,
   readHeader,
+  runSecureStoreDisable,
   runSecureStoreInit,
   runSecureStoreLock,
   runSecureStoreMigrate,
@@ -424,6 +425,80 @@ test("migrate fails clearly when the secure-store is locked", async () => {
   });
 });
 
+test("disable decrypts encrypted files and leaves the header in place", async () => {
+  await withTmpMemoryDir(async (memoryDir, keyringId) => {
+    const init = staticPassphraseReader(TEST_PASSPHRASE, TEST_PASSPHRASE);
+    await runSecureStoreInit({
+      memoryDir,
+      keyringId,
+      readPassphrase: init.reader,
+      algorithm: "scrypt",
+      params: FAST_SCRYPT,
+    });
+    await runSecureStoreUnlock({
+      memoryDir,
+      keyringId,
+      readPassphrase: staticPassphraseReader(TEST_PASSPHRASE).reader,
+    });
+
+    const filePath = path.join(memoryDir, "facts", "2026-04-28", "fact-a.md");
+    const original = "---\nid: fact-a\ncategory: fact\n---\nprivate fact";
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, original, "utf8");
+    await runSecureStoreMigrate({ memoryDir, keyringId });
+    assert.equal(isEncryptedFile(await readFile(filePath)), true);
+
+    const report = await runSecureStoreDisable({ memoryDir, keyringId });
+    assert.equal(report.ok, true);
+    assert.equal(report.decrypted, 1);
+    assert.equal(report.skipped, 0);
+    assert.equal(report.errors.length, 0);
+    assert.equal(await readFile(filePath, "utf8"), original);
+    assert.equal(isEncryptedFile(await readFile(filePath)), false);
+    assert.notEqual(await readHeader(memoryDir), null);
+
+    const second = await runSecureStoreDisable({ memoryDir, keyringId });
+    assert.equal(second.ok, true);
+    assert.equal(second.decrypted, 0);
+    assert.equal(second.skipped, 1);
+    assert.equal(second.errors.length, 0);
+  });
+});
+
+test("disable fails clearly when the secure-store is not initialized", async () => {
+  await withTmpMemoryDir(async (memoryDir, keyringId) => {
+    const report = await runSecureStoreDisable({ memoryDir, keyringId });
+    assert.deepEqual(report, {
+      ok: false,
+      reason: "not-initialized",
+      decrypted: 0,
+      skipped: 0,
+      errors: [],
+    });
+  });
+});
+
+test("disable fails clearly when the secure-store is locked", async () => {
+  await withTmpMemoryDir(async (memoryDir, keyringId) => {
+    const init = staticPassphraseReader(TEST_PASSPHRASE, TEST_PASSPHRASE);
+    await runSecureStoreInit({
+      memoryDir,
+      keyringId,
+      readPassphrase: init.reader,
+      algorithm: "scrypt",
+      params: FAST_SCRYPT,
+    });
+    const report = await runSecureStoreDisable({ memoryDir, keyringId });
+    assert.deepEqual(report, {
+      ok: false,
+      reason: "locked",
+      decrypted: 0,
+      skipped: 0,
+      errors: [],
+    });
+  });
+});
+
 test("cli.ts registers the secure-store migrate subcommand", async () => {
   const cliSource = await readFile(
     path.resolve(
@@ -439,6 +514,24 @@ test("cli.ts registers the secure-store migrate subcommand", async () => {
   assert.match(cliSource, /\.command\("migrate"\)/);
   assert.match(cliSource, /runSecureStoreMigrate/);
   assert.match(cliSource, /renderMigrateReport/);
+});
+
+test("cli.ts registers the secure-store disable and decrypt subcommands", async () => {
+  const cliSource = await readFile(
+    path.resolve(
+      import.meta.dirname,
+      "..",
+      "packages",
+      "remnic-core",
+      "src",
+      "cli.ts",
+    ),
+    "utf8",
+  );
+  assert.match(cliSource, /\.command\("disable"\)/);
+  assert.match(cliSource, /\.command\("decrypt"\)/);
+  assert.match(cliSource, /runSecureStoreDisable/);
+  assert.match(cliSource, /renderDisableReport/);
 });
 
 // ─── status (initialized) ────────────────────────────────────────────
