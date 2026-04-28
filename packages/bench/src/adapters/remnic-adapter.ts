@@ -2,6 +2,7 @@
  * Package-owned Remnic adapters used by the phase-1 benchmark CLI surface.
  */
 
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -203,11 +204,13 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
   return async function createAdapter(
     options: RemnicAdapterOptions = {},
   ): Promise<BenchMemoryAdapter> {
+    const useCoreMemoryPipeline = shouldUseCoreMemoryPipeline(options);
     let state = await createBenchOrchestrator(
       mode,
       options.configOverrides,
       options.preserveRuntimeDefaults === true,
     );
+    const sessionTurnCounters = new Map<string, number>();
 
     const getEngine = () => {
       const engine = state.orchestrator.lcmEngine;
@@ -245,6 +248,7 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
         options.configOverrides,
         options.preserveRuntimeDefaults === true,
       );
+      sessionTurnCounters.clear();
     };
 
     return {
@@ -256,6 +260,42 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
             content: message.content,
           })),
         );
+
+        if (!useCoreMemoryPipeline || messages.length === 0) {
+          return;
+        }
+
+        const now = new Date().toISOString();
+        const conversationalMessages = messages.filter(
+          (message): message is Message & { role: "user" | "assistant" } =>
+            message.role === "user" || message.role === "assistant",
+        );
+        const replayTurns = conversationalMessages.map((message) => ({
+          source: "openclaw" as const,
+          role: message.role,
+          content: message.content,
+          timestamp: now,
+          sessionKey: sessionId,
+        }));
+
+        await Promise.all(
+          conversationalMessages.map(async (message) => {
+            const turnId = nextBenchTranscriptTurnId(
+              sessionTurnCounters,
+              sessionId,
+              message,
+            );
+            await state.orchestrator.transcript.append({
+              timestamp: now,
+              role: message.role,
+              content: message.content,
+              sessionKey: sessionId,
+              turnId,
+            });
+          }),
+        );
+
+        await state.orchestrator.ingestReplayBatch(replayTurns);
       },
 
       async recall(sessionId: string, query: string, budgetChars?: number): Promise<string> {
@@ -268,9 +308,25 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
         const sections: string[] = [];
         let usedChars = 0;
 
+        if (useCoreMemoryPipeline) {
+          const coreBudget = Math.max(0, Math.floor(budget * 0.55));
+          const coreRecall = await state.orchestrator.recall(query, sessionId, {
+            budgetCharsOverride: coreBudget,
+            mode: "full",
+          });
+          if (coreRecall.trim().length > 0) {
+            const section = `## Remnic recall pipeline\n${coreRecall.trim()}`;
+            sections.push(section);
+            usedChars += section.length;
+          }
+        }
+
         if (query) {
-          const searchBudget = Math.max(0, Math.floor(budget * 0.7));
-          const searchLimit = Math.max(4, Math.min(12, Math.floor(budget / 3_000)));
+          const remainingAfterCore = Math.max(0, budget - usedChars);
+          const searchBudget = useCoreMemoryPipeline
+            ? Math.max(0, Math.floor(remainingAfterCore * 0.75))
+            : Math.max(0, Math.floor(budget * 0.7));
+          const searchLimit = Math.max(6, Math.min(18, Math.floor(budget / 2_000)));
           const searchResults = await engine.searchContextFull(
             query,
             searchLimit,
@@ -288,13 +344,14 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
             const seenTurns = new Set<string>();
 
             for (const result of searchResults) {
-              const fromTurn = Math.max(0, result.turn_index - 1);
-              const toTurn = result.turn_index + 1;
+              const windowRadius = useCoreMemoryPipeline ? 3 : 1;
+              const fromTurn = Math.max(0, result.turn_index - windowRadius);
+              const toTurn = result.turn_index + windowRadius;
               const expanded = await engine.expandContext(
                 result.session_id,
                 fromTurn,
                 toTurn,
-                600,
+                useCoreMemoryPipeline ? 1_600 : 600,
               );
 
               if (expanded.length === 0) {
@@ -401,7 +458,12 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
         });
         try {
           await Promise.race([
-            engine.waitForObserveQueueIdle().catch((err: unknown) => {
+            Promise.all([
+              engine.waitForObserveQueueIdle(),
+              state.orchestrator.waitForExtractionIdle(DRAIN_TIMEOUT_MS),
+              state.orchestrator.waitForConsolidationIdle(DRAIN_TIMEOUT_MS),
+            ]).catch((err: unknown) => {
+                if (abortController.signal.aborted) return;
               if (abortController.signal.aborted) return;
               throw err;
             }),
@@ -428,3 +490,50 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
 
 export const createLightweightAdapter = createAdapterFactory("lightweight");
 export const createRemnicAdapter = createAdapterFactory("direct");
+
+function shouldUseCoreMemoryPipeline(options: RemnicAdapterOptions): boolean {
+  if (options.preserveRuntimeDefaults === true) {
+    return true;
+  }
+
+  const overrides = options.configOverrides ?? {};
+  return [
+    "qmdEnabled",
+    "qmdColdTierEnabled",
+    "transcriptEnabled",
+    "hourlySummariesEnabled",
+    "daySummaryEnabled",
+    "identityEnabled",
+    "entityRetrievalEnabled",
+    "knowledgeIndexEnabled",
+    "verifiedRecallEnabled",
+    "memoryBoxesEnabled",
+    "traceWeaverEnabled",
+    "episodeNoteModeEnabled",
+    "queryAwareIndexingEnabled",
+    "nativeKnowledge",
+  ].some((key) => {
+    const value = overrides[key];
+    if (key === "nativeKnowledge") {
+      return !!value
+        && typeof value === "object"
+        && !Array.isArray(value)
+        && (value as { enabled?: unknown }).enabled === true;
+    }
+    return value === true;
+  });
+}
+
+function nextBenchTranscriptTurnId(
+  counters: Map<string, number>,
+  sessionId: string,
+  message: Message,
+): string {
+  const index = counters.get(sessionId) ?? 0;
+  counters.set(sessionId, index + 1);
+  const digest = createHash("sha256")
+    .update(`${sessionId}\n${index}\n${message.role}\n${message.content}`)
+    .digest("hex")
+    .slice(0, 16);
+  return `bench-${index}-${digest}`;
+}

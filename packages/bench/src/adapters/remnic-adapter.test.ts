@@ -152,3 +152,33 @@ test("direct adapter recall expands search hits with adjacent stored results", a
     await adapter.destroy();
   }
 });
+
+test("runtime-backed adapter stores benchmark turns into Remnic recall surfaces", async () => {
+  const adapter = await createRemnicAdapter({
+    configOverrides: {
+      transcriptEnabled: true,
+      extractionMinUserTurns: 999,
+    },
+  });
+
+  try {
+    await adapter.store("agent:bench:main", [
+      {
+        role: "user",
+        content: "Remember the espresso code is crema-42.",
+      },
+    ]);
+    await adapter.drain?.();
+
+    const recalled = await adapter.recall(
+      "agent:bench:main",
+      "What is the espresso code?",
+    );
+
+    assert.match(recalled, /## Remnic recall pipeline/);
+    assert.match(recalled, /Recent Conversation/);
+    assert.match(recalled, /crema-42/);
+  } finally {
+    await adapter.destroy();
+  }
+});
