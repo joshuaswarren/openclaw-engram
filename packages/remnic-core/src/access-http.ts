@@ -18,6 +18,7 @@ import {
   subscribeGraphEvents,
   type GraphEvent,
 } from "./graph-events.js";
+import { expandTildePath } from "./utils/path.js";
 
 export interface EngramAccessHttpServerOptions {
   service: EngramAccessService;
@@ -554,6 +555,23 @@ export class EngramAccessHttpServer {
         peerIds: body.peerIds,
         includeTranscripts: body.includeTranscripts,
         encrypt: body.encrypt,
+      });
+      this.recordWriteRateLimitHit();
+      this.respondJson(res, 200, result);
+      return;
+    }
+
+    if (
+      req.method === "POST" &&
+      (pathname === "/engram/v1/capsules/import" || pathname === "/remnic/v1/capsules/import")
+    ) {
+      const body = await this.readValidatedBody(req, "capsuleImport");
+      this.ensureWriteRateLimitAvailable();
+      const result = await this.service.capsuleImport({
+        archivePath: expandTildePath(body.archivePath),
+        namespace: this.resolveNamespace(req, body.namespace),
+        principal: this.resolveRequestPrincipal(req),
+        mode: body.mode,
       });
       this.recordWriteRateLimitHit();
       this.respondJson(res, 200, result);

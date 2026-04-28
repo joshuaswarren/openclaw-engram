@@ -409,6 +409,40 @@ function createFakeService(): EngramAccessService {
         },
       },
     }),
+    capsuleImport: async ({ archivePath, mode }) => ({
+      imported: [{
+        sourcePath: "facts/2026-04-28/fact-a.md",
+        targetPath: "facts/2026-04-28/fact-a.md",
+        snapshotted: mode === "overwrite",
+        rewroteId: false,
+      }],
+      skipped: [],
+      manifest: {
+        format: "remnic-capsule",
+        schemaVersion: 2,
+        createdAt: "2026-04-28T00:00:00.000Z",
+        pluginVersion: "9.3.243",
+        includesTranscripts: false,
+        files: [{ path: "facts/2026-04-28/fact-a.md", sha256: "abc123", bytes: 42 }],
+        capsule: {
+          id: path.basename(String(archivePath)).replace(/\.capsule\.json\.gz(?:\.enc)?$/, ""),
+          version: "1.0.0",
+          createdAt: "2026-04-28T00:00:00.000Z",
+          parentCapsule: null,
+          description: "HTTP import test capsule",
+          retrievalPolicy: {
+            directAnswerEnabled: false,
+            tierWeights: {},
+          },
+          includes: {
+            taxonomy: false,
+            identityAnchors: false,
+            peerProfiles: false,
+            procedural: false,
+          },
+        },
+      },
+    }),
   } as unknown as EngramAccessService;
 }
 
@@ -587,6 +621,34 @@ test("access HTTP server enforces bearer auth and serves phase 1 routes", async 
     assert.equal(capsuleExport.encryptedArchivePath, null);
     assert.equal(capsuleExport.manifest.capsule.id, "daily-ops");
     assert.deepEqual(capsuleExport.manifest.files.map((file) => file.path), ["facts/2026-04-28/fact-a.md"]);
+
+    const capsuleImportDenied = await fetch(`${base}/engram/v1/capsules/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archivePath: "/tmp/daily-ops.capsule.json.gz" }),
+    });
+    assert.equal(capsuleImportDenied.status, 401);
+
+    const capsuleImportRes = await fetch(`${base}/engram/v1/capsules/import`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        archivePath: "/tmp/daily-ops.capsule.json.gz",
+        namespace: "global",
+        mode: "overwrite",
+      }),
+    });
+    assert.equal(capsuleImportRes.status, 200);
+    const capsuleImport = await capsuleImportRes.json() as {
+      imported: Array<{ sourcePath: string; targetPath: string; snapshotted: boolean }>;
+      skipped: unknown[];
+      manifest: { capsule: { id: string } };
+    };
+    assert.equal(capsuleImport.imported.length, 1);
+    assert.equal(capsuleImport.imported[0]?.sourcePath, "facts/2026-04-28/fact-a.md");
+    assert.equal(capsuleImport.imported[0]?.snapshotted, true);
+    assert.deepEqual(capsuleImport.skipped, []);
+    assert.equal(capsuleImport.manifest.capsule.id, "daily-ops");
 
     // Operator console state (issue #688 PR 2/3).
     const consoleStateRes = await fetch(`${base}/engram/v1/console/state`, { headers });
@@ -768,6 +830,104 @@ test("access HTTP capsule export validates input and surfaces ACL errors", async
       peerIds: ["peer-a"],
       includeTranscripts: undefined,
       encrypt: true,
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
+test("access HTTP capsule import validates input and surfaces ACL errors", async () => {
+  let captured: Record<string, unknown> | null = null;
+  const service = {
+    ...createFakeService(),
+    capsuleImport: async (request: Record<string, unknown>) => {
+      captured = request;
+      if (request.namespace === "private") {
+        throw new EngramAccessInputError("namespace is not writable");
+      }
+      return {
+        imported: [],
+        skipped: [{ path: "facts/2026-04-28/fact-a.md", reason: "exists" }],
+        manifest: {
+          format: "remnic-capsule",
+          schemaVersion: 2,
+          createdAt: "2026-04-28T00:00:00.000Z",
+          pluginVersion: "9.3.243",
+          includesTranscripts: false,
+          files: [],
+          capsule: {
+            id: "import-alias",
+            version: "1.0.0",
+            createdAt: "2026-04-28T00:00:00.000Z",
+            parentCapsule: null,
+            description: null,
+            retrievalPolicy: null,
+          },
+        },
+      };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramAccessHttpServer({
+    service,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    principal: "principal-1",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+  const headers = { Authorization: "Bearer secret-token", "Content-Type": "application/json" };
+
+  try {
+    const missingArchivePath = await fetch(`${base}/engram/v1/capsules/import`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ mode: "overwrite" }),
+    });
+    assert.equal(missingArchivePath.status, 400);
+    const missingArchivePayload = await missingArchivePath.json() as { code: string; details: Array<{ field: string }> };
+    assert.equal(missingArchivePayload.code, "validation_error");
+    assert.equal(missingArchivePayload.details[0]?.field, "archivePath");
+
+    const invalidMode = await fetch(`${base}/engram/v1/capsules/import`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ archivePath: "/tmp/import-alias.capsule.json.gz", mode: "merge" }),
+    });
+    assert.equal(invalidMode.status, 400);
+
+    const deniedNamespace = await fetch(`${base}/engram/v1/capsules/import`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ archivePath: "/tmp/import-alias.capsule.json.gz", namespace: "private" }),
+    });
+    assert.equal(deniedNamespace.status, 400);
+    const deniedPayload = await deniedNamespace.json() as { code: string; error: string };
+    assert.equal(deniedPayload.code, "input_error");
+    assert.equal(deniedPayload.error, "namespace is not writable");
+
+    const aliasResponse = await fetch(`${base}/remnic/v1/capsules/import`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        archivePath: "~/import-alias.capsule.json.gz",
+        namespace: "team-a",
+        mode: "fork",
+      }),
+    });
+    assert.equal(aliasResponse.status, 200);
+    const aliasPayload = await aliasResponse.json() as {
+      skipped: Array<{ path: string; reason: string }>;
+      manifest: { capsule: { id: string } };
+    };
+    assert.deepEqual(aliasPayload.skipped, [{ path: "facts/2026-04-28/fact-a.md", reason: "exists" }]);
+    assert.equal(aliasPayload.manifest.capsule.id, "import-alias");
+    assert.deepEqual(captured, {
+      archivePath: path.join(os.homedir(), "import-alias.capsule.json.gz"),
+      namespace: "team-a",
+      principal: "principal-1",
+      mode: "fork",
     });
   } finally {
     await server.stop();

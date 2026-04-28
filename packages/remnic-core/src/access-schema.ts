@@ -301,6 +301,12 @@ export const capsuleExportRequestSchema = z.object({
   encrypt: z.boolean().optional(),
 });
 
+export const capsuleImportRequestSchema = z.object({
+  archivePath: z.string().trim().min(1, "archivePath is required").max(4096),
+  namespace: namespaceSchema,
+  mode: z.enum(["skip", "overwrite", "fork"]).optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Inferred types
 // ---------------------------------------------------------------------------
@@ -317,6 +323,7 @@ export type TrustZoneDemoSeedRequest = z.infer<typeof trustZoneDemoSeedRequestSc
 export type LcmSearchRequest = z.infer<typeof lcmSearchRequestSchema>;
 export type DaySummaryRequest = z.infer<typeof daySummaryRequestSchema>;
 export type CapsuleExportRequest = z.infer<typeof capsuleExportRequestSchema>;
+export type CapsuleImportRequest = z.infer<typeof capsuleImportRequestSchema>;
 
 // ---------------------------------------------------------------------------
 // Validation helper
@@ -334,7 +341,8 @@ export type SchemaName =
   | "trustZoneDemoSeed"
   | "lcmSearch"
   | "daySummary"
-  | "capsuleExport";
+  | "capsuleExport"
+  | "capsuleImport";
 
 export type SchemaTypeFor<N extends SchemaName> =
   N extends "recall" ? RecallRequest
@@ -349,6 +357,7 @@ export type SchemaTypeFor<N extends SchemaName> =
   : N extends "lcmSearch" ? LcmSearchRequest
   : N extends "daySummary" ? DaySummaryRequest
   : N extends "capsuleExport" ? CapsuleExportRequest
+  : N extends "capsuleImport" ? CapsuleImportRequest
   : never;
 
 const schemas: Record<SchemaName, z.ZodTypeAny> = {
@@ -364,6 +373,7 @@ const schemas: Record<SchemaName, z.ZodTypeAny> = {
   lcmSearch: lcmSearchRequestSchema,
   daySummary: daySummaryRequestSchema,
   capsuleExport: capsuleExportRequestSchema,
+  capsuleImport: capsuleImportRequestSchema,
 };
 
 /**
