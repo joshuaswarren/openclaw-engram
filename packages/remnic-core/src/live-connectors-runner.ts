@@ -33,7 +33,8 @@ export type LiveConnectorSkipReason =
   | "disabled"
   | "not_due"
   | "invalid_config"
-  | "state_read_error";
+  | "state_read_error"
+  | "connector_error";
 
 export interface LiveConnectorRunItem {
   id: string;
@@ -201,29 +202,62 @@ export async function runLiveConnectorsOnce(options: {
       continue;
     }
 
-    const connector = definition.createConnector();
-    const runResult = await runConnectorPollOnce({
-      connectorId: definition.id,
-      priorState: state,
-      syncFn: (cursor: ConnectorCursor | null) =>
-        connector.syncIncremental({
-          cursor,
-          config: validatedConfig,
-          abortSignal: options.abortSignal,
-        }),
-      ingestFn: options.ingestDocuments,
-      writeCursorFn: (writeState) =>
-        writeConnectorState(options.memoryDir, definition.id, {
-          id: definition.id,
-          cursor: writeState.cursor,
-          lastSyncAt: now.toISOString(),
-          lastSyncStatus: writeState.lastSyncStatus,
-          ...(writeState.lastSyncError !== undefined
-            ? { lastSyncError: writeState.lastSyncError }
-            : {}),
-          totalDocsImported: writeState.totalDocsImported,
-        }).then(() => undefined),
-    });
+    let runResult: ConnectorRunResult;
+    try {
+      const connector = definition.createConnector();
+      runResult = await runConnectorPollOnce({
+        connectorId: definition.id,
+        priorState: state,
+        syncFn: (cursor: ConnectorCursor | null) =>
+          connector.syncIncremental({
+            cursor,
+            config: validatedConfig,
+            abortSignal: options.abortSignal,
+          }),
+        ingestFn: options.ingestDocuments,
+        writeCursorFn: (writeState) =>
+          writeConnectorState(options.memoryDir, definition.id, {
+            id: definition.id,
+            cursor: writeState.cursor,
+            lastSyncAt: now.toISOString(),
+            lastSyncStatus: writeState.lastSyncStatus,
+            ...(writeState.lastSyncError !== undefined
+              ? { lastSyncError: writeState.lastSyncError }
+              : {}),
+            totalDocsImported: writeState.totalDocsImported,
+          }).then(() => undefined),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      let stateWriteError: string | undefined;
+      let writtenErrorState: ConnectorState | undefined;
+      try {
+        writtenErrorState = await writeConnectorErrorState({
+          memoryDir: options.memoryDir,
+          connectorId: definition.id,
+          state,
+          error: message,
+          now,
+        });
+      } catch (writeErr) {
+        stateWriteError =
+          writeErr instanceof Error ? writeErr.message : String(writeErr);
+      }
+      const reportedState = writtenErrorState ?? state;
+      results.push({
+        id: definition.id,
+        displayName: definition.displayName,
+        enabled: true,
+        ran: false,
+        skippedReason: "connector_error",
+        docsImported: 0,
+        error: message,
+        ...(stateWriteError !== undefined ? { stateWriteError } : {}),
+        lastSyncAt: reportedState?.lastSyncAt ?? null,
+        nextDueAt: nextDueAt(reportedState, definition.pollIntervalMs),
+      });
+      continue;
+    }
     results.push(runItemFromResult(definition, runResult, now));
   }
 

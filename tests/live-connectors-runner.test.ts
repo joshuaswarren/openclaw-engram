@@ -325,3 +325,40 @@ test("runLiveConnectorsOnce records invalid config without aborting the batch", 
     assert.match(failedState?.lastSyncError ?? "", /missing token/);
   });
 });
+
+test("runLiveConnectorsOnce reports connector factory failures per connector", async () => {
+  await withMemoryDir(async (memoryDir) => {
+    const summary = await runLiveConnectorsOnce({
+      memoryDir,
+      connectors: defaultConnectorsConfig(),
+      ingestDocuments: async () => {},
+      now: new Date("2026-04-28T12:00:00.000Z"),
+      definitions: [
+        makeDefinition({
+          createConnector: () => {
+            throw new Error("optional dependency missing");
+          },
+        }),
+        makeDefinition({
+          id: "second-connector",
+          displayName: "Second Connector",
+          docs: [makeDoc("second")],
+        }),
+      ],
+    });
+
+    assert.equal(summary.ranCount, 1);
+    assert.equal(summary.skippedCount, 1);
+    assert.equal(summary.errorCount, 1);
+    assert.equal(summary.results[0].skippedReason, "connector_error");
+    assert.match(summary.results[0].error ?? "", /optional dependency missing/);
+    assert.equal(summary.results[0].lastSyncAt, "2026-04-28T12:00:00.000Z");
+    assert.equal(summary.results[0].nextDueAt, "2026-04-28T12:01:00.000Z");
+    assert.equal(summary.results[1].id, "second-connector");
+    assert.equal(summary.results[1].ran, true);
+
+    const failedState = await readConnectorState(memoryDir, "test-connector");
+    assert.equal(failedState?.lastSyncStatus, "error");
+    assert.match(failedState?.lastSyncError ?? "", /optional dependency missing/);
+  });
+});
