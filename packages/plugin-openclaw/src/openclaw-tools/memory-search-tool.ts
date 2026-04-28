@@ -16,6 +16,7 @@ export function buildMemorySearchTool(
   return {
     name: "memory_search",
     description: "Search Remnic memories for the OpenClaw active-memory surface.",
+    parameters: MemorySearchInputSchema,
     inputSchema: MemorySearchInputSchema,
     async execute(
       _toolCallId: string,

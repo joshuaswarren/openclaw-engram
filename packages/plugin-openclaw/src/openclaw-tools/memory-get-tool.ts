@@ -15,6 +15,7 @@ export function buildMemoryGetTool(
   return {
     name: "memory_get",
     description: "Fetch one Remnic memory for the OpenClaw active-memory surface.",
+    parameters: MemoryGetInputSchema,
     inputSchema: MemoryGetInputSchema,
     async execute(
       _toolCallId: string,
