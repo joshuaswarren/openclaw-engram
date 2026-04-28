@@ -222,7 +222,6 @@ export async function runLiveConnectorsOnce(options: {
         ingestFn: options.ingestDocuments,
         writeCursorFn: (writeState) => {
           const writeAt = resolveNow(options.now);
-          lastStateWrittenAt = writeAt;
           return writeConnectorState(options.memoryDir, definition.id, {
             id: definition.id,
             cursor: writeState.cursor,
@@ -232,7 +231,9 @@ export async function runLiveConnectorsOnce(options: {
               ? { lastSyncError: writeState.lastSyncError }
               : {}),
             totalDocsImported: writeState.totalDocsImported,
-          }).then(() => undefined);
+          }).then(() => {
+            lastStateWrittenAt = writeAt;
+          });
         },
       });
     } catch (err) {
@@ -271,6 +272,7 @@ export async function runLiveConnectorsOnce(options: {
       runItemFromResult(
         definition,
         runResult,
+        state,
         lastStateWrittenAt ?? resolveNow(options.now),
       ),
     );
@@ -337,8 +339,19 @@ function skipResult(
 function runItemFromResult(
   definition: LiveConnectorDefinition,
   result: ConnectorRunResult,
+  priorState: ConnectorState | null,
   now: Date,
 ): LiveConnectorRunItem {
+  const stateWriteFailed = result.stateWriteError !== undefined;
+  const reportedLastSyncAt = stateWriteFailed
+    ? priorState?.lastSyncAt ?? null
+    : now.toISOString();
+  const reportedNextDueAt = stateWriteFailed
+    ? nextDueAt(priorState, definition.pollIntervalMs)
+    : new Date(
+        now.getTime() + Math.max(1, Math.floor(definition.pollIntervalMs)),
+      ).toISOString();
+
   return {
     id: definition.id,
     displayName: definition.displayName,
@@ -349,10 +362,8 @@ function runItemFromResult(
     ...(result.stateWriteError !== undefined
       ? { stateWriteError: result.stateWriteError }
       : {}),
-    lastSyncAt: now.toISOString(),
-    nextDueAt: new Date(
-      now.getTime() + Math.max(1, Math.floor(definition.pollIntervalMs)),
-    ).toISOString(),
+    lastSyncAt: reportedLastSyncAt,
+    nextDueAt: reportedNextDueAt,
   };
 }
 
