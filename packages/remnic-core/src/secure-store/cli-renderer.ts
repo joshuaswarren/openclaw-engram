@@ -1,6 +1,6 @@
 /**
- * Console-text renderers for the `remnic secure-store {init,unlock,
- * lock,status}` CLI surface (issue #690 PR 2/4).
+ * Console-text renderers for the `remnic engram secure-store {init,unlock,
+ * lock,status,migrate}` CLI surface (issue #690 PR 2/4 + #779).
  *
  * Pure: each `render*` function takes a typed report and returns a
  * string. CLI handlers do the `console.log`. Tests assert on the
@@ -10,6 +10,7 @@
 import type {
   SecureStoreInitReport,
   SecureStoreLockReport,
+  SecureStoreMigrateReport,
   SecureStoreStatusReport,
   SecureStoreUnlockReport,
 } from "./cli-handlers.js";
@@ -44,6 +45,28 @@ export function renderLockReport(report: SecureStoreLockReport): string {
     return "OK — secure-store key cleared from in-memory keyring.";
   }
   return "OK — secure-store was already locked (no in-memory key to clear).";
+}
+
+export function renderMigrateReport(report: SecureStoreMigrateReport): string {
+  if (!report.ok && report.reason === "not-initialized") {
+    return "ERR — secure-store is not initialized. Run 'remnic engram secure-store init' first.";
+  }
+  if (!report.ok && report.reason === "locked") {
+    return "ERR — secure-store is locked. Run 'remnic engram secure-store unlock' before migrate.";
+  }
+
+  const lines: string[] = [];
+  lines.push(report.ok ? "OK — secure-store migration complete." : "ERR — secure-store migration completed with file errors.");
+  lines.push(`encrypted: ${report.encrypted}`);
+  lines.push(`skipped: ${report.skipped}`);
+  lines.push(`errors: ${report.errors.length}`);
+  for (const entry of report.errors.slice(0, 10)) {
+    lines.push(`- ${entry.filePath}: ${entry.error}`);
+  }
+  if (report.errors.length > 10) {
+    lines.push(`- ... ${report.errors.length - 10} more error(s)`);
+  }
+  return lines.join("\n");
 }
 
 export function renderStatusReport(report: SecureStoreStatusReport): string {

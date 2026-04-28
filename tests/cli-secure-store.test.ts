@@ -27,8 +27,11 @@ import {
   readHeader,
   runSecureStoreInit,
   runSecureStoreLock,
+  runSecureStoreMigrate,
   runSecureStoreStatus,
   runSecureStoreUnlock,
+  isEncryptedFile,
+  readMaybeEncryptedFile,
   secureStoreDir,
   serializeHeader,
   validateHeader,
@@ -342,6 +345,100 @@ test("lock clears the in-memory key and is idempotent", async () => {
     const second = runSecureStoreLock({ memoryDir, keyringId });
     assert.deepEqual(second, { ok: true, cleared: false });
   });
+});
+
+// ─── migrate ────────────────────────────────────────────────────────
+
+test("migrate encrypts plaintext storage files and is idempotent", async () => {
+  await withTmpMemoryDir(async (memoryDir, keyringId) => {
+    const init = staticPassphraseReader(TEST_PASSPHRASE, TEST_PASSPHRASE);
+    await runSecureStoreInit({
+      memoryDir,
+      keyringId,
+      readPassphrase: init.reader,
+      algorithm: "scrypt",
+      params: FAST_SCRYPT,
+    });
+    const unlock = staticPassphraseReader(TEST_PASSPHRASE);
+    await runSecureStoreUnlock({
+      memoryDir,
+      keyringId,
+      readPassphrase: unlock.reader,
+    });
+
+    const filePath = path.join(memoryDir, "facts", "2026-04-28", "fact-a.md");
+    const original = "---\nid: fact-a\ncategory: fact\n---\nprivate fact";
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, original, "utf8");
+
+    const first = await runSecureStoreMigrate({ memoryDir, keyringId });
+    assert.equal(first.ok, true);
+    assert.equal(first.encrypted, 1);
+    assert.equal(first.skipped, 0);
+    assert.equal(first.errors.length, 0);
+    assert.equal(isEncryptedFile(await readFile(filePath)), true);
+    assert.equal(
+      await readMaybeEncryptedFile(filePath, keyring.getKey(keyringId), memoryDir),
+      original,
+    );
+
+    const second = await runSecureStoreMigrate({ memoryDir, keyringId });
+    assert.equal(second.ok, true);
+    assert.equal(second.encrypted, 0);
+    assert.equal(second.skipped, 1);
+    assert.equal(second.errors.length, 0);
+  });
+});
+
+test("migrate fails clearly when the secure-store is not initialized", async () => {
+  await withTmpMemoryDir(async (memoryDir, keyringId) => {
+    const report = await runSecureStoreMigrate({ memoryDir, keyringId });
+    assert.deepEqual(report, {
+      ok: false,
+      reason: "not-initialized",
+      encrypted: 0,
+      skipped: 0,
+      errors: [],
+    });
+  });
+});
+
+test("migrate fails clearly when the secure-store is locked", async () => {
+  await withTmpMemoryDir(async (memoryDir, keyringId) => {
+    const init = staticPassphraseReader(TEST_PASSPHRASE, TEST_PASSPHRASE);
+    await runSecureStoreInit({
+      memoryDir,
+      keyringId,
+      readPassphrase: init.reader,
+      algorithm: "scrypt",
+      params: FAST_SCRYPT,
+    });
+    const report = await runSecureStoreMigrate({ memoryDir, keyringId });
+    assert.deepEqual(report, {
+      ok: false,
+      reason: "locked",
+      encrypted: 0,
+      skipped: 0,
+      errors: [],
+    });
+  });
+});
+
+test("cli.ts registers the secure-store migrate subcommand", async () => {
+  const cliSource = await readFile(
+    path.resolve(
+      import.meta.dirname,
+      "..",
+      "packages",
+      "remnic-core",
+      "src",
+      "cli.ts",
+    ),
+    "utf8",
+  );
+  assert.match(cliSource, /\.command\("migrate"\)/);
+  assert.match(cliSource, /runSecureStoreMigrate/);
+  assert.match(cliSource, /renderMigrateReport/);
 });
 
 // ─── status (initialized) ────────────────────────────────────────────

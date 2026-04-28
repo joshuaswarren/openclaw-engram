@@ -85,6 +85,7 @@ export {
   MIN_PASSPHRASE_LENGTH,
   runSecureStoreInit,
   runSecureStoreLock,
+  runSecureStoreMigrate,
   runSecureStoreStatus,
   runSecureStoreUnlock,
   type PassphraseReader,
@@ -92,6 +93,8 @@ export {
   type SecureStoreInitReport,
   type SecureStoreLockOptions,
   type SecureStoreLockReport,
+  type SecureStoreMigrateOptions,
+  type SecureStoreMigrateReport,
   type SecureStoreStatusOptions,
   type SecureStoreStatusReport,
   type SecureStoreUnlockOptions,
@@ -101,6 +104,7 @@ export {
 export {
   renderInitReport,
   renderLockReport,
+  renderMigrateReport,
   renderStatusReport,
   renderUnlockReport,
 } from "./cli-renderer.js";
