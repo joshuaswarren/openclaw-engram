@@ -182,3 +182,39 @@ test("runtime-backed adapter stores benchmark turns into Remnic recall surfaces"
     await adapter.destroy();
   }
 });
+
+test("runtime-backed adapter preserves transcript order for stored batches", async () => {
+  const adapter = await createRemnicAdapter({
+    configOverrides: {
+      transcriptEnabled: true,
+      extractionMinUserTurns: 999,
+    },
+  });
+
+  try {
+    await adapter.store("agent:bench:main", [
+      {
+        role: "user",
+        content: "First turn: choose the train.",
+      },
+      {
+        role: "assistant",
+        content: "Second turn: the final snack is trail mix.",
+      },
+    ]);
+    await adapter.drain?.();
+
+    const recalled = await adapter.recall(
+      "agent:bench:main",
+      "What happened in the first and second turn?",
+    );
+    const firstIndex = recalled.indexOf("First turn: choose the train.");
+    const secondIndex = recalled.indexOf("Second turn: the final snack is trail mix.");
+
+    assert.notEqual(firstIndex, -1);
+    assert.notEqual(secondIndex, -1);
+    assert.equal(firstIndex < secondIndex, true);
+  } finally {
+    await adapter.destroy();
+  }
+});

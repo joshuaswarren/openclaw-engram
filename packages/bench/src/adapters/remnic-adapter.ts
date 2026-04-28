@@ -265,35 +265,33 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
           return;
         }
 
-        const now = new Date().toISOString();
+        const batchStartMs = Date.now();
         const conversationalMessages = messages.filter(
           (message): message is Message & { role: "user" | "assistant" } =>
             message.role === "user" || message.role === "assistant",
         );
-        const replayTurns = conversationalMessages.map((message) => ({
+        const replayTurns = conversationalMessages.map((message, index) => ({
           source: "openclaw" as const,
           role: message.role,
           content: message.content,
-          timestamp: now,
+          timestamp: new Date(batchStartMs + index).toISOString(),
           sessionKey: sessionId,
         }));
 
-        await Promise.all(
-          conversationalMessages.map(async (message) => {
-            const turnId = nextBenchTranscriptTurnId(
-              sessionTurnCounters,
-              sessionId,
-              message,
-            );
-            await state.orchestrator.transcript.append({
-              timestamp: now,
-              role: message.role,
-              content: message.content,
-              sessionKey: sessionId,
-              turnId,
-            });
-          }),
-        );
+        for (const turn of replayTurns) {
+          const turnId = nextBenchTranscriptTurnId(
+            sessionTurnCounters,
+            sessionId,
+            turn,
+          );
+          await state.orchestrator.transcript.append({
+            timestamp: turn.timestamp,
+            role: turn.role,
+            content: turn.content,
+            sessionKey: sessionId,
+            turnId,
+          });
+        }
 
         await state.orchestrator.ingestReplayBatch(replayTurns);
       },
@@ -458,12 +456,19 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
         });
         try {
           await Promise.race([
-            Promise.all([
-              engine.waitForObserveQueueIdle(),
-              state.orchestrator.waitForExtractionIdle(DRAIN_TIMEOUT_MS),
-              state.orchestrator.waitForConsolidationIdle(DRAIN_TIMEOUT_MS),
-            ]).catch((err: unknown) => {
-                if (abortController.signal.aborted) return;
+            (async () => {
+              const [, extractionIdle, consolidationIdle] = await Promise.all([
+                engine.waitForObserveQueueIdle(),
+                state.orchestrator.waitForExtractionIdle(DRAIN_TIMEOUT_MS),
+                state.orchestrator.waitForConsolidationIdle(DRAIN_TIMEOUT_MS),
+              ]);
+              if (!extractionIdle) {
+                throw new Error("drain() timed out waiting for extraction idle");
+              }
+              if (!consolidationIdle) {
+                throw new Error("drain() timed out waiting for consolidation idle");
+              }
+            })().catch((err: unknown) => {
               if (abortController.signal.aborted) return;
               throw err;
             }),
