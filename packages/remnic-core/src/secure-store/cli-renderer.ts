@@ -1,5 +1,5 @@
 /**
- * Console-text renderers for the `remnic secure-store {init,unlock,
+ * Console-text renderers for the `remnic engram secure-store {init,unlock,
  * lock,status,migrate}` CLI surface (issue #690 PR 2/4 + #779).
  *
  * Pure: each `render*` function takes a typed report and returns a
@@ -25,7 +25,7 @@ export function renderInitReport(report: SecureStoreInitReport): string {
   lines.push(...renderKdfLines(report.kdf));
   lines.push("");
   lines.push("Note: init does NOT auto-unlock the store. Run");
-  lines.push("  remnic secure-store unlock");
+  lines.push("  remnic engram secure-store unlock");
   lines.push("to register the master key with the running daemon.");
   return lines.join("\n");
 }
@@ -35,7 +35,7 @@ export function renderUnlockReport(report: SecureStoreUnlockReport): string {
     return `OK — secure-store unlocked at ${report.unlockedAt} (algorithm=${report.algorithm}).`;
   }
   if (report.reason === "not-initialized") {
-    return "ERR — secure-store is not initialized. Run 'remnic secure-store init' first.";
+    return "ERR — secure-store is not initialized. Run 'remnic engram secure-store init' first.";
   }
   return "ERR — wrong passphrase.";
 }
@@ -49,10 +49,10 @@ export function renderLockReport(report: SecureStoreLockReport): string {
 
 export function renderMigrateReport(report: SecureStoreMigrateReport): string {
   if (!report.ok && report.reason === "not-initialized") {
-    return "ERR — secure-store is not initialized. Run 'remnic secure-store init' first.";
+    return "ERR — secure-store is not initialized. Run 'remnic engram secure-store init' first.";
   }
   if (!report.ok && report.reason === "locked") {
-    return "ERR — secure-store is locked. Run 'remnic secure-store unlock' before migrate.";
+    return "ERR — secure-store is locked. Run 'remnic engram secure-store unlock' before migrate.";
   }
 
   const lines: string[] = [];
@@ -77,7 +77,7 @@ export function renderStatusReport(report: SecureStoreStatusReport): string {
   lines.push(`initialized: ${report.initialized ? "yes" : "no"}`);
   if (!report.initialized) {
     lines.push("");
-    lines.push("Run 'remnic secure-store init' to initialize a new store.");
+    lines.push("Run 'remnic engram secure-store init' to initialize a new store.");
     return lines.join("\n");
   }
   lines.push(`createdAt: ${report.createdAt ?? "n/a"}`);

@@ -90,7 +90,7 @@ Derives the AES-256 key from your passphrase and stores it in the in-memory keyr
 ### Migrate Existing Files
 
 ```bash
-remnic secure-store migrate
+remnic engram secure-store migrate
 ```
 
 Encrypts existing plaintext storage-managed memory files using the currently
@@ -100,8 +100,8 @@ is safe to rerun.
 This command requires the store to be initialized and unlocked:
 
 ```bash
-remnic secure-store unlock
-remnic secure-store migrate
+remnic engram secure-store unlock
+remnic engram secure-store migrate
 ```
 
 `migrate` covers the storage roots already routed through Remnic's secure-fs
