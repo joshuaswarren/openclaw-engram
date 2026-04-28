@@ -1,6 +1,6 @@
 /**
  * Pure handlers behind the `remnic secure-store {init,unlock,lock,
- * status,migrate}` CLI surface (issue #690 PR 2/4 + #779).
+ * status,migrate,disable}` CLI surface (issue #690 PR 2/4 + #779/#780).
  *
  * Each handler:
  *   - takes an explicit `memoryDir` (already `~`-expanded by the CLI),
@@ -33,7 +33,12 @@ import {
   type KdfAlgorithm,
   type ScryptParams,
 } from "./kdf.js";
-import { migrateMemoryDirToEncrypted, type MigrateResult } from "./secure-fs.js";
+import {
+  decryptMemoryDirToPlaintext,
+  migrateMemoryDirToEncrypted,
+  type DecryptResult,
+  type MigrateResult,
+} from "./secure-fs.js";
 
 /** Passphrase source — async so callers can read from a TTY without echo. */
 export type PassphraseReader = (
@@ -225,6 +230,51 @@ export async function runSecureStoreMigrate(
   }
 
   const result = await migrateMemoryDirToEncrypted(memoryDir, key);
+  if (result.errors.length > 0) {
+    return { ok: false, reason: "file-errors", ...result };
+  }
+  return { ok: true, ...result };
+}
+
+// ─── disable/decrypt ─────────────────────────────────────────────────
+
+export interface SecureStoreDisableOptions extends SecureStoreHandlerCommon {}
+
+export type SecureStoreDisableReport =
+  | ({ ok: true } & DecryptResult)
+  | ({
+      ok: false;
+      reason: "not-initialized" | "locked" | "file-errors";
+    } & DecryptResult);
+
+export async function runSecureStoreDisable(
+  options: SecureStoreDisableOptions,
+): Promise<SecureStoreDisableReport> {
+  const { memoryDir } = options;
+  const header = await readHeader(memoryDir);
+  if (!header) {
+    return {
+      ok: false,
+      reason: "not-initialized",
+      decrypted: 0,
+      skipped: 0,
+      errors: [],
+    };
+  }
+
+  const id = options.keyringId ?? secureStoreDir(memoryDir);
+  const key = keyring.getKey(id);
+  if (key === null) {
+    return {
+      ok: false,
+      reason: "locked",
+      decrypted: 0,
+      skipped: 0,
+      errors: [],
+    };
+  }
+
+  const result = await decryptMemoryDirToPlaintext(memoryDir, key);
   if (result.errors.length > 0) {
     return { ok: false, reason: "file-errors", ...result };
   }

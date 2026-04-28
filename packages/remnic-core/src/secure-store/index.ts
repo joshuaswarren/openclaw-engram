@@ -85,6 +85,7 @@ export {
   MIN_PASSPHRASE_LENGTH,
   runSecureStoreInit,
   runSecureStoreLock,
+  runSecureStoreDisable,
   runSecureStoreMigrate,
   runSecureStoreStatus,
   runSecureStoreUnlock,
@@ -93,6 +94,8 @@ export {
   type SecureStoreInitReport,
   type SecureStoreLockOptions,
   type SecureStoreLockReport,
+  type SecureStoreDisableOptions,
+  type SecureStoreDisableReport,
   type SecureStoreMigrateOptions,
   type SecureStoreMigrateReport,
   type SecureStoreStatusOptions,
@@ -102,6 +105,7 @@ export {
 } from "./cli-handlers.js";
 
 export {
+  renderDisableReport,
   renderInitReport,
   renderLockReport,
   renderMigrateReport,
@@ -119,6 +123,7 @@ export {
   MAGIC_HEADER_SIZE,
   SecureStoreDecryptError,
   SecureStoreLockedError,
+  decryptMemoryDirToPlaintext,
   decryptFileBody,
   encryptFileBody,
   filePathAad,
@@ -127,5 +132,6 @@ export {
   readMaybeEncryptedFile,
   writeMaybeEncryptedFile,
   type MigrateResult,
+  type DecryptResult,
   type WriteMaybeEncryptedFileOptions,
 } from "./secure-fs.js";

@@ -108,6 +108,31 @@ remnic engram secure-store migrate
 layer. Remaining sidecar coverage is tracked separately so the migration command
 does not encrypt files that older code paths would still read as plaintext.
 
+### Disable Encryption
+
+```bash
+remnic engram secure-store disable
+```
+
+Decrypts encrypted storage-managed files back to plaintext using the currently
+unlocked secure-store key. Plaintext files are skipped, so the command is safe
+to rerun.
+
+This command requires the store to be initialized and unlocked:
+
+```bash
+remnic engram secure-store unlock
+remnic engram secure-store disable
+```
+
+The `.secure-store/header.json` metadata is kept in place. Use the `decrypt`
+subcommand as an alias when you want the command name to describe the file
+operation:
+
+```bash
+remnic engram secure-store decrypt
+```
+
 ### Lock
 
 ```bash
