@@ -123,6 +123,22 @@ import {
 
 export class EngramAccessInputError extends Error {}
 
+let cachedPackageVersion: string | null = null;
+
+async function getPackageVersion(): Promise<string> {
+  if (cachedPackageVersion !== null) return cachedPackageVersion;
+  try {
+    const raw = await nodeFs.readFile(new URL("../package.json", import.meta.url), "utf-8");
+    const parsed = JSON.parse(raw) as { version?: unknown };
+    cachedPackageVersion = typeof parsed.version === "string" && parsed.version.length > 0
+      ? parsed.version
+      : "unknown";
+  } catch {
+    cachedPackageVersion = "unknown";
+  }
+  return cachedPackageVersion;
+}
+
 function normalizeTrustZoneInputError(error: unknown): EngramAccessInputError | null {
   const message = error instanceof Error ? error.message : null;
   if (!message) {
@@ -4518,8 +4534,10 @@ export class EngramAccessService {
     const storage = await this.orchestrator.getStorage(resolvedNamespace);
     const root = explicitRoot ?? storage.dir;
     const memoryDir = explicitMemoryDir ?? this.orchestrator.config.memoryDir;
+    const pluginVersion = exportOptions.pluginVersion ?? await getPackageVersion();
     return exportCapsuleFn({
       ...exportOptions,
+      pluginVersion,
       root,
       memoryDir: exportOptions.encrypt === true ? memoryDir : undefined,
     });

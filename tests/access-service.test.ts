@@ -11,11 +11,10 @@ import {
   keyring,
   runSecureStoreInit,
   runSecureStoreUnlock,
+  type ScryptParams,
 } from "../src/secure-store/index.js";
 import { StorageManager } from "../src/storage.js";
 import { recordTrustZoneRecord } from "../src/trust-zones.ts";
-import type { ScryptParams } from "../packages/remnic-core/src/secure-store/kdf.js";
-import { isEncryptedCapsuleFile } from "../packages/remnic-core/src/transfer/capsule-crypto.js";
 
 const FAST_SCRYPT: ScryptParams = {
   N: 1 << 10,
@@ -379,7 +378,10 @@ test("capsuleExport encrypts namespace exports with the root secure-store keyrin
     assert.equal(resolvedNamespace, "project-x");
     assert.equal(result.encryptedArchivePath, result.archivePath);
     assert.match(result.archivePath, /project-x-export\.capsule\.json\.gz\.enc$/);
-    assert.equal(await isEncryptedCapsuleFile(result.archivePath), true);
+    const encrypted = await readFile(result.archivePath);
+    assert.equal(encrypted.subarray(0, 11).toString("ascii"), "REMNIC-ENC\0");
+    assert.notEqual(result.manifest.pluginVersion, "0.0.0");
+    assert.match(result.manifest.pluginVersion, /^\d+\.\d+\.\d+/);
   } finally {
     keyring.lockAll();
     await rm(memoryDir, { recursive: true, force: true });
