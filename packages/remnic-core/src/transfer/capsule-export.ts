@@ -334,6 +334,15 @@ function parseSince(since: string | undefined): number | null {
   return ms;
 }
 
+export function isValidCapsuleSince(since: string): boolean {
+  try {
+    parseSince(since);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Verify that parsing {@link since} did not silently normalize an invalid
  * calendar date (e.g. `2026-02-31` → `2026-03-03`). We extract the

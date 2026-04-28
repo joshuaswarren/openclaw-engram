@@ -3,6 +3,7 @@
 // field-level detail so consumers get clear feedback on malformed requests.
 
 import { z } from "zod";
+import { isValidCapsuleSince } from "./transfer/capsule-export.js";
 import { CAPSULE_ID_PATTERN } from "./transfer/types.js";
 
 // ---------------------------------------------------------------------------
@@ -271,30 +272,6 @@ const capsulePeerIdSchema = z
     (value) => value !== "." && value !== ".." && !value.includes("/") && !value.includes("\\"),
     "must be a plain peer id without path separators",
   );
-
-const CAPSULE_ISO_8601_RE =
-  /^\d{4}-\d{2}-\d{2}(?:[Tt]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:[Zz]|[+-]\d{2}:?\d{2}))?$/;
-
-function isValidCapsuleSince(value: string): boolean {
-  if (!CAPSULE_ISO_8601_RE.test(value)) return false;
-  const ms = Date.parse(value);
-  if (!Number.isFinite(ms)) return false;
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  if (!match) return false;
-  const offsetMatch = /([+-])(\d{2}):?(\d{2})$/.exec(value);
-  let displayMs = ms;
-  if (offsetMatch) {
-    const sign = offsetMatch[1] === "-" ? -1 : 1;
-    const offsetMin = sign * (Number(offsetMatch[2]) * 60 + Number(offsetMatch[3]));
-    displayMs = ms + offsetMin * 60_000;
-  }
-  const date = new Date(displayMs);
-  return (
-    date.getUTCFullYear() === Number(match[1]) &&
-    date.getUTCMonth() + 1 === Number(match[2]) &&
-    date.getUTCDate() === Number(match[3])
-  );
-}
 
 const capsuleIsoSinceSchema = z
   .string()
