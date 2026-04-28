@@ -6,6 +6,7 @@ import { execSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { LegacyBenchmarkResult } from "./adapters/types.js";
+import { writeLeaderboardArtifactsForResult } from "./leaderboard-export.js";
 import { isSecretKey } from "./security/secret-keys.js";
 import type { BenchmarkResult } from "./types.js";
 
@@ -51,7 +52,21 @@ export async function writeBenchmarkResult(
     `${result.meta.benchmark}-v${safeRemnicVersion}-${timestamp}.json`,
   );
 
-  await writeFile(filePath, JSON.stringify(redactBenchmarkResultSecrets(result), null, 2) + "\n");
+  const resultWithArtifacts = {
+    ...result,
+    config: {
+      ...result.config,
+      benchmarkOptions: {
+        ...(result.config.benchmarkOptions ?? {}),
+        leaderboardArtifacts: await writeLeaderboardArtifactsForResult(
+          result,
+          outputDir,
+        ),
+      },
+    },
+  };
+
+  await writeFile(filePath, JSON.stringify(redactBenchmarkResultSecrets(resultWithArtifacts), null, 2) + "\n");
   return filePath;
 }
 

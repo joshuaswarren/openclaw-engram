@@ -151,6 +151,14 @@ export {
   answerBenchmarkQuestion,
 } from "./answering.js";
 export {
+  buildAmaBenchLeaderboardRows,
+  serializeJsonl,
+  writeLeaderboardArtifactsForResult,
+} from "./leaderboard-export.js";
+export type {
+  LeaderboardArtifactWrite,
+} from "./leaderboard-export.js";
+export {
   createGatewayResponder,
   createProviderBackedAmaBenchRecommendedJudge,
   createProviderBackedJudge,
