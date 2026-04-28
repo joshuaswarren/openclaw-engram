@@ -142,6 +142,79 @@ function createFakeService(): EngramAccessService {
       runId: "gov-1",
       reviewQueue: [{ memoryId: "fact-1", reasonCode: "disputed_memory" }],
     }),
+    capsuleExport: async ({ name, namespace, includeKinds, peerIds, includeTranscripts, encrypt }) => ({
+      archivePath: `/tmp/remnic/.capsules/${name}.capsule.json.gz${encrypt === true ? ".enc" : ""}`,
+      manifestPath: `/tmp/remnic/.capsules/${name}.manifest.json`,
+      encryptedArchivePath: encrypt === true ? `/tmp/remnic/.capsules/${name}.capsule.json.gz.enc` : null,
+      manifest: {
+        format: "openclaw-engram-export",
+        schemaVersion: 2,
+        createdAt: "2026-04-28T00:00:00.000Z",
+        pluginVersion: "test",
+        includesTranscripts: includeTranscripts === true,
+        files: [{ path: "facts/2026-04-28/fact-a.md", sha256: "abc123", bytes: 42 }],
+        capsule: {
+          id: name,
+          version: "1.0.0",
+          schemaVersion: "test",
+          parentCapsule: null,
+          parent: null,
+          description: `namespace=${namespace ?? "default"} kinds=${(includeKinds ?? []).join(",")} peers=${(peerIds ?? []).join(",")}`,
+          retrievalPolicy: { directAnswerEnabled: false, tierWeights: {} },
+          includes: {
+            taxonomy: false,
+            identityAnchors: false,
+            peerProfiles: false,
+            procedural: false,
+          },
+        },
+      },
+    }),
+    capsuleImport: async ({ archivePath, mode }) => ({
+      imported: [{
+        sourcePath: "facts/2026-04-28/fact-a.md",
+        targetPath: "facts/2026-04-28/fact-a.md",
+        snapshotted: mode === "overwrite",
+        rewroteId: false,
+      }],
+      skipped: [],
+      manifest: {
+        format: "openclaw-engram-export",
+        schemaVersion: 2,
+        createdAt: "2026-04-28T00:00:00.000Z",
+        pluginVersion: "test",
+        includesTranscripts: false,
+        files: [{ path: "facts/2026-04-28/fact-a.md", sha256: "abc123", bytes: 42 }],
+        capsule: {
+          id: String(archivePath).split("/").pop()?.replace(/\.capsule\.json\.gz(?:\.enc)?$/, "") ?? "imported",
+          version: "1.0.0",
+          schemaVersion: "test",
+          parentCapsule: null,
+          parent: null,
+          description: "MCP import test capsule",
+          retrievalPolicy: { directAnswerEnabled: false, tierWeights: {} },
+          includes: {
+            taxonomy: false,
+            identityAnchors: false,
+            peerProfiles: false,
+            procedural: false,
+          },
+        },
+      },
+    }),
+    capsuleList: async () => ({
+      namespace: "global",
+      capsulesDir: "/tmp/remnic/.capsules",
+      capsules: [{
+        id: "daily-ops",
+        archivePath: "/tmp/remnic/.capsules/daily-ops.capsule.json.gz",
+        manifestPath: "/tmp/remnic/.capsules/daily-ops.manifest.json",
+        createdAt: "2026-04-28T00:00:00.000Z",
+        pluginVersion: "test",
+        fileCount: 1,
+        description: "Daily ops capsule",
+      }],
+    }),
     briefingEnabled: true,
     peerList: async () => ({
       peers: [
@@ -240,6 +313,9 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.recall_tier_explain",
     "engram.recall_xray",
     "engram.day_summary",
+    "engram.capsule_export",
+    "engram.capsule_import",
+    "engram.capsule_list",
     "engram.memory_governance_run",
     "engram.procedure_mining_run",
     "engram.pattern_reinforcement_run",
@@ -343,9 +419,65 @@ test("MCP server advertises tools and dispatches recall", async () => {
   assert.equal(governanceResult.structuredContent.runId, "gov-1");
   assert.equal(governanceResult.structuredContent.mode, "shadow");
 
-  const liveConnectors = await server.handleRequest({
+  const capsuleExport = await server.handleRequest({
     jsonrpc: "2.0",
     id: 6,
+    method: "tools/call",
+    params: {
+      name: "remnic.capsule_export",
+      arguments: {
+        name: "daily-ops",
+        namespace: "global",
+        includeKinds: ["facts"],
+        peerIds: ["alice"],
+        includeTranscripts: true,
+      },
+    },
+  });
+  const capsuleExportResult = capsuleExport?.result as {
+    structuredContent: { archivePath: string; manifest: { capsule: { id: string; description: string } } };
+  };
+  assert.equal(capsuleExportResult.structuredContent.archivePath, "/tmp/remnic/.capsules/daily-ops.capsule.json.gz");
+  assert.equal(capsuleExportResult.structuredContent.manifest.capsule.id, "daily-ops");
+  assert.match(capsuleExportResult.structuredContent.manifest.capsule.description, /kinds=facts/);
+  assert.match(capsuleExportResult.structuredContent.manifest.capsule.description, /peers=alice/);
+
+  const capsuleImport = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 7,
+    method: "tools/call",
+    params: {
+      name: "engram.capsule_import",
+      arguments: {
+        archivePath: "/tmp/remnic/.capsules/daily-ops.capsule.json.gz",
+        mode: "overwrite",
+      },
+    },
+  });
+  const capsuleImportResult = capsuleImport?.result as {
+    structuredContent: { imported: Array<{ targetPath: string; snapshotted: boolean }> };
+  };
+  assert.equal(capsuleImportResult.structuredContent.imported[0]?.targetPath, "facts/2026-04-28/fact-a.md");
+  assert.equal(capsuleImportResult.structuredContent.imported[0]?.snapshotted, true);
+
+  const capsuleList = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 8,
+    method: "tools/call",
+    params: {
+      name: "remnic.capsule_list",
+      arguments: {},
+    },
+  });
+  const capsuleListResult = capsuleList?.result as {
+    structuredContent: { capsules: Array<{ id: string; fileCount: number | null }> };
+  };
+  assert.equal(capsuleListResult.structuredContent.capsules[0]?.id, "daily-ops");
+  assert.equal(capsuleListResult.structuredContent.capsules[0]?.fileCount, 1);
+
+  const liveConnectors = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 9,
     method: "tools/call",
     params: {
       name: "engram.live_connectors_run",
@@ -360,7 +492,7 @@ test("MCP server advertises tools and dispatches recall", async () => {
 
   const entity = await server.handleRequest({
     jsonrpc: "2.0",
-    id: 7,
+    id: 10,
     method: "tools/call",
     params: {
       name: "engram.entity_get",
@@ -369,6 +501,100 @@ test("MCP server advertises tools and dispatches recall", async () => {
   });
   const entityResult = entity?.result as { structuredContent: { entity: { name: string } } };
   assert.equal(entityResult.structuredContent.entity.name, "person-alex");
+});
+
+test("MCP capsule tools reject invalid arguments before calling service", async () => {
+  let exportCalls = 0;
+  let importCalls = 0;
+  let listCalls = 0;
+  const service = {
+    ...createFakeService(),
+    capsuleExport: async () => {
+      exportCalls += 1;
+      return {};
+    },
+    capsuleImport: async () => {
+      importCalls += 1;
+      return {};
+    },
+    capsuleList: async () => {
+      listCalls += 1;
+      return {};
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(service);
+
+  const badExport = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: {
+      name: "engram.capsule_export",
+      arguments: { name: "../bad" },
+    },
+  });
+  assert.match(toolCallErrorMessage(badExport), /name: name must be alphanumeric/);
+  assert.equal(exportCalls, 0);
+
+  const badImport = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/call",
+    params: {
+      name: "remnic.capsule_import",
+      arguments: { archivePath: "/tmp/bad.capsule.json.gz", mode: "merge" },
+    },
+  });
+  assert.match(toolCallErrorMessage(badImport), /mode: Invalid enum value/);
+  assert.equal(importCalls, 0);
+
+  const badList = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: {
+      name: "engram.capsule_list",
+      arguments: { namespace: 42 },
+    },
+  });
+  assert.match(toolCallErrorMessage(badList), /namespace: Expected string/);
+  assert.equal(listCalls, 0);
+
+  const typoList = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 4,
+    method: "tools/call",
+    params: {
+      name: "engram.capsule_list",
+      arguments: { namespce: "global" },
+    },
+  });
+  assert.match(toolCallErrorMessage(typoList), /Unrecognized key/);
+  assert.equal(listCalls, 0);
+
+  const stringArguments = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 5,
+    method: "tools/call",
+    params: {
+      name: "engram.capsule_list",
+      arguments: "oops",
+    },
+  });
+  assert.match(toolCallErrorMessage(stringArguments), /arguments must be an object/);
+  assert.equal(listCalls, 0);
+
+  const nullArguments = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 6,
+    method: "tools/call",
+    params: {
+      name: "engram.capsule_list",
+      arguments: null,
+    },
+  });
+  assert.match(toolCallErrorMessage(nullArguments), /arguments must be an object/);
+  assert.equal(listCalls, 0);
 });
 
 test("engram.dreams_status rejects invalid windowHours without calling service", async () => {

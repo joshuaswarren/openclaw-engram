@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { EngramAccessInputError, EngramAccessService } from "../src/access-service.js";
 import { runMemoryGovernance } from "../src/maintenance/memory-governance.ts";
 import { rebuildMemoryProjection } from "../src/maintenance/rebuild-memory-projection.ts";
@@ -303,6 +303,165 @@ function memoryDoc(id: string, content: string, extra: string[] = []): string {
     "",
   ].join("\n");
 }
+
+test("capsuleList returns namespace-scoped capsule metadata with read ACLs", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-capsule-list-ns-"));
+  const namespaceDir = path.join(memoryDir, "namespaces", "project-x");
+  const capsulesDir = path.join(namespaceDir, ".capsules");
+  await mkdir(capsulesDir, { recursive: true });
+  await writeFile(path.join(capsulesDir, "daily-ops.capsule.json.gz"), "archive", "utf8");
+  await writeFile(
+    path.join(capsulesDir, "daily-ops.manifest.json"),
+    JSON.stringify({
+      createdAt: "2026-04-28T00:00:00.000Z",
+      pluginVersion: "9.3.243",
+      files: [{ path: "facts/2026-04-28/fact-a.md" }],
+      capsule: { description: "Daily ops capsule" },
+    }),
+    "utf8",
+  );
+  await writeFile(path.join(capsulesDir, "weekly-rollup.capsule.json.gz.enc"), "archive", "utf8");
+  await writeFile(path.join(capsulesDir, "broken-sidecar.capsule.json.gz"), "archive", "utf8");
+  await writeFile(path.join(capsulesDir, "broken-sidecar.manifest.json"), "{not-json", "utf8");
+  await writeFile(path.join(capsulesDir, "linked-sidecar.capsule.json.gz"), "archive", "utf8");
+  const foreignManifestPath = path.join(memoryDir, "foreign-manifest.json");
+  await writeFile(
+    foreignManifestPath,
+    JSON.stringify({
+      createdAt: "2026-04-27T00:00:00.000Z",
+      pluginVersion: "0.0.1-foreign",
+      files: [{ path: "facts/foreign.md" }],
+      capsule: { description: "Foreign metadata must not leak" },
+    }),
+    "utf8",
+  );
+  await symlink(foreignManifestPath, path.join(capsulesDir, "linked-sidecar.manifest.json"));
+  let resolvedNamespace: string | undefined;
+  const service = new EngramAccessService({
+    config: {
+      memoryDir,
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x", "read-only"],
+          writePrincipals: ["project-x"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
+      dreamsPhases: dreamsPhasesConfig(),
+    },
+    recall: async () => "ctx",
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async (namespace: string | undefined) => {
+      resolvedNamespace = namespace;
+      return { dir: namespaceDir };
+    },
+  } as any);
+
+  try {
+    await assert.rejects(
+      () => service.capsuleList({ namespace: "project-x" }),
+      (err: unknown) =>
+        err instanceof EngramAccessInputError &&
+        /authentication required/.test(err.message),
+    );
+
+    const result = await service.capsuleList({
+      namespace: "project-x",
+      principal: "read-only",
+    });
+
+    assert.equal(resolvedNamespace, "project-x");
+    assert.equal(result.namespace, "project-x");
+    assert.equal(result.capsulesDir, capsulesDir);
+    assert.deepEqual(result.capsules.map((entry) => entry.id), [
+      "broken-sidecar",
+      "daily-ops",
+      "linked-sidecar",
+      "weekly-rollup",
+    ]);
+    assert.equal(result.capsules[0]?.manifestPath, path.join(capsulesDir, "broken-sidecar.manifest.json"));
+    assert.equal(result.capsules[0]?.createdAt, null);
+    assert.equal(result.capsules[0]?.pluginVersion, null);
+    assert.equal(result.capsules[0]?.fileCount, null);
+    assert.equal(result.capsules[0]?.description, null);
+    assert.equal(result.capsules[1]?.manifestPath, path.join(capsulesDir, "daily-ops.manifest.json"));
+    assert.equal(result.capsules[1]?.createdAt, "2026-04-28T00:00:00.000Z");
+    assert.equal(result.capsules[1]?.pluginVersion, "9.3.243");
+    assert.equal(result.capsules[1]?.fileCount, 1);
+    assert.equal(result.capsules[1]?.description, "Daily ops capsule");
+    assert.equal(result.capsules[2]?.manifestPath, path.join(capsulesDir, "linked-sidecar.manifest.json"));
+    assert.equal(result.capsules[2]?.createdAt, null);
+    assert.equal(result.capsules[2]?.pluginVersion, null);
+    assert.equal(result.capsules[2]?.fileCount, null);
+    assert.equal(result.capsules[2]?.description, null);
+    assert.equal(result.capsules[3]?.manifestPath, null);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("capsuleList rejects symlinked capsule store directories", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-capsule-list-symlink-"));
+  const namespaceDir = path.join(memoryDir, "namespaces", "project-x");
+  const outsideCapsulesDir = path.join(memoryDir, "outside-capsules");
+  await mkdir(namespaceDir, { recursive: true });
+  await mkdir(outsideCapsulesDir, { recursive: true });
+  await symlink(outsideCapsulesDir, path.join(namespaceDir, ".capsules"), "dir");
+
+  const service = new EngramAccessService({
+    config: {
+      memoryDir,
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x", "read-only"],
+          writePrincipals: ["project-x"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
+      dreamsPhases: dreamsPhasesConfig(),
+    },
+    recall: async () => "ctx",
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async () => ({ dir: namespaceDir }),
+  } as any);
+
+  try {
+    await assert.rejects(
+      () => service.capsuleList({ namespace: "project-x", principal: "read-only" }),
+      (err: unknown) =>
+        err instanceof EngramAccessInputError &&
+        /capsule store directory must not be a symlink/.test(err.message),
+    );
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
 
 test("capsuleExport encrypts namespace exports with the root secure-store keyring", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-capsule-export-ns-"));

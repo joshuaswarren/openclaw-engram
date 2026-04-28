@@ -2240,6 +2240,21 @@ test("access HTTP server rate-limits MCP write tool calls", async () => {
     });
     assert.equal(limitedDreamsRun.status, 429);
 
+    const limitedCapsuleExport = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1003,
+        method: "tools/call",
+        params: {
+          name: "remnic.capsule_export",
+          arguments: { name: "overflow-capsule" },
+        },
+      }),
+    });
+    assert.equal(limitedCapsuleExport.status, 429);
+
     // Read-only MCP calls should still work
     const recallRes = await fetch(`${base}/mcp`, {
       method: "POST",
