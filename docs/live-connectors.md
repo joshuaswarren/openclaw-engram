@@ -268,11 +268,11 @@ maintenance cron job:
 
 | Job id | Schedule | Tool |
 |--------|----------|------|
-| `engram-live-connectors-sync` | `*/5 * * * *` | `engram.live_connectors_run` |
+| `engram-live-connectors-sync` | `* * * * *` when configured; `*/5 * * * *` before connector config loads | `engram.live_connectors_run` |
 
-The cron wakes every five minutes and runs only connectors whose own
-`pollIntervalMs` says they are due. Operators can call the same MCP tool with
-`{"force": true}` to bypass the due check during debugging.
+The cron wakes every minute once connectors are configured and runs only
+connectors whose own `pollIntervalMs` says they are due. Operators can call the
+same MCP tool with `{"force": true}` to bypass the due check during debugging.
 
 ## What's deferred
 
