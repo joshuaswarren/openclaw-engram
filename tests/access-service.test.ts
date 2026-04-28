@@ -7,8 +7,30 @@ import { EngramAccessInputError, EngramAccessService } from "../src/access-servi
 import { runMemoryGovernance } from "../src/maintenance/memory-governance.ts";
 import { rebuildMemoryProjection } from "../src/maintenance/rebuild-memory-projection.ts";
 import { getMemoryProjectionPath } from "../src/memory-projection-store.js";
+import {
+  keyring,
+  runSecureStoreInit,
+  runSecureStoreUnlock,
+} from "../src/secure-store/index.js";
 import { StorageManager } from "../src/storage.js";
 import { recordTrustZoneRecord } from "../src/trust-zones.ts";
+import type { ScryptParams } from "../packages/remnic-core/src/secure-store/kdf.js";
+import { isEncryptedCapsuleFile } from "../packages/remnic-core/src/transfer/capsule-crypto.js";
+
+const FAST_SCRYPT: ScryptParams = {
+  N: 1 << 10,
+  r: 1,
+  p: 1,
+  keyLength: 32,
+  maxmem: 32 * 1024 * 1024,
+};
+
+const TEST_PASSPHRASE = "correct horse battery staple";
+
+function staticPassphraseReader(...sequence: string[]) {
+  let index = 0;
+  return async () => sequence[index++] ?? sequence[sequence.length - 1] ?? TEST_PASSPHRASE;
+}
 
 function dreamsPhasesConfig(deepSleepEnabled = true, deepSleepEnabledExplicitlySet = false) {
   return {
@@ -280,6 +302,78 @@ function memoryDoc(id: string, content: string, extra: string[] = []): string {
     "",
   ].join("\n");
 }
+
+test("capsuleExport encrypts namespace exports with the root secure-store keyring", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-capsule-export-ns-"));
+  const namespaceDir = path.join(memoryDir, "namespaces", "project-x");
+  await writeText(
+    namespaceDir,
+    path.join("facts", "2026-04-28", "fact-a.md"),
+    "---\nid: fact-a\ncategory: fact\n---\nNamespace capsule export uses the root secure-store key.\n",
+  );
+  let resolvedNamespace: string | undefined;
+  const service = new EngramAccessService({
+    config: {
+      memoryDir,
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-x"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
+      dreamsPhases: dreamsPhasesConfig(),
+    },
+    recall: async () => "ctx",
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async (namespace: string | undefined) => {
+      resolvedNamespace = namespace;
+      return { dir: namespaceDir };
+    },
+  } as any);
+
+  try {
+    await runSecureStoreInit({
+      memoryDir,
+      readPassphrase: staticPassphraseReader(TEST_PASSPHRASE, TEST_PASSPHRASE),
+      algorithm: "scrypt",
+      params: FAST_SCRYPT,
+    });
+    const unlock = await runSecureStoreUnlock({
+      memoryDir,
+      readPassphrase: staticPassphraseReader(TEST_PASSPHRASE),
+    });
+    assert.equal(unlock.ok, true);
+
+    const result = await service.capsuleExport({
+      name: "project-x-export",
+      namespace: "project-x",
+      principal: "project-x",
+      encrypt: true,
+    });
+
+    assert.equal(resolvedNamespace, "project-x");
+    assert.equal(result.encryptedArchivePath, result.archivePath);
+    assert.match(result.archivePath, /project-x-export\.capsule\.json\.gz\.enc$/);
+    assert.equal(await isEncryptedCapsuleFile(result.archivePath), true);
+  } finally {
+    keyring.lockAll();
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
 
 test("access service rejects empty recall queries as input errors", async () => {
   const service = createService();

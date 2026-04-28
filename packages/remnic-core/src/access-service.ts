@@ -4517,7 +4517,7 @@ export class EngramAccessService {
     const resolvedNamespace = this.resolveReadableNamespace(namespace, principal);
     const storage = await this.orchestrator.getStorage(resolvedNamespace);
     const root = explicitRoot ?? storage.dir;
-    const memoryDir = explicitMemoryDir ?? root;
+    const memoryDir = explicitMemoryDir ?? this.orchestrator.config.memoryDir;
     return exportCapsuleFn({
       ...exportOptions,
       root,
