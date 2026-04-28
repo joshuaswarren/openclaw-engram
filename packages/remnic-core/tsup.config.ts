@@ -19,6 +19,7 @@ export default defineConfig({
   dts: true,
   external: [
     "openclaw",
+    "@node-rs/argon2",
     "@lancedb/lancedb",
     "meilisearch",
     "@orama/orama",

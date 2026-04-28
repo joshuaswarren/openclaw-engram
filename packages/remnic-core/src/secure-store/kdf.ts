@@ -11,22 +11,15 @@
  * config, etc.). Reusing the `vault` namespace for at-rest encryption
  * would cause symbol collisions and reader confusion.
  *
- * KDF choice — scrypt today, Argon2id tomorrow
- * ---------------------------------------------
+ * KDF choice — Argon2id primary, scrypt compatibility
+ * ---------------------------------------------------
  * Issue #690 specifies Argon2id (OWASP m=64 MiB, t=3, p=4) as the
- * preferred KDF. Argon2id is not available via Node's built-in
- * `node:crypto`; it requires a third-party native module (`argon2` or
- * `@node-rs/argon2`) that has historically broken cross-platform
- * builds in this monorepo's CI matrix.
+ * preferred KDF. We use `@node-rs/argon2` for the Argon2id runtime
+ * and keep scrypt as the compatibility path for stores initialized
+ * before Argon2id support landed.
  *
- * Per the issue's "prefer scrypt with strong params over a broken
- * Argon2id" guidance, this PR ships **scrypt** (Node built-in) with
- * strong parameters (N = 2^17, r = 8, p = 1 — RFC 7914 / OWASP
- * acceptable for 2024+). The `KdfAlgorithm` enum and metadata format
- * are designed so a future PR can add `"argon2id"` without breaking
- * existing stores: the algorithm name + params are persisted in the
- * metadata file, so old stores keep deriving with scrypt while new
- * ones can opt into Argon2id.
+ * The algorithm name + params are persisted in the metadata file, so
+ * stores keep deriving with the same KDF they were initialized with.
  *
  * Trade-off summary:
  *   - scrypt N=2^17, r=8, p=1 → ~128 MiB memory, ~150 ms on a modern
@@ -39,6 +32,25 @@
  */
 
 import { scryptSync, timingSafeEqual } from "node:crypto";
+import { createRequire } from "node:module";
+
+type Argon2Runtime = typeof import("@node-rs/argon2");
+
+const requireArgon2 = createRequire(import.meta.url);
+let argon2Runtime: Argon2Runtime | undefined;
+
+function loadArgon2Runtime(): Argon2Runtime {
+  try {
+    argon2Runtime ??= requireArgon2("@node-rs/argon2") as Argon2Runtime;
+    return argon2Runtime;
+  } catch (cause) {
+    throw new Error(
+      "Argon2id KDF requires @node-rs/argon2 to be installed and loadable on this platform. " +
+        "Use scrypt compatibility mode for stores that must run without the Argon2 native binding.",
+      { cause },
+    );
+  }
+}
 
 /** KDF algorithms supported by the secure-store metadata format. */
 export type KdfAlgorithm = "scrypt" | "argon2id";
@@ -57,7 +69,7 @@ export interface ScryptParams {
   maxmem: number;
 }
 
-/** Parameters for the Argon2id KDF (reserved for future PR). */
+/** Parameters for the Argon2id KDF. */
 export interface Argon2idParams {
   /** Memory cost in KiB. OWASP default 65536 (64 MiB). */
   memoryKiB: number;
@@ -80,7 +92,7 @@ export const DEFAULT_SCRYPT_PARAMS: Readonly<ScryptParams> = Object.freeze({
   maxmem: 256 * 1024 * 1024,
 });
 
-/** OWASP Argon2id defaults — used when/if Argon2id support lands. */
+/** OWASP Argon2id defaults. */
 export const DEFAULT_ARGON2ID_PARAMS: Readonly<Argon2idParams> = Object.freeze({
   memoryKiB: 64 * 1024,
   iterations: 3,
@@ -132,6 +144,25 @@ export function validateScryptParams(params: ScryptParams): void {
   }
 }
 
+/** Validate Argon2id parameters before invoking the native KDF binding. */
+export function validateArgon2idParams(params: Argon2idParams): void {
+  const { memoryKiB, iterations, parallelism, keyLength } = params;
+  if (!Number.isInteger(memoryKiB) || memoryKiB < 8) {
+    throw new Error(`argon2id memoryKiB must be an integer ≥ 8, got ${memoryKiB}`);
+  }
+  if (!Number.isInteger(iterations) || iterations < 1) {
+    throw new Error(`argon2id iterations must be a positive integer, got ${iterations}`);
+  }
+  if (!Number.isInteger(parallelism) || parallelism < 1 || parallelism > 255) {
+    throw new Error(`argon2id parallelism must be an integer in [1, 255], got ${parallelism}`);
+  }
+  if (!Number.isInteger(keyLength) || keyLength !== KDF_KEY_LENGTH) {
+    throw new Error(
+      `argon2id keyLength must be ${KDF_KEY_LENGTH} (AES-256 requires a 32-byte key), got ${keyLength}`,
+    );
+  }
+}
+
 /**
  * Derive a key from a passphrase + salt using scrypt.
  *
@@ -166,9 +197,44 @@ export function deriveKeyScrypt(
 }
 
 /**
- * Algorithm-dispatching KDF. Today only `scrypt` is implemented; a
- * future PR can add `argon2id` here without breaking on-disk metadata
- * because the algorithm name is recorded in the metadata file.
+ * Derive a key from a passphrase + salt using Argon2id.
+ *
+ * The returned raw hash is used directly as the AES-256-GCM master key.
+ * The same public KDF params are persisted in secure-store metadata so
+ * unlock can reproduce the exact key later.
+ */
+export function deriveKeyArgon2id(
+  passphrase: string,
+  salt: Uint8Array,
+  params: Argon2idParams = DEFAULT_ARGON2ID_PARAMS,
+): Buffer {
+  if (typeof passphrase !== "string") {
+    throw new Error("passphrase must be a string");
+  }
+  if (passphrase.length === 0) {
+    throw new Error("passphrase must not be empty");
+  }
+  if (!(salt instanceof Uint8Array) || salt.length < 8) {
+    throw new Error(
+      `salt must be a Uint8Array of at least 8 bytes, got ${salt?.length ?? "non-buffer"}`,
+    );
+  }
+  validateArgon2idParams(params);
+  const { Algorithm, Version, hashRawSync } = loadArgon2Runtime();
+  return hashRawSync(passphrase, {
+    algorithm: Algorithm.Argon2id,
+    version: Version.V0x13,
+    memoryCost: params.memoryKiB,
+    timeCost: params.iterations,
+    parallelism: params.parallelism,
+    outputLen: params.keyLength,
+    salt,
+  });
+}
+
+/**
+ * Algorithm-dispatching KDF. The algorithm name is recorded in the
+ * metadata file so existing stores continue using their original KDF.
  */
 export function deriveKey(
   algorithm: KdfAlgorithm,
@@ -180,10 +246,7 @@ export function deriveKey(
     return deriveKeyScrypt(passphrase, salt, params as ScryptParams);
   }
   if (algorithm === "argon2id") {
-    throw new Error(
-      "argon2id KDF is reserved in the metadata format but not yet wired " +
-        "in this build. Use 'scrypt' until Argon2id native support lands.",
-    );
+    return deriveKeyArgon2id(passphrase, salt, params as Argon2idParams);
   }
   throw new Error(`unknown KDF algorithm: ${algorithm as string}`);
 }

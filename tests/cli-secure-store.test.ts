@@ -3,7 +3,7 @@
  * handlers (issue #690 PR 2/4).
  *
  * These tests drive the pure handler functions directly with an
- * injected passphrase reader and a low-cost scrypt parameter set so
+ * injected passphrase reader and low-cost KDF parameter sets so
  * the suite stays fast on CI.
  */
 
@@ -39,10 +39,11 @@ import {
   buildHeaderFromPassphrase,
   deriveKeyFromHeader,
 } from "../packages/remnic-core/src/secure-store/header.js";
-import {
-  buildMetadata,
-  type ScryptParams,
-} from "../packages/remnic-core/src/secure-store/metadata.js";
+import { buildMetadata } from "../packages/remnic-core/src/secure-store/metadata.js";
+import type {
+  Argon2idParams,
+  ScryptParams,
+} from "../packages/remnic-core/src/secure-store/kdf.js";
 
 // Low-cost scrypt params: still RFC 7914 valid (N power of 2),
 // derives in <5 ms. Used everywhere the test doesn't specifically
@@ -53,6 +54,13 @@ const FAST_SCRYPT: ScryptParams = {
   p: 1,
   keyLength: 32,
   maxmem: 32 * 1024 * 1024,
+};
+
+const FAST_ARGON2ID: Argon2idParams = {
+  memoryKiB: 8,
+  iterations: 1,
+  parallelism: 1,
+  keyLength: 32,
 };
 
 const TEST_PASSPHRASE = "correct horse battery staple";
@@ -132,6 +140,7 @@ test("init writes a header with the chosen scrypt params and a sealed verifier",
       memoryDir,
       keyringId,
       readPassphrase: reader,
+      algorithm: "scrypt",
       params: FAST_SCRYPT,
       note: "test-init",
     });
@@ -152,6 +161,25 @@ test("init writes a header with the chosen scrypt params and a sealed verifier",
   });
 });
 
+test("init defaults new stores to argon2id", async () => {
+  await withTmpMemoryDir(async (memoryDir, keyringId) => {
+    const { reader } = staticPassphraseReader(TEST_PASSPHRASE, TEST_PASSPHRASE);
+    const report = await runSecureStoreInit({
+      memoryDir,
+      keyringId,
+      readPassphrase: reader,
+      params: FAST_ARGON2ID,
+    });
+    assert.equal(report.ok, true);
+    assert.equal(report.kdf.algorithm, "argon2id");
+    if (report.kdf.algorithm === "argon2id") {
+      assert.equal(report.kdf.params.memoryKiB, FAST_ARGON2ID.memoryKiB);
+      assert.equal(report.kdf.params.iterations, FAST_ARGON2ID.iterations);
+      assert.equal(report.kdf.params.parallelism, FAST_ARGON2ID.parallelism);
+    }
+  });
+});
+
 test("init refuses to overwrite an existing header", async () => {
   await withTmpMemoryDir(async (memoryDir, keyringId) => {
     const first = staticPassphraseReader(TEST_PASSPHRASE, TEST_PASSPHRASE);
@@ -159,6 +187,7 @@ test("init refuses to overwrite an existing header", async () => {
       memoryDir,
       keyringId,
       readPassphrase: first.reader,
+      algorithm: "scrypt",
       params: FAST_SCRYPT,
     });
     const second = staticPassphraseReader(TEST_PASSPHRASE, TEST_PASSPHRASE);
@@ -167,6 +196,7 @@ test("init refuses to overwrite an existing header", async () => {
         memoryDir,
         keyringId,
         readPassphrase: second.reader,
+        algorithm: "scrypt",
         params: FAST_SCRYPT,
       }),
       /already exists/,
@@ -186,6 +216,7 @@ test("init rejects passphrases shorter than the minimum length", async () => {
         memoryDir,
         keyringId,
         readPassphrase: reader,
+        algorithm: "scrypt",
         params: FAST_SCRYPT,
       }),
       /at least .* characters/,
@@ -204,6 +235,7 @@ test("init surfaces a passphrase-mismatch error from the reader", async () => {
         memoryDir,
         keyringId,
         readPassphrase: reader,
+        algorithm: "scrypt",
         params: FAST_SCRYPT,
       }),
       /did not match/,
@@ -220,6 +252,7 @@ test("unlock with the correct passphrase registers the key in the keyring", asyn
       memoryDir,
       keyringId,
       readPassphrase: init.reader,
+      algorithm: "scrypt",
       params: FAST_SCRYPT,
     });
     assert.equal(keyring.status(keyringId).unlocked, false);
@@ -248,6 +281,7 @@ test("unlock with the wrong passphrase fails cleanly and leaves the keyring lock
       memoryDir,
       keyringId,
       readPassphrase: init.reader,
+      algorithm: "scrypt",
       params: FAST_SCRYPT,
     });
 
@@ -289,6 +323,7 @@ test("lock clears the in-memory key and is idempotent", async () => {
       memoryDir,
       keyringId,
       readPassphrase: init.reader,
+      algorithm: "scrypt",
       params: FAST_SCRYPT,
     });
     const unlock = staticPassphraseReader(TEST_PASSPHRASE);
@@ -318,6 +353,7 @@ test("status after init reports initialized + locked + KDF params", async () => 
       memoryDir,
       keyringId,
       readPassphrase: init.reader,
+      algorithm: "scrypt",
       params: FAST_SCRYPT,
     });
     const report = await runSecureStoreStatus({ memoryDir, keyringId });
@@ -337,6 +373,7 @@ test("status after unlock reports unlocked + last-unlock timestamp", async () =>
       memoryDir,
       keyringId,
       readPassphrase: init.reader,
+      algorithm: "scrypt",
       params: FAST_SCRYPT,
     });
     const unlock = staticPassphraseReader(TEST_PASSPHRASE);

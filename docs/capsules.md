@@ -238,7 +238,9 @@ Encrypted capsule and backup files use a simple binary format:
 
 ```
 [MAGIC: 11 bytes]  "REMNIC-ENC\x00" — ASCII magic + NUL sentinel
-[VERSION: 1 byte]  Format version (currently 1)
+[VERSION: 1 byte]  Format version (currently 2)
+[KDF_LEN: 2 bytes] Little-endian byte length of the KDF JSON section
+[KDF_JSON]         Compact JSON: { algorithm, params, salt }
 [ENVELOPE: rest]   AES-256-GCM sealed envelope (cipher.ts format):
                      [VERSION:1][SALT:16][IV:12][AUTHTAG:16][CIPHERTEXT:...]
                    The ciphertext is the original .gz payload.
@@ -250,7 +252,7 @@ The REMNIC-ENC magic is:
 - Obviously non-JSON — will not parse as `{...}`.
 - Obviously non-gzip — gzip magic is `0x1f 0x8b`; `R` is `0x52`.
 
-The KDF salt (16 bytes, scrypt) is embedded inside the AES-GCM envelope, so
+The KDF algorithm, parameters, and salt are embedded in the archive header, so
 the file is self-contained: any machine that knows the original passphrase can
 re-derive the same key and decrypt without any external metadata.
 
@@ -270,9 +272,9 @@ To restore an encrypted capsule on a different machine:
    ```bash
    remnic secure-store init
    ```
-   Scrypt is deterministic: the same passphrase + the salt embedded in the
-   envelope produces the same key, so you do not need to transfer any key
-   material out-of-band.
+   The recorded KDF is deterministic: the same passphrase plus the embedded
+   KDF parameters and salt produces the same key, so you do not need to
+   transfer any key material out-of-band.
 3. Unlock the store:
    ```bash
    remnic secure-store unlock
@@ -283,8 +285,8 @@ To restore an encrypted capsule on a different machine:
    ```
 
 > **Important:** The passphrase must match. The key is derived from the
-> passphrase using scrypt with the parameters and salt stored inside the
-> encrypted envelope. A different passphrase produces a different key and
+> passphrase using the algorithm, parameters, and salt stored inside the
+> encrypted archive. A different passphrase produces a different key and
 > decryption fails with an authentication error.
 
 ---

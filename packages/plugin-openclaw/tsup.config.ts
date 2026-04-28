@@ -11,6 +11,7 @@ export default defineConfig({
     "openclaw",
     "openai",
     "@remnic/core",
+    "@node-rs/argon2",
     "@lancedb/lancedb",
     "meilisearch",
     "@orama/orama",

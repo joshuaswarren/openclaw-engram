@@ -8689,8 +8689,9 @@ export function registerCli(
       secureStoreCmd
         .command("init")
         .description(
-          "Initialize a new secure-store header. Prompts for a passphrase, derives a master key via scrypt, and writes the verifier to <memoryDir>/.secure-store/header.json. Refuses to overwrite an existing header.",
+          "Initialize a new secure-store header. Prompts for a passphrase, derives a master key via Argon2id by default, and writes the verifier to <memoryDir>/.secure-store/header.json. Refuses to overwrite an existing header.",
         )
+        .option("--kdf <algorithm>", "KDF algorithm: argon2id (default) or scrypt", "argon2id")
         .option("--note <text>", "Optional human-readable note recorded in metadata. Never include secrets.")
         .option("--json", "Emit machine-readable JSON only")
         .action(async (...args: unknown[]) => {
@@ -8701,9 +8702,15 @@ export function registerCli(
             renderInitReport,
           } = await import("./secure-store/index.js");
           const memoryDir = expandTildePath(orchestrator.config.memoryDir);
+          const kdf = typeof options.kdf === "string" ? options.kdf.trim() : "argon2id";
+          if (kdf !== "argon2id" && kdf !== "scrypt") {
+            console.error(`Invalid --kdf '${String(options.kdf)}'. Must be one of: argon2id, scrypt`);
+            process.exit(1);
+          }
           const initOpts: Parameters<typeof runSecureStoreInit>[0] = {
             memoryDir,
             readPassphrase: createPassphraseReader(),
+            algorithm: kdf,
           };
           if (typeof options.note === "string") initOpts.note = options.note;
           const report = await runSecureStoreInit(initOpts);

@@ -31,8 +31,8 @@
  *     "format": "remnic.secure-store.metadata",
  *     "formatVersion": 1,
  *     "kdf": {
- *       "algorithm": "scrypt",
- *       "params": { "N": 131072, "r": 8, "p": 1, "keyLength": 32, "maxmem": 268435456 },
+ *       "algorithm": "argon2id",
+ *       "params": { "memoryKiB": 65536, "iterations": 3, "parallelism": 4, "keyLength": 32 },
  *       "salt": "<32-hex-chars-for-16-bytes>"
  *     },
  *     "createdAt": "<ISO-8601 timestamp>",
@@ -371,8 +371,8 @@ export function validateMetadata(meta: SecureStoreMetadata): void {
     if (!Number.isInteger(iterations) || iterations < 1) {
       throw new Error("metadata.kdf.params.iterations must be a positive integer");
     }
-    if (!Number.isInteger(parallelism) || parallelism < 1) {
-      throw new Error("metadata.kdf.params.parallelism must be a positive integer");
+    if (!Number.isInteger(parallelism) || parallelism < 1 || parallelism > 255) {
+      throw new Error("metadata.kdf.params.parallelism must be an integer in [1, 255]");
     }
     // Codex P2: cipher.ts hard-requires a 32-byte AES-256 key
     // (`assertAesKey`). Accepting `keyLength: 16` here would parse
