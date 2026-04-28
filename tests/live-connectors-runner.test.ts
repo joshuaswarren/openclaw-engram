@@ -295,6 +295,52 @@ test("runLiveConnectorsOnce reports prior timing when cursor state write fails",
   });
 });
 
+test("runLiveConnectorsOnce reports prior timing when error state write fails", async () => {
+  await withMemoryDir(async (memoryDir) => {
+    await writeConnectorState(memoryDir, "test-connector", {
+      id: "test-connector",
+      cursor: makeCursor("prior"),
+      lastSyncAt: "2026-04-28T11:58:00.000Z",
+      lastSyncStatus: "success",
+      totalDocsImported: 7,
+    });
+
+    const stateDir = path.join(memoryDir, "state", "connectors");
+    await chmod(stateDir, 0o500);
+    try {
+      const summary = await runLiveConnectorsOnce({
+        memoryDir,
+        connectors: defaultConnectorsConfig(),
+        force: true,
+        ingestDocuments: async () => {
+          throw new Error("memory layer unavailable");
+        },
+        now: new Date("2026-04-28T12:00:00.000Z"),
+        definitions: [
+          makeDefinition({
+            docs: [makeDoc("after-failed-ingest")],
+            pollIntervalMs: 60_000,
+          }),
+        ],
+      });
+
+      assert.equal(summary.ranCount, 1);
+      assert.equal(summary.errorCount, 1);
+      assert.equal(summary.results[0].ran, true);
+      assert.match(summary.results[0].error ?? "", /memory layer unavailable/);
+      assert.match(summary.results[0].stateWriteError ?? "", /EACCES|EPERM/);
+      assert.equal(summary.results[0].lastSyncAt, "2026-04-28T11:58:00.000Z");
+      assert.equal(summary.results[0].nextDueAt, "2026-04-28T11:59:00.000Z");
+    } finally {
+      await chmod(stateDir, 0o700);
+    }
+
+    const state = await readConnectorState(memoryDir, "test-connector");
+    assert.equal(state?.cursor?.value, "prior");
+    assert.equal(state?.lastSyncAt, "2026-04-28T11:58:00.000Z");
+  });
+});
+
 test("runLiveConnectorsOnce force bypasses the not-due gate", async () => {
   await withMemoryDir(async (memoryDir) => {
     await writeConnectorState(memoryDir, "test-connector", {

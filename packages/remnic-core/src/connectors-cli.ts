@@ -71,17 +71,18 @@ export interface ConnectorRunResult {
   docsImported: number;
   /**
    * Error message if the sync or ingest failed, undefined on full success.
-   * When only the cursor write failed after a successful ingest,
-   * this field is undefined and `stateWriteError` carries the failure.
+   * When only the cursor write failed after a successful ingest, this field is
+   * undefined and `stateWriteError` carries the failure. When persisting error
+   * state fails after a sync/ingest error, both fields are set so callers can
+   * preserve the primary failure while also reporting stale persisted state.
    */
   error?: string;
   /**
-   * Set when ingest succeeded but the subsequent cursor-state write failed.
-   * `docsImported` will reflect the actual count of successfully ingested docs
-   * so the operator knows data was persisted even though the cursor did not
-   * advance.  The cursor will be re-fetched from the prior position on the
-   * next poll (Codex P1 thread PRRT_kwDORJXyws59sm76, Cursor thread
-   * PRRT_kwDORJXyws59sm_N).
+   * Set when cursor/error-state persistence fails. On the success path,
+   * `docsImported` reflects the actual count of successfully ingested docs so
+   * the operator knows data was persisted even though the cursor did not
+   * advance. On the error path, `error` preserves the primary sync/ingest
+   * failure and this field reports the secondary persistence failure.
    */
   stateWriteError?: string;
 }
@@ -403,6 +404,7 @@ export async function runConnectorPollOnce(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     // syncFn failed — persist error state with the OLD cursor.
+    let stateWriteError: string | undefined;
     try {
       await writeCursorFn({
         cursor: priorState?.cursor ?? null,
@@ -411,12 +413,16 @@ export async function runConnectorPollOnce(
         totalDocsImported: priorState?.totalDocsImported ?? 0,
       });
     } catch (writeErr) {
-      const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+      stateWriteError = writeErr instanceof Error ? writeErr.message : String(writeErr);
       console.error(
-        `[remnic] connectors/${connectorId}: failed to persist error state after syncFn failure (${writeMsg}); original error: ${msg}`,
+        `[remnic] connectors/${connectorId}: failed to persist error state after syncFn failure (${stateWriteError}); original error: ${msg}`,
       );
     }
-    return { docsImported: 0, error: msg };
+    return {
+      docsImported: 0,
+      error: msg,
+      ...(stateWriteError !== undefined ? { stateWriteError } : {}),
+    };
   }
 
   // ── Phase 2: ingest ─────────────────────────────────────────────────────────
@@ -433,6 +439,7 @@ export async function runConnectorPollOnce(
 
   if (ingestError !== undefined) {
     // ingestFn failed — persist error state with the OLD cursor.
+    let stateWriteError: string | undefined;
     try {
       await writeCursorFn({
         cursor: priorState?.cursor ?? null,
@@ -441,17 +448,21 @@ export async function runConnectorPollOnce(
         totalDocsImported: priorState?.totalDocsImported ?? 0,
       });
     } catch (writeErr) {
-      const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+      stateWriteError = writeErr instanceof Error ? writeErr.message : String(writeErr);
       // Intentionally not re-throwing: the original ingest error is the
       // actionable failure for the operator.  The state-write failure is
       // secondary and should not replace it in the rendered output.
       // (CLAUDE.md gotcha #13; Codex P2 thread PRRT_kwDORJXyws59sk8K,
       //  Cursor thread PRRT_kwDORJXyws59slAG)
       console.error(
-        `[remnic] connectors/${connectorId}: failed to persist error state after ingestFn failure (${writeMsg}); original error: ${ingestError}`,
+        `[remnic] connectors/${connectorId}: failed to persist error state after ingestFn failure (${stateWriteError}); original error: ${ingestError}`,
       );
     }
-    return { docsImported: 0, error: ingestError };
+    return {
+      docsImported: 0,
+      error: ingestError,
+      ...(stateWriteError !== undefined ? { stateWriteError } : {}),
+    };
   }
 
   // ── Phase 3: advance cursor ─────────────────────────────────────────────────
