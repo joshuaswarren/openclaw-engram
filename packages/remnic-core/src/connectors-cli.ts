@@ -306,9 +306,11 @@ export function renderConnectorsRunResult(
       lines.push(`- **Error:** ${result.error}`);
     }
     if (result.stateWriteError !== undefined) {
-      lines.push(
-        `- **State-write error (docs ingested, cursor not advanced):** ${result.stateWriteError}`,
-      );
+      const label =
+        result.error === undefined
+          ? "State-write error (cursor not advanced)"
+          : "State-write error (error state not persisted)";
+      lines.push(`- **${label}:** ${result.stateWriteError}`);
     }
     return lines.join("\n") + "\n";
   }
@@ -328,9 +330,17 @@ export function renderConnectorsRunResult(
       lines.push(
         `  state_write_error: ${result.stateWriteError}`,
       );
-      lines.push(
-        `  (docs were ingested; cursor was not advanced — next poll will re-fetch from prior position)`,
-      );
+      if (result.error === undefined) {
+        lines.push(
+          result.docsImported > 0
+            ? `  (docs were ingested; cursor was not advanced — next poll will re-fetch from prior position)`
+            : `  (cursor was not advanced — next poll will retry from prior position)`,
+        );
+      } else {
+        lines.push(
+          `  (error state was not persisted — next poll will retry from prior position)`,
+        );
+      }
     }
   }
   return lines.join("\n");
