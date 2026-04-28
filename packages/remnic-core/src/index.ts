@@ -629,6 +629,16 @@ export {
 // ---------------------------------------------------------------------------
 
 export {
+  builtInLiveConnectorDefinitions,
+  hasEnabledLiveConnector,
+  runLiveConnectorsOnce,
+  type LiveConnectorDefinition,
+  type LiveConnectorRunItem,
+  type LiveConnectorSkipReason,
+  type LiveConnectorsRunSummary,
+} from "./live-connectors-runner.js";
+
+export {
   CONNECTORS_OUTPUT_FORMATS,
   parseConnectorsFormat,
   parseConnectorsListOptions,

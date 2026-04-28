@@ -288,6 +288,52 @@ test("runLiveConnectorsOnce force bypasses the not-due gate", async () => {
   });
 });
 
+test("runLiveConnectorsOnce evaluates due state with per-connector time", async () => {
+  await withMemoryDir(async (memoryDir) => {
+    await writeConnectorState(memoryDir, "second-connector", {
+      id: "second-connector",
+      cursor: makeCursor("prior"),
+      lastSyncAt: "2026-04-28T12:00:00.000Z",
+      lastSyncStatus: "success",
+      totalDocsImported: 0,
+    });
+
+    const times = [
+      "2026-04-28T12:00:00.000Z", // summary ranAt
+      "2026-04-28T12:00:00.000Z", // first connector due check
+      "2026-04-28T12:00:00.200Z", // first connector state write
+      "2026-04-28T12:00:00.200Z", // second connector due check
+      "2026-04-28T12:00:00.200Z", // second connector state write
+    ].map((value) => new Date(value));
+    const now = () => times.shift() ?? new Date("2026-04-28T12:00:00.200Z");
+
+    const summary = await runLiveConnectorsOnce({
+      memoryDir,
+      connectors: defaultConnectorsConfig(),
+      ingestDocuments: async () => {},
+      now,
+      definitions: [
+        makeDefinition({
+          docs: [],
+          pollIntervalMs: 60_000,
+        }),
+        makeDefinition({
+          id: "second-connector",
+          displayName: "Second Connector",
+          docs: [],
+          nextCursor: makeCursor("second-next"),
+          pollIntervalMs: 100,
+        }),
+      ],
+    });
+
+    assert.equal(summary.ranCount, 2);
+    assert.equal(summary.skippedCount, 0);
+    assert.equal(summary.results[1].id, "second-connector");
+    assert.equal(summary.results[1].ran, true);
+  });
+});
+
 test("runLiveConnectorsOnce records invalid config without aborting the batch", async () => {
   await withMemoryDir(async (memoryDir) => {
     const summary = await runLiveConnectorsOnce({

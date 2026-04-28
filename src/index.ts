@@ -70,13 +70,16 @@ import {
   resolveCodexSessionIdentity,
 } from "./codex-compat.js";
 import { planRecallMode } from "../packages/remnic-core/src/intent.js";
-import { resolvePrincipal, resolveAgentAccessAuthToken } from "@remnic/core";
+import {
+  resolvePrincipal,
+  resolveAgentAccessAuthToken,
+  hasEnabledLiveConnector,
+} from "@remnic/core";
 import { findGatewayRuntimeModules } from "./resolve-provider-secret.js";
 import { createDreamsSurface } from "../packages/remnic-core/src/surfaces/dreams.js";
 import { createHeartbeatSurface, type HeartbeatEntry } from "../packages/remnic-core/src/surfaces/heartbeat.js";
 import type { ConsolidationObservation } from "../packages/remnic-core/src/types.js";
 import { ensureLiveConnectorCron } from "./maintenance/memory-governance-cron.js";
-import { hasEnabledLiveConnector } from "../packages/remnic-core/src/live-connectors-runner.js";
 
 /**
  * Per-plugin runtime state is scoped by `serviceId` so a single process can host
