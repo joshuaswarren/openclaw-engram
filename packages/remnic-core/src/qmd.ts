@@ -1672,17 +1672,38 @@ export class QmdClient implements SearchBackend {
     );
   }
 
+  async updateCollectionStrict(
+    collection: string,
+    execution?: SearchExecutionOptions,
+  ): Promise<void> {
+    await this.runUpdateForCollection(
+      collection,
+      { perCollectionThrottle: true, strict: true },
+      execution?.signal,
+    );
+  }
+
   private async runUpdateForCollection(
     collection: string,
-    options: { perCollectionThrottle: boolean },
+    options: { perCollectionThrottle: boolean; strict?: boolean },
     signal?: AbortSignal,
   ): Promise<void> {
-    if (this.available === false) return;
+    if (this.available === false) {
+      if (options.strict) {
+        throw new Error("QMD unavailable");
+      }
+      return;
+    }
     const name = collection.trim();
-    if (!name) return;
+    if (!name) {
+      if (options.strict) {
+        throw new Error("QMD collection name is required");
+      }
+      return;
+    }
     const globalState = getGlobalQmdState();
     const now = Date.now();
-    if (options.perCollectionThrottle) {
+    if (!options.strict && options.perCollectionThrottle) {
       if (
         globalState.lastGlobalUpdateFailAtMs &&
         now - globalState.lastGlobalUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
@@ -1706,7 +1727,7 @@ export class QmdClient implements SearchBackend {
         log.debug(`QMD update: suppressed by per-collection failure backoff (${name})`);
         return;
       }
-    } else {
+    } else if (!options.strict) {
       if (
         this.lastUpdateRunAtMs &&
         now - this.lastUpdateRunAtMs < this.updateMinIntervalMs
@@ -1769,6 +1790,9 @@ export class QmdClient implements SearchBackend {
       }
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`QMD update failed for collection ${name}: ${msg}`);
+      if (options.strict) {
+        throw err;
+      }
     }
   }
 
