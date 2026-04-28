@@ -539,6 +539,27 @@ export class EngramAccessHttpServer {
       return;
     }
 
+    if (
+      req.method === "POST" &&
+      (pathname === "/engram/v1/capsules/export" || pathname === "/remnic/v1/capsules/export")
+    ) {
+      const body = await this.readValidatedBody(req, "capsuleExport");
+      this.ensureWriteRateLimitAvailable();
+      const result = await this.service.capsuleExport({
+        name: body.name,
+        namespace: this.resolveNamespace(req, body.namespace),
+        principal: this.resolveRequestPrincipal(req),
+        since: body.since,
+        includeKinds: body.includeKinds,
+        peerIds: body.peerIds,
+        includeTranscripts: body.includeTranscripts,
+        encrypt: body.encrypt,
+      });
+      this.recordWriteRateLimitHit();
+      this.respondJson(res, 200, result);
+      return;
+    }
+
     if (req.method === "POST" && pathname === "/engram/v1/recall/explain") {
       const body = await this.readValidatedBody(req, "recallExplain");
       const response = await this.service.recallExplain({

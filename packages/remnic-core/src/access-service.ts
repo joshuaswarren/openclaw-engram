@@ -115,6 +115,11 @@ import {
   type ImportCapsuleOptions,
   type ImportCapsuleResult,
 } from "./transfer/capsule-import.js";
+import {
+  exportCapsule as exportCapsuleFn,
+  type ExportCapsuleOptions,
+  type ExportCapsuleResult,
+} from "./transfer/capsule-export.js";
 
 export class EngramAccessInputError extends Error {}
 
@@ -4491,6 +4496,33 @@ export class EngramAccessService {
       sidecarDir: this.orchestrator.config.versioningSidecarDir,
     };
     return importCapsuleFn({ ...opts, root, versioning });
+  }
+
+  /**
+   * Export a capsule archive from the orchestrator's memory directory.
+   *
+   * HTTP and future MCP surfaces use this rather than calling the transfer
+   * helper directly so namespace ACL checks stay consistent with other read
+   * surfaces. The exporter still owns archive construction and validation.
+   */
+  async capsuleExport(
+    opts: Omit<ExportCapsuleOptions, "root" | "memoryDir"> & {
+      root?: string;
+      memoryDir?: string;
+      namespace?: string;
+      principal?: string;
+    },
+  ): Promise<ExportCapsuleResult> {
+    const { namespace, principal, root: explicitRoot, memoryDir: explicitMemoryDir, ...exportOptions } = opts;
+    const resolvedNamespace = this.resolveReadableNamespace(namespace, principal);
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const root = explicitRoot ?? storage.dir;
+    const memoryDir = explicitMemoryDir ?? root;
+    return exportCapsuleFn({
+      ...exportOptions,
+      root,
+      memoryDir: exportOptions.encrypt === true ? memoryDir : undefined,
+    });
   }
 
   // ── Dreams pipeline telemetry surfaces (issue #678 PR 3+4) ──────────────

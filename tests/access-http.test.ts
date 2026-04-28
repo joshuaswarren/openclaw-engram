@@ -379,6 +379,36 @@ function createFakeService(): EngramAccessService {
         recallMaxProcedures: 2,
       },
     }),
+    capsuleExport: async ({ name }) => ({
+      archivePath: `/tmp/engram/.capsules/${name}.capsule.json.gz`,
+      manifestPath: `/tmp/engram/.capsules/${name}.manifest.json`,
+      encryptedArchivePath: null,
+      manifest: {
+        format: "remnic-capsule",
+        schemaVersion: 2,
+        createdAt: "2026-04-28T00:00:00.000Z",
+        pluginVersion: "9.3.243",
+        includesTranscripts: false,
+        files: [{ path: "facts/2026-04-28/fact-a.md", sha256: "abc123", bytes: 42 }],
+        capsule: {
+          id: name,
+          version: "1.0.0",
+          createdAt: "2026-04-28T00:00:00.000Z",
+          parentCapsule: null,
+          description: "HTTP test capsule",
+          retrievalPolicy: {
+            directAnswerEnabled: false,
+            tierWeights: {},
+          },
+          includes: {
+            taxonomy: false,
+            identityAnchors: false,
+            peerProfiles: false,
+            procedural: false,
+          },
+        },
+      },
+    }),
   } as unknown as EngramAccessService;
 }
 
@@ -528,6 +558,36 @@ test("access HTTP server enforces bearer auth and serves phase 1 routes", async 
     assert.equal(proceduralStats.config.enabled, true);
     assert.equal(proceduralStats.config.recallMaxProcedures, 2);
 
+    const capsuleDenied = await fetch(`${base}/engram/v1/capsules/export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "daily-ops" }),
+    });
+    assert.equal(capsuleDenied.status, 401);
+
+    const capsuleExportRes = await fetch(`${base}/engram/v1/capsules/export`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        name: "daily-ops",
+        namespace: "global",
+        includeKinds: ["facts"],
+        includeTranscripts: true,
+      }),
+    });
+    assert.equal(capsuleExportRes.status, 200);
+    const capsuleExport = await capsuleExportRes.json() as {
+      archivePath: string;
+      manifestPath: string;
+      encryptedArchivePath: string | null;
+      manifest: { capsule: { id: string }; files: Array<{ path: string }> };
+    };
+    assert.equal(capsuleExport.archivePath, "/tmp/engram/.capsules/daily-ops.capsule.json.gz");
+    assert.equal(capsuleExport.manifestPath, "/tmp/engram/.capsules/daily-ops.manifest.json");
+    assert.equal(capsuleExport.encryptedArchivePath, null);
+    assert.equal(capsuleExport.manifest.capsule.id, "daily-ops");
+    assert.deepEqual(capsuleExport.manifest.files.map((file) => file.path), ["facts/2026-04-28/fact-a.md"]);
+
     // Operator console state (issue #688 PR 2/3).
     const consoleStateRes = await fetch(`${base}/engram/v1/console/state`, { headers });
     assert.equal(consoleStateRes.status, 200);
@@ -615,6 +675,100 @@ test("access HTTP server serves admin console shell without auth and rejects inv
       body: JSON.stringify({ memoryId: "fact-1", status: "bogus", reasonCode: "operator_confirmed" }),
     });
     assert.equal(badDispositionRes.status, 400);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("access HTTP capsule export validates input and surfaces ACL errors", async () => {
+  let captured: Record<string, unknown> | null = null;
+  const service = {
+    ...createFakeService(),
+    capsuleExport: async (request: Record<string, unknown>) => {
+      captured = request;
+      if (request.namespace === "private") {
+        throw new EngramAccessInputError("namespace is not readable");
+      }
+      return {
+        archivePath: "/tmp/engram/.capsules/remnic-alias.capsule.json.gz",
+        manifestPath: "/tmp/engram/.capsules/remnic-alias.manifest.json",
+        encryptedArchivePath: null,
+        manifest: {
+          capsule: { id: request.name },
+          files: [],
+        },
+      };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramAccessHttpServer({
+    service,
+    host: "127.0.0.1",
+    port: 0,
+    authToken: "secret-token",
+    principal: "principal-1",
+    maxBodyBytes: 1024,
+  });
+  const started = await server.start();
+  const base = `http://${started.host}:${started.port}`;
+  const headers = { Authorization: "Bearer secret-token", "Content-Type": "application/json" };
+
+  try {
+    const invalidName = await fetch(`${base}/engram/v1/capsules/export`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "bad name" }),
+    });
+    assert.equal(invalidName.status, 400);
+    const invalidNamePayload = await invalidName.json() as { code: string; details: Array<{ field: string }> };
+    assert.equal(invalidNamePayload.code, "validation_error");
+    assert.equal(invalidNamePayload.details[0]?.field, "name");
+
+    const invalidKind = await fetch(`${base}/engram/v1/capsules/export`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "good-name", includeKinds: ["../facts"] }),
+    });
+    assert.equal(invalidKind.status, 400);
+
+    const invalidSince = await fetch(`${base}/engram/v1/capsules/export`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "good-name", since: "2026-02-31" }),
+    });
+    assert.equal(invalidSince.status, 400);
+
+    const deniedNamespace = await fetch(`${base}/engram/v1/capsules/export`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "good-name", namespace: "private" }),
+    });
+    assert.equal(deniedNamespace.status, 400);
+    const deniedPayload = await deniedNamespace.json() as { code: string; error: string };
+    assert.equal(deniedPayload.code, "input_error");
+    assert.equal(deniedPayload.error, "namespace is not readable");
+
+    const aliasResponse = await fetch(`${base}/remnic/v1/capsules/export`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        name: "remnic-alias",
+        namespace: "team-a",
+        since: "2026-04-28T00:00:00Z",
+        peerIds: ["peer-a"],
+        encrypt: true,
+      }),
+    });
+    assert.equal(aliasResponse.status, 200);
+    assert.deepEqual(captured, {
+      name: "remnic-alias",
+      namespace: "team-a",
+      principal: "principal-1",
+      since: "2026-04-28T00:00:00Z",
+      includeKinds: undefined,
+      peerIds: ["peer-a"],
+      includeTranscripts: undefined,
+      encrypt: true,
+    });
   } finally {
     await server.stop();
   }
