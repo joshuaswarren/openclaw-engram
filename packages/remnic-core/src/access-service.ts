@@ -4514,7 +4514,7 @@ export class EngramAccessService {
     },
   ): Promise<ExportCapsuleResult> {
     const { namespace, principal, root: explicitRoot, memoryDir: explicitMemoryDir, ...exportOptions } = opts;
-    const resolvedNamespace = this.resolveReadableNamespace(namespace, principal);
+    const resolvedNamespace = this.resolveWritableNamespace(namespace, undefined, principal);
     const storage = await this.orchestrator.getStorage(resolvedNamespace);
     const root = explicitRoot ?? storage.dir;
     const memoryDir = explicitMemoryDir ?? this.orchestrator.config.memoryDir;

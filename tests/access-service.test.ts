@@ -72,7 +72,7 @@ function createService(dreamsPhases = dreamsPhasesConfig()) {
       namespacePolicies: [
         {
           name: "project-x",
-          readPrincipals: ["project-x"],
+          readPrincipals: ["project-x", "read-only"],
           writePrincipals: ["project-x"],
         },
         {
@@ -346,6 +346,17 @@ test("capsuleExport encrypts namespace exports with the root secure-store keyrin
   } as any);
 
   try {
+    await assert.rejects(
+      () => service.capsuleExport({
+        name: "read-only-export",
+        namespace: "project-x",
+        principal: "read-only",
+      }),
+      (err: unknown) =>
+        err instanceof EngramAccessInputError &&
+        /namespace is not writable: project-x/.test(err.message),
+    );
+
     await runSecureStoreInit({
       memoryDir,
       readPassphrase: staticPassphraseReader(TEST_PASSPHRASE, TEST_PASSPHRASE),
