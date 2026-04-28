@@ -79,7 +79,7 @@ import { findGatewayRuntimeModules } from "./resolve-provider-secret.js";
 import { createDreamsSurface } from "../packages/remnic-core/src/surfaces/dreams.js";
 import { createHeartbeatSurface, type HeartbeatEntry } from "../packages/remnic-core/src/surfaces/heartbeat.js";
 import type { ConsolidationObservation } from "../packages/remnic-core/src/types.js";
-import { ensureLiveConnectorCron } from "./maintenance/memory-governance-cron.js";
+import { ensureLiveConnectorCron } from "./openclaw-live-connector-cron.js";
 
 /**
  * Per-plugin runtime state is scoped by `serviceId` so a single process can host
@@ -3868,8 +3868,10 @@ const pluginDefinition = {
               );
             }
 
-            await maybeRegisterLiveConnectorCron(orchestrator);
-            if (!didCountStart) return;
+            if (!passiveMode) {
+              await maybeRegisterLiveConnectorCron(orchestrator);
+              if (!didCountStart) return;
+            }
 
             if (cfg.dreaming.enabled) {
               await queueDreamSurfaceSync();
