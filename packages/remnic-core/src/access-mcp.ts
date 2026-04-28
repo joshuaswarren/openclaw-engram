@@ -2161,9 +2161,13 @@ export class EngramMcpServer {
       }
       case "engram.live_connectors_run":
       case "remnic.live_connectors_run":
-        return this.service.liveConnectorsRun({
-          force: args.force === true,
-        });
+        return this.service.liveConnectorsRun(
+          {
+            authenticatedPrincipal: effectivePrincipal,
+            force: args.force === true,
+          },
+          effectivePrincipal,
+        );
       // ── Peer Registry dispatchers (issue #679 PR 4/5) ─────────────────
       case "engram.peer_list":
       case "remnic.peer_list":

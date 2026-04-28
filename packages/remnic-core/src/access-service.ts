@@ -2765,9 +2765,16 @@ export class EngramAccessService {
 
   async liveConnectorsRun(
     request: {
+      authenticatedPrincipal?: string;
       force?: boolean;
     } = {},
+    principal?: string,
   ): Promise<LiveConnectorsRunSummary> {
+    this.resolveWritableNamespace(
+      undefined,
+      undefined,
+      request.authenticatedPrincipal ?? principal,
+    );
     return this.orchestrator.runLiveConnectors({
       force: request.force === true,
     });

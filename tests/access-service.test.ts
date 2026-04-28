@@ -3068,3 +3068,50 @@ test("access service recall surfaces budgetWarning when over soft limit", async 
   assert.ok(res2.budgetWarning, "should have budgetWarning");
   assert.equal(res2.budgetWarning!.reason, "warn-over-soft");
 });
+
+test("access service liveConnectorsRun enforces write ACL before ingestion", async () => {
+  let runCount = 0;
+  const orchestrator = {
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "global",
+          readPrincipals: ["reader", "writer"],
+          writePrincipals: ["writer"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      recallAuditAnomalyDetectionEnabled: false,
+    },
+    runLiveConnectors: async () => {
+      runCount += 1;
+      return {
+        ranAt: "2026-04-28T00:00:00.000Z",
+        force: false,
+        totalDocsImported: 0,
+        ranCount: 0,
+        skippedCount: 0,
+        errorCount: 0,
+        results: [],
+      };
+    },
+  };
+  const service = new EngramAccessService(orchestrator as any);
+
+  await assert.rejects(
+    () => service.liveConnectorsRun({}, "reader"),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      err.message.includes("namespace is not writable: global"),
+  );
+  assert.equal(runCount, 0);
+
+  await service.liveConnectorsRun({}, "writer");
+  assert.equal(runCount, 1);
+});
