@@ -283,29 +283,36 @@ const capsuleIsoSinceSchema = z
     "since must be a valid ISO 8601 timestamp with no calendar overflow",
   );
 
-export const capsuleExportRequestSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, "name is required")
-    .max(64, "name must be 64 characters or fewer")
-    .regex(
-      CAPSULE_ID_PATTERN,
-      "name must be alphanumeric with single dashes (no spaces, no leading/trailing dashes)",
-    ),
-  namespace: namespaceSchema,
-  since: capsuleIsoSinceSchema.optional(),
-  includeKinds: z.array(capsuleTopLevelSegmentSchema).max(50).optional(),
-  peerIds: z.array(capsulePeerIdSchema).max(100).optional(),
-  includeTranscripts: z.boolean().optional(),
-  encrypt: z.boolean().optional(),
-});
+export const capsuleExportRequestSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1, "name is required")
+      .max(64, "name must be 64 characters or fewer")
+      .regex(
+        CAPSULE_ID_PATTERN,
+        "name must be alphanumeric with single dashes (no spaces, no leading/trailing dashes)",
+      ),
+    namespace: namespaceSchema,
+    since: capsuleIsoSinceSchema.optional(),
+    includeKinds: z.array(capsuleTopLevelSegmentSchema).max(50).optional(),
+    peerIds: z.array(capsulePeerIdSchema).max(100).optional(),
+    includeTranscripts: z.boolean().optional(),
+    encrypt: z.boolean().optional(),
+  });
 
-export const capsuleImportRequestSchema = z.object({
-  archivePath: z.string().trim().min(1, "archivePath is required").max(4096),
-  namespace: namespaceSchema,
-  mode: z.enum(["skip", "overwrite", "fork"]).optional(),
-});
+export const capsuleImportRequestSchema = z
+  .object({
+    archivePath: z.string().trim().min(1, "archivePath is required").max(4096),
+    namespace: namespaceSchema,
+    mode: z.enum(["skip", "overwrite", "fork"]).optional(),
+  });
+
+export const capsuleListRequestSchema = z
+  .object({
+    namespace: namespaceSchema,
+  });
 
 // ---------------------------------------------------------------------------
 // Inferred types
@@ -324,6 +331,7 @@ export type LcmSearchRequest = z.infer<typeof lcmSearchRequestSchema>;
 export type DaySummaryRequest = z.infer<typeof daySummaryRequestSchema>;
 export type CapsuleExportRequest = z.infer<typeof capsuleExportRequestSchema>;
 export type CapsuleImportRequest = z.infer<typeof capsuleImportRequestSchema>;
+export type CapsuleListRequest = z.infer<typeof capsuleListRequestSchema>;
 
 // ---------------------------------------------------------------------------
 // Validation helper
@@ -342,7 +350,8 @@ export type SchemaName =
   | "lcmSearch"
   | "daySummary"
   | "capsuleExport"
-  | "capsuleImport";
+  | "capsuleImport"
+  | "capsuleList";
 
 export type SchemaTypeFor<N extends SchemaName> =
   N extends "recall" ? RecallRequest
@@ -358,6 +367,7 @@ export type SchemaTypeFor<N extends SchemaName> =
   : N extends "daySummary" ? DaySummaryRequest
   : N extends "capsuleExport" ? CapsuleExportRequest
   : N extends "capsuleImport" ? CapsuleImportRequest
+  : N extends "capsuleList" ? CapsuleListRequest
   : never;
 
 const schemas: Record<SchemaName, z.ZodTypeAny> = {
@@ -374,6 +384,7 @@ const schemas: Record<SchemaName, z.ZodTypeAny> = {
   daySummary: daySummaryRequestSchema,
   capsuleExport: capsuleExportRequestSchema,
   capsuleImport: capsuleImportRequestSchema,
+  capsuleList: capsuleListRequestSchema,
 };
 
 /**

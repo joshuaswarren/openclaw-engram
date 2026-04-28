@@ -2,10 +2,19 @@ import type { Readable, Writable } from "node:stream";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { EngramAccessInputError, type EngramAccessService, type EngramAccessRecallResponse } from "./access-service.js";
+import {
+  validateRequest,
+  type CapsuleExportRequest,
+  type CapsuleImportRequest,
+  type CapsuleListRequest,
+  type SchemaName,
+  type SchemaTypeFor,
+} from "./access-schema.js";
 import { readEnvVar } from "./runtime/env.js";
 import type { RecallDisclosure, RecallPlanMode } from "./types.js";
 import { validateBriefingFormat } from "./briefing.js";
 import { buildCitationGuidance, type CitationMetadata } from "./citations.js";
+import { expandTildePath } from "./utils/path.js";
 
 type JsonRpcId = string | number | null;
 
@@ -43,6 +52,46 @@ function withToolAliases(tool: McpTool): McpTool[] {
   const canonicalTool = canonicalName === tool.name ? tool : { ...tool, name: canonicalName };
   if (canonicalName === tool.name) return [canonicalTool];
   return [canonicalTool, tool];
+}
+
+const STRICT_MCP_SCHEMA_KEYS: Partial<Record<SchemaName, readonly string[]>> = {
+  capsuleExport: [
+    "name",
+    "namespace",
+    "since",
+    "includeKinds",
+    "peerIds",
+    "includeTranscripts",
+    "encrypt",
+  ],
+  capsuleImport: ["archivePath", "namespace", "mode"],
+  capsuleList: ["namespace"],
+};
+
+function parseMcpRequest<N extends SchemaName>(
+  schemaName: N,
+  args: Record<string, unknown>,
+): SchemaTypeFor<N> {
+  const allowedKeys = STRICT_MCP_SCHEMA_KEYS[schemaName];
+  if (allowedKeys) {
+    const allowed = new Set(allowedKeys);
+    const unexpected = Object.keys(args).filter((key) => !allowed.has(key));
+    if (unexpected.length > 0) {
+      throw new EngramAccessInputError(
+        `request validation failed: (root): Unrecognized key(s) in object: ${unexpected.join(", ")}`,
+      );
+    }
+  }
+  const validation = validateRequest<SchemaTypeFor<N>>(schemaName, args);
+  if (validation.success) return validation.data;
+  const details = validation.error.details
+    .map((detail) => `${detail.field}: ${detail.message}`)
+    .join("; ");
+  throw new EngramAccessInputError(
+    details.length > 0
+      ? `${validation.error.error}: ${details}`
+      : validation.error.error,
+  );
 }
 
 async function getMcpServerVersion(): Promise<string> {
@@ -258,6 +307,70 @@ export class EngramMcpServer {
             namespace: { type: "string" },
           },
           required: [],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.capsule_export",
+        description: "Export a portable Remnic capsule archive from the namespace-scoped memory store.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: {
+              type: "string",
+              description: "Capsule id (alphanumeric with single dashes, max 64 characters).",
+            },
+            namespace: { type: "string" },
+            since: {
+              type: "string",
+              description: "Only include files modified on or after this ISO 8601 timestamp.",
+            },
+            includeKinds: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional top-level directory allow-list.",
+            },
+            peerIds: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional peer id allow-list for the peers/ subtree.",
+            },
+            includeTranscripts: { type: "boolean" },
+            encrypt: { type: "boolean" },
+          },
+          required: ["name"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.capsule_import",
+        description: "Import a Remnic capsule archive into the namespace-scoped memory store.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            archivePath: {
+              type: "string",
+              description: "Path to a .capsule.json.gz or .capsule.json.gz.enc archive.",
+            },
+            namespace: { type: "string" },
+            mode: {
+              type: "string",
+              enum: ["skip", "overwrite", "fork"],
+              description: "Conflict handling mode. Defaults to skip.",
+            },
+          },
+          required: ["archivePath"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.capsule_list",
+        description: "List capsule archives in the namespace-scoped capsule store.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            namespace: { type: "string" },
+          },
           additionalProperties: false,
         },
       },
@@ -1241,12 +1354,15 @@ export class EngramMcpServer {
     if (method === "tools/call") {
       const params = request.params ?? {};
       const name = typeof params.name === "string" ? params.name : "";
-      const argumentsObject =
-        params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments)
-          ? (params.arguments as Record<string, unknown>)
-          : {};
 
       try {
+        let argumentsObject: Record<string, unknown> = {};
+        if ("arguments" in params && params.arguments !== undefined) {
+          if (params.arguments === null || typeof params.arguments !== "object" || Array.isArray(params.arguments)) {
+            throw new EngramAccessInputError("tools/call arguments must be an object when provided");
+          }
+          argumentsObject = params.arguments as Record<string, unknown>;
+        }
         const effectivePrincipal = options?.principalOverride ?? this.authenticatedPrincipal;
         const result = await this.callTool(name, argumentsObject, effectivePrincipal, options?.sessionId);
         return {
@@ -1664,6 +1780,35 @@ export class EngramMcpServer {
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
         });
+      case "engram.capsule_export": {
+        const body: CapsuleExportRequest = parseMcpRequest("capsuleExport", args);
+        return this.service.capsuleExport({
+          name: body.name,
+          namespace: body.namespace,
+          principal: effectivePrincipal,
+          since: body.since,
+          includeKinds: body.includeKinds,
+          peerIds: body.peerIds,
+          includeTranscripts: body.includeTranscripts,
+          encrypt: body.encrypt,
+        });
+      }
+      case "engram.capsule_import": {
+        const body: CapsuleImportRequest = parseMcpRequest("capsuleImport", args);
+        return this.service.capsuleImport({
+          archivePath: expandTildePath(body.archivePath),
+          namespace: body.namespace,
+          principal: effectivePrincipal,
+          mode: body.mode,
+        });
+      }
+      case "engram.capsule_list": {
+        const body: CapsuleListRequest = parseMcpRequest("capsuleList", args);
+        return this.service.capsuleList({
+          namespace: body.namespace,
+          principal: effectivePrincipal,
+        });
+      }
       case "engram.memory_governance_run":
         return this.service.governanceRun({
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,

@@ -122,6 +122,10 @@ import {
   type ExportCapsuleOptions,
   type ExportCapsuleResult,
 } from "./transfer/capsule-export.js";
+import {
+  defaultCapsulesDir,
+  type CapsuleListEntry,
+} from "./capsule-cli.js";
 
 export class EngramAccessInputError extends Error {}
 
@@ -557,6 +561,12 @@ export interface EngramAccessQualityResponse {
     qualityScore?: EngramAccessReviewQueueResponse["qualityScore"];
     reviewQueueCount: number;
   };
+}
+
+export interface EngramAccessCapsuleListResponse {
+  namespace: string;
+  capsulesDir: string;
+  capsules: CapsuleListEntry[];
 }
 
 async function buildProjectedGovernanceProposedActions(
@@ -4611,6 +4621,110 @@ export class EngramAccessService {
       root,
       memoryDir: exportOptions.encrypt === true ? memoryDir : undefined,
     });
+  }
+
+  /**
+   * List capsule archives in the namespace-scoped capsule store.
+   *
+   * MCP uses this access-layer method instead of reading arbitrary paths so
+   * capsule discovery remains bound to the same namespace ACLs as export and
+   * import.
+   */
+  async capsuleList(options?: {
+    namespace?: string;
+    principal?: string;
+  }): Promise<EngramAccessCapsuleListResponse> {
+    const resolvedNamespace = this.resolveReadableNamespace(options?.namespace, options?.principal);
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const capsulesDir = defaultCapsulesDir(storage.dir);
+    let dirEntries: import("node:fs").Dirent[];
+    try {
+      const capsulesDirStat = await nodeFs.lstat(capsulesDir);
+      if (capsulesDirStat.isSymbolicLink()) {
+        throw new EngramAccessInputError("capsule list failed: capsule store directory must not be a symlink");
+      }
+      if (!capsulesDirStat.isDirectory()) {
+        throw new EngramAccessInputError("capsule list failed: capsule store path must be a directory");
+      }
+      dirEntries = await nodeFs.readdir(capsulesDir, { withFileTypes: true });
+    } catch (err) {
+      const code = typeof err === "object" && err !== null && "code" in err
+        ? (err as { code?: unknown }).code
+        : undefined;
+      if (code === "ENOENT") {
+        return { namespace: resolvedNamespace, capsulesDir, capsules: [] };
+      }
+      throw err;
+    }
+
+    const archiveNames = dirEntries
+      .filter(
+        (entry) =>
+          entry.isFile() &&
+          (entry.name.endsWith(".capsule.json.gz") ||
+            entry.name.endsWith(".capsule.json.gz.enc")),
+      )
+      .map((entry) => entry.name)
+      .sort();
+
+    const capsules: CapsuleListEntry[] = [];
+    for (const archiveName of archiveNames) {
+      const archivePath = nodePath.join(capsulesDir, archiveName);
+      const id = archiveName
+        .replace(/\.capsule\.json\.gz\.enc$/, "")
+        .replace(/\.capsule\.json\.gz$/, "");
+      const manifestPath = nodePath.join(capsulesDir, `${id}.manifest.json`);
+
+      let createdAt: string | null = null;
+      let pluginVersion: string | null = null;
+      let fileCount: number | null = null;
+      let description: string | null = null;
+      let manifestPathOrNull: string | null = manifestPath;
+
+      try {
+        const manifestStat = await nodeFs.lstat(manifestPath);
+        if (manifestStat.isSymbolicLink() || !manifestStat.isFile()) {
+          capsules.push({
+            id,
+            archivePath,
+            manifestPath: manifestPathOrNull,
+            createdAt,
+            pluginVersion,
+            fileCount,
+            description,
+          });
+          continue;
+        }
+        const raw = await nodeFs.readFile(manifestPath, "utf-8");
+        const sidecar = JSON.parse(raw) as Record<string, unknown>;
+        createdAt = typeof sidecar.createdAt === "string" ? sidecar.createdAt : null;
+        pluginVersion = typeof sidecar.pluginVersion === "string" ? sidecar.pluginVersion : null;
+        fileCount = Array.isArray(sidecar.files) ? sidecar.files.length : null;
+        const capsule = sidecar.capsule as Record<string, unknown> | undefined;
+        description = capsule && typeof capsule.description === "string"
+          ? capsule.description
+          : null;
+      } catch (err) {
+        const code = typeof err === "object" && err !== null && "code" in err
+          ? (err as { code?: unknown }).code
+          : undefined;
+        if (code === "ENOENT") {
+          manifestPathOrNull = null;
+        }
+      }
+
+      capsules.push({
+        id,
+        archivePath,
+        manifestPath: manifestPathOrNull,
+        createdAt,
+        pluginVersion,
+        fileCount,
+        description,
+      });
+    }
+
+    return { namespace: resolvedNamespace, capsulesDir, capsules };
   }
 
   // ── Dreams pipeline telemetry surfaces (issue #678 PR 3+4) ──────────────

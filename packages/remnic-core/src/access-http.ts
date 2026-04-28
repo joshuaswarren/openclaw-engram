@@ -1572,6 +1572,10 @@ export class EngramAccessHttpServer {
         toolName === "remnic.suggestion_submit" ||
         toolName === "engram.observe" ||
         toolName === "remnic.observe" ||
+        toolName === "engram.capsule_export" ||
+        toolName === "remnic.capsule_export" ||
+        toolName === "engram.capsule_import" ||
+        toolName === "remnic.capsule_import" ||
         (
           !dreamsRunDryRun &&
           (toolName === "engram.dreams_run" || toolName === "remnic.dreams_run")
