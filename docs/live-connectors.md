@@ -254,11 +254,11 @@ remnic connectors status
 # Manually trigger one incremental sync for an operator debug pass
 remnic connectors run google-drive
 remnic connectors run notion
-remnic connectors run gmail
-remnic connectors run github
 ```
 
-All three accept `--format text|markdown|json`.  `status` defaults to `json`;
+The manual CLI run target currently supports Google Drive and Notion. The
+scheduled MCP runner covers every enabled built-in connector. All three CLI
+subcommands accept `--format text|markdown|json`.  `status` defaults to `json`;
 the others default to `text`.
 
 ## Scheduled sync

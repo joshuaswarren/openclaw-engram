@@ -24,8 +24,6 @@ remnic connectors status
 # Manually run one incremental sync (operator debug)
 remnic connectors run google-drive
 remnic connectors run notion
-remnic connectors run gmail
-remnic connectors run github
 ```
 
 ---
@@ -106,7 +104,7 @@ connector.  Useful when:
 Usage: remnic connectors run <name> [options]
 
 Arguments:
-  name             Connector id (e.g. google-drive, notion, gmail, github)
+  name             Connector id (e.g. google-drive, notion)
 
 Options:
   --format <fmt>   Output format: text (default), markdown, or json
@@ -118,8 +116,9 @@ connector's state file so `connectors list` reflects it.
 
 The maintenance scheduler calls the MCP tool `engram.live_connectors_run` every
 five minutes through the `engram-live-connectors-sync` cron. That runner honors
-each connector's `pollIntervalMs`; `remnic connectors run <name>` remains the
-single-connector debug path when you want an immediate check.
+each connector's `pollIntervalMs` and covers every enabled built-in connector.
+`remnic connectors run <name>` currently supports Google Drive and Notion as the
+single-connector debug path.
 
 **Example — success:**
 

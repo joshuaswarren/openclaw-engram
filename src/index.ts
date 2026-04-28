@@ -30,7 +30,7 @@ import {
   validateExplicitCaptureInput,
 } from "./explicit-capture.js";
 import { readFile, realpath, writeFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createOpikExporter } from "./opik-exporter.js";
@@ -75,6 +75,8 @@ import { findGatewayRuntimeModules } from "./resolve-provider-secret.js";
 import { createDreamsSurface } from "../packages/remnic-core/src/surfaces/dreams.js";
 import { createHeartbeatSurface, type HeartbeatEntry } from "../packages/remnic-core/src/surfaces/heartbeat.js";
 import type { ConsolidationObservation } from "../packages/remnic-core/src/types.js";
+import { ensureLiveConnectorCron } from "./maintenance/memory-governance-cron.js";
+import { hasEnabledLiveConnector } from "../packages/remnic-core/src/live-connectors-runner.js";
 
 /**
  * Per-plugin runtime state is scoped by `serviceId` so a single process can host
@@ -303,6 +305,28 @@ function readPluginHooksPolicy(
   return loadPluginEntryFromFile(pluginId)?.["hooks"] as
     | Record<string, unknown>
     | undefined;
+}
+
+async function maybeRegisterLiveConnectorCron(orchestrator: Orchestrator): Promise<void> {
+  if (!hasEnabledLiveConnector(orchestrator.config.connectors)) return;
+
+  const jobsPath = path.join(resolveHomeDir(), ".openclaw", "cron", "jobs.json");
+  try {
+    if (!existsSync(jobsPath)) {
+      log.debug("live connectors cron: jobs.json not found, skipping auto-register");
+      return;
+    }
+    const created = await ensureLiveConnectorCron(jobsPath, {
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+    if (created.created) {
+      log.info(`live connectors cron auto-registered (${created.jobId})`);
+    } else {
+      log.debug("live connectors cron already exists, skipping auto-register");
+    }
+  } catch (err) {
+    log.debug(`live connectors cron auto-register error: ${err}`);
+  }
 }
 
 function isBundledActiveMemoryEnabledForAgent(
@@ -3840,6 +3864,9 @@ const pluginDefinition = {
                   "To schedule summaries, create an isolated/agentTurn cron job that calls `memory_summarize_hourly`.",
               );
             }
+
+            await maybeRegisterLiveConnectorCron(orchestrator);
+            if (!didCountStart) return;
 
             if (cfg.dreaming.enabled) {
               await queueDreamSurfaceSync();

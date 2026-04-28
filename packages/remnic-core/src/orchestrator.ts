@@ -79,11 +79,9 @@ import {
   ensureContradictionScanCron,
   ensurePatternReinforcementCron,
   ensureGraphEdgeDecayCron,
-  ensureLiveConnectorCron,
   graphEdgeDecayCadenceToCronExpr,
 } from "./maintenance/memory-governance-cron.js";
 import {
-  hasEnabledLiveConnector,
   runLiveConnectorsOnce,
   type LiveConnectorsRunSummary,
 } from "./live-connectors-runner.js";
@@ -2535,14 +2533,6 @@ export class Orchestrator {
       }
     }
 
-    if (hasEnabledLiveConnector(this.config.connectors)) {
-      try {
-        await this.autoRegisterLiveConnectorCron();
-      } catch (err) {
-        log.debug(`live connectors cron auto-register failed (non-fatal): ${err}`);
-      }
-    }
-
     // First-start lifecycle migration (issue #686 retention-completion).
     // When lifecyclePolicyEnabled is true and the memoryDir has never been
     // touched by the lifecycle policy, run a one-time rate-limited demotion
@@ -2911,27 +2901,6 @@ export class Orchestrator {
       }
     } catch (err) {
       log.debug(`graph edge decay cron auto-register error: ${err}`);
-    }
-  }
-
-  private async autoRegisterLiveConnectorCron(): Promise<void> {
-    const home = resolveHomeDir();
-    const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
-    try {
-      if (!existsSync(jobsPath)) {
-        log.debug("live connectors cron: jobs.json not found, skipping auto-register");
-        return;
-      }
-      const created = await ensureLiveConnectorCron(jobsPath, {
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      });
-      if (created.created) {
-        log.info(`live connectors cron auto-registered (${created.jobId})`);
-      } else {
-        log.debug("live connectors cron already exists, skipping auto-register");
-      }
-    } catch (err) {
-      log.debug(`live connectors cron auto-register error: ${err}`);
     }
   }
 
