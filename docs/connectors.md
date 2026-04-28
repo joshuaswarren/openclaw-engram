@@ -115,8 +115,9 @@ failure, exits `1`, writes the error to stderr, and records the failure in the
 connector's state file so `connectors list` reflects it.
 
 The maintenance scheduler calls the MCP tool `engram.live_connectors_run` every
-five minutes through the `engram-live-connectors-sync` cron. That runner honors
-each connector's `pollIntervalMs` and covers every enabled built-in connector.
+minute once connectors are configured through the `engram-live-connectors-sync`
+cron. That runner honors each connector's `pollIntervalMs` and covers every
+enabled built-in connector.
 `remnic connectors run <name>` currently supports Google Drive and Notion as the
 single-connector debug path.
 
