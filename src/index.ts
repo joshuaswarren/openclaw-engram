@@ -321,6 +321,7 @@ async function maybeRegisterLiveConnectorCron(orchestrator: Orchestrator): Promi
     }
     const created = await ensureLiveConnectorCron(jobsPath, {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      connectors: orchestrator.config.connectors,
     });
     if (created.created) {
       log.info(`live connectors cron auto-registered (${created.jobId})`);

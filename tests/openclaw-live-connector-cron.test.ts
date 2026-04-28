@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
-import { ensureLiveConnectorCron } from "../src/openclaw-live-connector-cron.js";
+import {
+  ensureLiveConnectorCron,
+  liveConnectorCronExprForConfig,
+} from "../src/openclaw-live-connector-cron.js";
 
 test("OpenClaw live connector cron registers once and calls engram.live_connectors_run", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "engram-live-connectors-cron-"));
@@ -35,4 +38,19 @@ test("OpenClaw live connector cron registers once and calls engram.live_connecto
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+});
+
+test("OpenClaw live connector cron derives cadence from enabled connector intervals", () => {
+  const connectors = {
+    googleDrive: { enabled: false, pollIntervalMs: 60_000 },
+    notion: { enabled: true, pollIntervalMs: 120_000 },
+    gmail: { enabled: true, pollIntervalMs: 60_000 },
+    github: { enabled: false, pollIntervalMs: 1_000 },
+  } as any;
+
+  assert.equal(liveConnectorCronExprForConfig(connectors), "* * * * *");
+});
+
+test("OpenClaw live connector cron keeps five-minute default when no connector config is supplied", () => {
+  assert.equal(liveConnectorCronExprForConfig(undefined), "*/5 * * * *");
 });
