@@ -6,7 +6,7 @@ import os from "node:os";
 import type { PluginConfig } from "../src/types.js";
 import { CompoundingEngine } from "../src/compounding/engine.js";
 import { StorageManager } from "../src/storage.js";
-import { isEncryptedFile } from "../packages/remnic-core/src/secure-store/secure-fs.js";
+import { SecureStoreDecryptError, isEncryptedFile } from "../packages/remnic-core/src/secure-store/secure-fs.js";
 
 function tmpDir(prefix: string): string {
   return path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -250,6 +250,74 @@ test("v5 compounding ingests failing memory-action patterns", async () => {
     false,
   );
   assert.ok(mistakes!.registry?.some((entry) => entry.workflow === "memory-actions"));
+});
+
+test("v5 compounding reads encrypted memory-action telemetry through storage", async () => {
+  const memoryDir = tmpDir("engram-compound-encrypted-mem-actions");
+  const sharedDir = tmpDir("engram-compound-encrypted-shared-actions");
+  await mkdir(memoryDir, { recursive: true });
+  await mkdir(path.join(sharedDir, "feedback"), { recursive: true });
+
+  const cfg = minimalConfig(memoryDir, sharedDir);
+  const storage = new StorageManager(memoryDir);
+  storage.setSecureStoreKey(Buffer.alloc(32, 0x5c), true);
+  await storage.ensureDirectories();
+  await storage.appendMemoryActionEvents([
+    {
+      timestamp: new Date().toISOString(),
+      action: "discard",
+      outcome: "skipped",
+      namespace: "team-alpha",
+      policyDecision: "deny",
+      reason: "policy:deny | high_importance_requires_manual_review",
+    },
+  ]);
+
+  const actionPath = path.join(memoryDir, "state", "memory-actions.jsonl");
+  assert.ok(isEncryptedFile(await readFile(actionPath)), "memory-action telemetry should be encrypted");
+
+  const eng = new CompoundingEngine(cfg, storage);
+  await eng.synthesizeWeekly();
+  const mistakes = await eng.readMistakes();
+  assert.ok(mistakes);
+  assert.ok(
+    mistakes!.patterns.some((p) =>
+      p.includes("memory-action/team-alpha: discard skipped/deny"),
+    ),
+  );
+});
+
+test("v5 compounding surfaces encrypted memory-action telemetry decrypt failures", async () => {
+  const memoryDir = tmpDir("engram-compound-encrypted-mem-actions-wrong-key");
+  const sharedDir = tmpDir("engram-compound-encrypted-shared-actions-wrong-key");
+  await mkdir(memoryDir, { recursive: true });
+  await mkdir(path.join(sharedDir, "feedback"), { recursive: true });
+
+  const cfg = minimalConfig(memoryDir, sharedDir);
+  const storage = new StorageManager(memoryDir);
+  storage.setSecureStoreKey(Buffer.alloc(32, 0x5c), true);
+  await storage.ensureDirectories();
+  await storage.appendMemoryActionEvents([
+    {
+      timestamp: new Date().toISOString(),
+      action: "discard",
+      outcome: "skipped",
+      namespace: "team-alpha",
+      policyDecision: "deny",
+      reason: "policy:deny | high_importance_requires_manual_review",
+    },
+  ]);
+
+  const actionPath = path.join(memoryDir, "state", "memory-actions.jsonl");
+  assert.ok(isEncryptedFile(await readFile(actionPath)), "memory-action telemetry should be encrypted");
+
+  const wrongKeyStorage = new StorageManager(memoryDir);
+  wrongKeyStorage.setSecureStoreKey(Buffer.alloc(32, 0xa5), true);
+  const eng = new CompoundingEngine(cfg, wrongKeyStorage);
+  await assert.rejects(
+    () => eng.synthesizeWeekly(),
+    (err) => err instanceof SecureStoreDecryptError,
+  );
 });
 
 test("v5 compounding reads legacy mistake files into stable registry form", async () => {

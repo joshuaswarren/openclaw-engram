@@ -265,7 +265,7 @@ test("migrateMemoryDirToEncrypted — encrypts all .md files", async () => {
   });
 });
 
-test("migrateMemoryDirToEncrypted — only encrypts storage-secure markdown paths", async () => {
+test("migrateMemoryDirToEncrypted — only encrypts storage-secure paths", async () => {
   await withTempDir(async (dir) => {
     const key = makeKey();
     const encryptedPaths = [
@@ -278,13 +278,32 @@ test("migrateMemoryDirToEncrypted — only encrypts storage-secure markdown path
       path.join(dir, "identity", "improvement-loops.md"),
       path.join(dir, "identity", "incidents", "2026-04-28-incident-a.md"),
       path.join(dir, "identity", "audits", "weekly", "2026-W18.md"),
+      path.join(dir, "state", "buffer.json"),
+      path.join(dir, "state", "meta.json"),
+      path.join(dir, "state", "memory-actions.jsonl"),
+      path.join(dir, "state", "memory-lifecycle-ledger.jsonl"),
+      path.join(dir, "state", "behavior-signals.jsonl"),
+      path.join(dir, "state", "buffer-surprise-ledger.jsonl"),
+      path.join(dir, "state", "reextract-jobs.jsonl"),
+      path.join(dir, "state", "topics.json"),
+      path.join(dir, "state", "entity-synthesis-queue.json"),
+      path.join(dir, "state", "fact-hashes.txt"),
+      path.join(dir, "state", "compression-guidelines.md"),
+      path.join(dir, "state", "compression-guidelines.draft.md"),
+      path.join(dir, "state", "compression-guideline-state.json"),
+      path.join(dir, "state", "compression-guideline-draft-state.json"),
+      path.join(dir, "summaries", "summary-a.json"),
       path.join(dir, "namespaces", "team-a", "facts", "2024-01-01", "fact.md"),
       path.join(dir, "namespaces", "team-a", "entities", "person.md"),
       path.join(dir, "namespaces", "team-a", "identity", "identity-anchor.md"),
+      path.join(dir, "namespaces", "team-a", "state", "buffer.json"),
+      path.join(dir, "namespaces", "team-a", "summaries", "summary-a.json"),
       path.join(dir, "profile.md"),
     ];
     const plainPaths = [
       path.join(dir, "workspace", "IDENTITY.md"),
+      path.join(dir, "state", ".memory-status-version.log"),
+      path.join(dir, "state", "unknown.json"),
     ];
     for (const f of [...encryptedPaths, ...plainPaths]) {
       await mkdir(path.dirname(f), { recursive: true });
@@ -636,6 +655,309 @@ test("StorageManager — plaintext identity support files remain readable withou
     assert.equal(await storage.readIdentityReflections(), "plain reflection");
     assert.equal(await storage.readIdentityImprovementLoops(), "plain loop");
     assert.equal(await storage.readIdentityAudit("weekly", "2026-W18"), "plain audit");
+  });
+});
+
+test("StorageManager — state and index sidecars encrypt, decrypt, and fail clearly while locked", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const storage = new StorageManager(dir, []);
+    storage.setSecureStoreKey(key, true);
+    await storage.ensureDirectories();
+
+    await storage.saveBuffer({
+      turns: [{ role: "user", content: "private buffered turn", timestamp: "2026-04-28T00:00:00.000Z" }],
+      lastExtractionAt: "2026-04-28T00:00:00.000Z",
+      extractionCount: 1,
+    });
+    await storage.saveMeta({
+      extractionCount: 2,
+      lastExtractionAt: "2026-04-28T00:00:00.000Z",
+      lastConsolidationAt: null,
+      totalMemories: 1,
+      totalEntities: 0,
+      processedExtractionFingerprints: [
+        { fingerprint: "private-fingerprint", observedAt: "2026-04-28T00:00:00.000Z" },
+      ],
+    });
+    await storage.saveTopics([{ term: "private-topic", score: 1, count: 2 }]);
+    await storage.appendMemoryActionEvents([
+      {
+        timestamp: "2026-04-28T00:00:00.000Z",
+        action: "store_note",
+        outcome: "applied",
+        memoryId: "mem-private-action",
+      },
+    ]);
+    await storage.appendMemoryLifecycleEvents([
+      {
+        eventId: "evt-private-lifecycle",
+        memoryId: "mem-private-action",
+        eventType: "created",
+        timestamp: "2026-04-28T00:00:00.000Z",
+        actor: "test",
+        ruleVersion: "v1",
+      },
+    ]);
+    await storage.writeCompressionGuidelines("private compression guideline");
+    await storage.writeCompressionGuidelineOptimizerState({
+      version: 1,
+      updatedAt: "2026-04-28T00:00:00.000Z",
+      sourceWindow: {
+        from: "2026-04-21T00:00:00.000Z",
+        to: "2026-04-28T00:00:00.000Z",
+      },
+      eventCounts: {
+        total: 1,
+        applied: 1,
+        skipped: 0,
+        failed: 0,
+      },
+      guidelineVersion: 1,
+      activationState: "active",
+    });
+    await storage.writeMemory("fact", "private fact hash sidecar content");
+
+    const encryptedFiles = [
+      path.join(dir, "state", "buffer.json"),
+      path.join(dir, "state", "meta.json"),
+      path.join(dir, "state", "topics.json"),
+      path.join(dir, "state", "memory-actions.jsonl"),
+      path.join(dir, "state", "memory-lifecycle-ledger.jsonl"),
+      path.join(dir, "state", "compression-guidelines.md"),
+      path.join(dir, "state", "compression-guideline-state.json"),
+      path.join(dir, "state", "fact-hashes.txt"),
+    ];
+    for (const filePath of encryptedFiles) {
+      assert.ok(isEncryptedFile(await readFile(filePath)), `${filePath} should be encrypted`);
+    }
+
+    assert.equal((await storage.loadBuffer()).turns[0]?.content, "private buffered turn");
+    assert.equal((await storage.loadMeta()).processedExtractionFingerprints?.[0]?.fingerprint, "private-fingerprint");
+    assert.equal((await storage.loadTopics()).topics[0]?.term, "private-topic");
+    assert.equal((await storage.readMemoryActionEvents(10))[0]?.memoryId, "mem-private-action");
+    assert.ok(
+      (await storage.readAllMemoryLifecycleEvents()).some((event) => event.eventId === "evt-private-lifecycle"),
+      "explicit lifecycle event should decrypt from the encrypted ledger",
+    );
+    assert.equal(await storage.readCompressionGuidelines(), "private compression guideline");
+    assert.equal((await storage.readCompressionGuidelineOptimizerState())?.guidelineVersion, 1);
+    assert.equal(await storage.hasFactContentHash("private fact hash sidecar content"), true);
+
+    const lockedStorage = new StorageManager(dir, []);
+    await assert.rejects(() => lockedStorage.loadBuffer(), (err) => err instanceof SecureStoreLockedError);
+    await assert.rejects(() => lockedStorage.loadMeta(), (err) => err instanceof SecureStoreLockedError);
+    await assert.rejects(() => lockedStorage.loadTopics(), (err) => err instanceof SecureStoreLockedError);
+    await assert.rejects(() => lockedStorage.readMemoryActionEvents(10), (err) => err instanceof SecureStoreLockedError);
+    await assert.rejects(() => lockedStorage.readAllMemoryLifecycleEvents(), (err) => err instanceof SecureStoreLockedError);
+    await assert.rejects(() => lockedStorage.readCompressionGuidelines(), (err) => err instanceof SecureStoreLockedError);
+    await assert.rejects(() => lockedStorage.readCompressionGuidelineOptimizerState(), (err) => err instanceof SecureStoreLockedError);
+    await assert.rejects(
+      () => lockedStorage.hasFactContentHash("private fact hash sidecar content"),
+      (err) => err instanceof SecureStoreLockedError,
+    );
+  });
+});
+
+test("StorageManager — plaintext state sidecars remain readable without secure-store key", async () => {
+  await withTempDir(async (dir) => {
+    const stateDir = path.join(dir, "state");
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(
+      path.join(stateDir, "buffer.json"),
+      JSON.stringify({
+        turns: [{ role: "user", content: "plain buffered turn", timestamp: "2026-04-28T00:00:00.000Z" }],
+        lastExtractionAt: null,
+        extractionCount: 1,
+      }),
+      "utf8",
+    );
+    await writeFile(
+      path.join(stateDir, "meta.json"),
+      JSON.stringify({
+        extractionCount: 1,
+        lastExtractionAt: null,
+        lastConsolidationAt: null,
+        totalMemories: 1,
+        totalEntities: 0,
+      }),
+      "utf8",
+    );
+    await writeFile(
+      path.join(stateDir, "topics.json"),
+      JSON.stringify({ topics: [{ term: "plain-topic", score: 1, count: 1 }], updatedAt: "2026-04-28T00:00:00.000Z" }),
+      "utf8",
+    );
+    await writeFile(
+      path.join(stateDir, "memory-actions.jsonl"),
+      `${JSON.stringify({ timestamp: "2026-04-28T00:00:00.000Z", action: "store_note", outcome: "applied", memoryId: "plain-action" })}\n`,
+      "utf8",
+    );
+
+    const storage = new StorageManager(dir, []);
+
+    assert.equal((await storage.loadBuffer()).turns[0]?.content, "plain buffered turn");
+    assert.equal((await storage.loadMeta()).totalMemories, 1);
+    assert.equal((await storage.loadTopics()).topics[0]?.term, "plain-topic");
+    assert.equal((await storage.readMemoryActionEvents(10))[0]?.memoryId, "plain-action");
+  });
+});
+
+test("StorageManager — encrypted state sidecars fail loudly with the wrong key", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey(0x42);
+    const wrongKey = makeKey(0x24);
+    const stateDir = path.join(dir, "state");
+    await mkdir(stateDir, { recursive: true });
+
+    await writeMaybeEncryptedFile(
+      path.join(stateDir, "buffer.json"),
+      JSON.stringify({
+        turns: [{ role: "user", content: "sealed buffered turn", timestamp: "2026-04-28T00:00:00.000Z" }],
+        lastExtractionAt: null,
+        extractionCount: 1,
+      }),
+      key,
+      {},
+      dir,
+    );
+    await writeMaybeEncryptedFile(
+      path.join(stateDir, "meta.json"),
+      JSON.stringify({
+        extractionCount: 7,
+        lastExtractionAt: "2026-04-28T00:00:00.000Z",
+        lastConsolidationAt: null,
+        totalMemories: 3,
+        totalEntities: 2,
+        processedExtractionFingerprints: [{ fingerprint: "sealed-fingerprint", observedAt: "2026-04-28T00:00:00.000Z" }],
+      }),
+      key,
+      {},
+      dir,
+    );
+    await writeMaybeEncryptedFile(
+      path.join(stateDir, "memory-actions.jsonl"),
+      `${JSON.stringify({ timestamp: "2026-04-28T00:00:00.000Z", action: "store_note", outcome: "applied", memoryId: "sealed-action" })}\n`,
+      key,
+      {},
+      dir,
+    );
+    await writeMaybeEncryptedFile(
+      path.join(stateDir, "memory-lifecycle-ledger.jsonl"),
+      `${JSON.stringify({
+        eventId: "sealed-lifecycle",
+        memoryId: "sealed-memory",
+        eventType: "created",
+        timestamp: "2026-04-28T00:00:00.000Z",
+        actor: "test",
+        ruleVersion: "v1",
+      })}\n`,
+      key,
+      {},
+      dir,
+    );
+    await writeMaybeEncryptedFile(
+      path.join(stateDir, "fact-hashes.txt"),
+      "not-important-for-decrypt-failure\n",
+      key,
+      {},
+      dir,
+    );
+    await writeFile(path.join(stateDir, "fact-hashes.ready"), "v1\n", "utf8");
+
+    const storage = new StorageManager(dir, []);
+    storage.setSecureStoreKey(wrongKey, true);
+
+    await assert.rejects(
+      () => storage.loadBuffer(),
+      (err) => err instanceof SecureStoreDecryptError,
+    );
+    await assert.rejects(
+      () => storage.loadMeta(),
+      (err) => err instanceof SecureStoreDecryptError,
+    );
+    await assert.rejects(
+      () => storage.readMemoryActionEvents(10),
+      (err) => err instanceof SecureStoreDecryptError,
+    );
+    await assert.rejects(
+      () => storage.readAllMemoryLifecycleEvents(),
+      (err) => err instanceof SecureStoreDecryptError,
+    );
+    await assert.rejects(
+      () => storage.hasFactContentHash("not important for decrypt failure"),
+      (err) => err instanceof SecureStoreDecryptError,
+    );
+    assert.ok(isEncryptedFile(await readFile(path.join(stateDir, "buffer.json"))), "buffer should remain encrypted");
+    assert.ok(isEncryptedFile(await readFile(path.join(stateDir, "meta.json"))), "meta should remain encrypted");
+    assert.ok(isEncryptedFile(await readFile(path.join(stateDir, "memory-actions.jsonl"))), "action ledger should remain encrypted");
+    assert.ok(isEncryptedFile(await readFile(path.join(stateDir, "memory-lifecycle-ledger.jsonl"))), "lifecycle ledger should remain encrypted");
+    assert.ok(isEncryptedFile(await readFile(path.join(stateDir, "fact-hashes.txt"))), "fact hash index should remain encrypted");
+  });
+});
+
+test("StorageManager — encrypted ledger appends are serialized", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const storage = new StorageManager(dir, []);
+    storage.setSecureStoreKey(key, true);
+    await storage.ensureDirectories();
+
+    await Promise.all(
+      Array.from({ length: 20 }, (_, index) =>
+        storage.appendMemoryActionEvents([
+          {
+            timestamp: `2026-04-28T00:00:${String(index).padStart(2, "0")}.000Z`,
+            action: "store_note",
+            outcome: "applied",
+            memoryId: `mem-concurrent-${index}`,
+          },
+        ]),
+      ),
+    );
+
+    const ledgerPath = path.join(dir, "state", "memory-actions.jsonl");
+    assert.ok(isEncryptedFile(await readFile(ledgerPath)), "concurrent ledger should remain encrypted");
+    const events = await storage.readMemoryActionEvents(50);
+    assert.equal(events.length, 20);
+    assert.deepEqual(
+      events.map((event) => event.memoryId).sort(),
+      Array.from({ length: 20 }, (_, index) => `mem-concurrent-${index}`).sort(),
+    );
+  });
+});
+
+test("StorageManager — memory-action row reader preserves source lines and skips invalid outcomes", async () => {
+  await withTempDir(async (dir) => {
+    const key = makeKey();
+    const storage = new StorageManager(dir, []);
+    storage.setSecureStoreKey(key, true);
+    await storage.ensureDirectories();
+
+    const ledgerPath = path.join(dir, "state", "memory-actions.jsonl");
+    await writeMaybeEncryptedFile(
+      ledgerPath,
+      [
+        JSON.stringify({ timestamp: "2026-04-28T00:00:00.000Z", action: "store_note", outcome: "applied", memoryId: "line-1" }),
+        "",
+        "{not-json",
+        JSON.stringify({ timestamp: "2026-04-28T00:00:01.000Z", action: "store_note", outcome: "pending", memoryId: "bad-outcome" }),
+        JSON.stringify({ timestamp: "2026-04-28T00:00:02.000Z", action: "discard", outcome: "skipped", memoryId: "line-5" }),
+        "",
+      ].join("\n"),
+      key,
+      {},
+      dir,
+    );
+
+    const rows = await storage.readMemoryActionEventRows(10);
+    assert.deepEqual(
+      rows.map((row) => ({ line: row.line, memoryId: row.event.memoryId, outcome: row.event.outcome })),
+      [
+        { line: 1, memoryId: "line-1", outcome: "applied" },
+        { line: 5, memoryId: "line-5", outcome: "skipped" },
+      ],
+    );
   });
 });
 
