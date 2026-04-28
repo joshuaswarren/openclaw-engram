@@ -68,7 +68,7 @@ async function writeCronJobsAtomic(jobsPath: string, value: CronJobsShape): Prom
   await rename(tempPath, jobsPath);
 }
 
-async function ensureCronJob(
+export async function ensureCronJob(
   jobsPath: string,
   jobId: string,
   buildJob: () => Record<string, unknown>,
