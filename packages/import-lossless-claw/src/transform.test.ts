@@ -172,6 +172,23 @@ describe("resolveSummarySession", () => {
       null,
     );
   });
+
+  it("returns null when ANY referenced message id is dangling (Codex P2)", () => {
+    // One valid + one missing → reject the whole summary so msg_start/end
+    // can't be silently computed from only the resolved subset.
+    const sessionByMessageId = new Map([
+      ["m1", "sess-A"],
+      // m2 deliberately not in the map
+    ]);
+    assert.equal(
+      resolveSummarySession(["m1", "m2"], sessionByMessageId),
+      null,
+    );
+  });
+
+  it("returns null on empty messageIds (defensive)", () => {
+    assert.equal(resolveSummarySession([], new Map()), null);
+  });
 });
 
 describe("mapSummary", () => {

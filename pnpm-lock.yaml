@@ -205,6 +205,10 @@ importers:
         version: 5.9.3
 
   packages/import-lossless-claw:
+    dependencies:
+      better-sqlite3:
+        specifier: ^11.0.0
+        version: 11.10.0
     devDependencies:
       '@remnic/core':
         specifier: workspace:*
@@ -212,9 +216,6 @@ importers:
       '@types/better-sqlite3':
         specifier: ^7.6.0
         version: 7.6.13
-      better-sqlite3:
-        specifier: ^11.0.0
-        version: 11.10.0
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(postcss@8.5.10)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)

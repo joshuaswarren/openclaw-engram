@@ -181,15 +181,23 @@ export function isMultiParent(parents: LosslessClawSummaryParent[]): boolean {
  * conversations only via DAG construction, which Remnic's per-session
  * structure cannot represent — return null in that case so the caller can
  * skip the summary with a warning rather than picking a wrong session.
+ *
+ * Strict on dangling references: if ANY referenced message_id fails to
+ * resolve to a session, return null. Silently dropping unresolved IDs
+ * would let a summary with mixed valid + dangling refs pass through
+ * with msg_start/msg_end computed from only the resolved subset, mis-
+ * representing the summary's true coverage (Codex P2 review on PR #797).
  */
 export function resolveSummarySession(
   messageIds: string[],
   sessionByMessageId: ReadonlyMap<string, string>,
 ): string | null {
+  if (messageIds.length === 0) return null;
   const sessions = new Set<string>();
   for (const messageId of messageIds) {
     const session = sessionByMessageId.get(messageId);
-    if (session) sessions.add(session);
+    if (!session) return null; // dangling reference — refuse to import
+    sessions.add(session);
   }
   if (sessions.size !== 1) return null;
   return [...sessions][0]!;

@@ -300,7 +300,10 @@ export function importLosslessClaw(
     "SELECT rowid AS rowid FROM lcm_summary_nodes WHERE id = ?",
   );
 
-  const writeSummaries = destDb.transaction(() => {
+  // Single shared loop body for both write and dry-run paths so summary
+  // filter conditions (skip-no-messages, multi-session, dedup, etc.)
+  // can never silently diverge between modes (Cursor Bugbot review).
+  function processSummaries(forWrite: boolean): void {
     for (const summary of summaries) {
       const derivation = derivations.get(summary.summary_id);
       if (!derivation || derivation.messageIds.length === 0) {
@@ -317,7 +320,7 @@ export function importLosslessClaw(
       if (!session) {
         result.summariesSkippedMultiSession += 1;
         log(
-          `skip summary ${summary.summary_id}: covers messages from multiple sessions`,
+          `skip summary ${summary.summary_id}: covers messages from multiple sessions or has dangling references`,
         );
         continue;
       }
@@ -358,70 +361,36 @@ export function importLosslessClaw(
         result.summariesSkipped += 1;
         continue;
       }
-      insertSummaryStmt.run(
-        mapped.id,
-        mapped.session_id,
-        mapped.depth,
-        mapped.parent_id,
-        mapped.summary_text,
-        mapped.token_count,
-        mapped.msg_start,
-        mapped.msg_end,
-        mapped.escalation,
-        mapped.created_at,
-      );
-      const row = lookupSummaryRowidStmt.get(mapped.id) as
-        | { rowid: number }
-        | undefined;
-      if (row) {
-        insertSummaryFtsStmt.run(row.rowid, mapped.summary_text);
+      if (forWrite) {
+        insertSummaryStmt.run(
+          mapped.id,
+          mapped.session_id,
+          mapped.depth,
+          mapped.parent_id,
+          mapped.summary_text,
+          mapped.token_count,
+          mapped.msg_start,
+          mapped.msg_end,
+          mapped.escalation,
+          mapped.created_at,
+        );
+        const row = lookupSummaryRowidStmt.get(mapped.id) as
+          | { rowid: number }
+          | undefined;
+        if (row) {
+          insertSummaryFtsStmt.run(row.rowid, mapped.summary_text);
+        }
       }
       result.summariesInserted += 1;
       sessionsTouched.add(mapped.session_id);
     }
-  });
+  }
 
   if (!dryRun) {
+    const writeSummaries = destDb.transaction(() => processSummaries(true));
     writeSummaries();
   } else {
-    // Dry run: count without writing.
-    for (const summary of summaries) {
-      const derivation = derivations.get(summary.summary_id);
-      if (!derivation || derivation.messageIds.length === 0) {
-        result.summariesSkippedNoMessages += 1;
-        continue;
-      }
-      const session = resolveSummarySession(
-        derivation.messageIds,
-        sessionByMessageId,
-      );
-      if (!session) {
-        result.summariesSkippedMultiSession += 1;
-        continue;
-      }
-      if (sessionFilter && !sessionFilter.has(session)) continue;
-      const messageSeqs: number[] = [];
-      for (const mid of derivation.messageIds) {
-        const seq = turnIndexByMessageId.get(mid);
-        if (typeof seq === "number") messageSeqs.push(seq);
-      }
-      if (messageSeqs.length === 0) {
-        result.summariesSkippedNoMessages += 1;
-        continue;
-      }
-      const existing = summaryExistsStmt.get(summary.summary_id) as
-        | { hit: number }
-        | undefined;
-      if (existing) {
-        result.summariesSkipped += 1;
-      } else {
-        result.summariesInserted += 1;
-        sessionsTouched.add(session);
-      }
-      if (isMultiParent(derivation.parents)) {
-        result.summariesMultiParentCollapsed += 1;
-      }
-    }
+    processSummaries(false);
   }
 
   // ── Compaction-event boundary ──────────────────────────────────────────
