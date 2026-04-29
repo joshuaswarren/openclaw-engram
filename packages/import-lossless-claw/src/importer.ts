@@ -119,12 +119,28 @@ export function importLosslessClaw(
     }
   }
 
-  // Group conversations by session in deterministic order so two
-  // conversations resolving to the same session id get a consistent
-  // assignment of session-global turn_index values across runs.
-  const orderedConversations = [...conversations].sort((a, b) =>
-    a.conversation_id.localeCompare(b.conversation_id),
-  );
+  // Group conversations by session, ordered by earliest message
+  // timestamp so cross-conversation turn ordering is chronological — a
+  // raw `conversation_id` sort risks ordering by UUID (Codex P1 review:
+  // session timelines and summary msg_start/msg_end depend on
+  // turn_index reflecting real chronology).
+  const earliestByConv = new Map<string, string>();
+  for (const [convId, msgs] of messagesByConv) {
+    if (msgs.length === 0) continue;
+    let earliest = msgs[0]!.created_at;
+    for (let i = 1; i < msgs.length; i++) {
+      if (msgs[i]!.created_at < earliest) earliest = msgs[i]!.created_at;
+    }
+    earliestByConv.set(convId, earliest);
+  }
+  const orderedConversations = [...conversations].sort((a, b) => {
+    const ea = earliestByConv.get(a.conversation_id) ?? "";
+    const eb = earliestByConv.get(b.conversation_id) ?? "";
+    if (ea !== eb) return ea < eb ? -1 : 1;
+    // Stable tie-break on conversation_id when earliest timestamps match
+    // (or both are missing).
+    return a.conversation_id.localeCompare(b.conversation_id);
+  });
   const convsBySession = new Map<string, typeof orderedConversations>();
   for (const c of orderedConversations) {
     const session = sessionByConvId.get(c.conversation_id)!;
@@ -138,13 +154,11 @@ export function importLosslessClaw(
   // `metadata.source_seq`) rather than `(session_id, turn_index)` so two
   // source conversations sharing one session can both contribute messages
   // without one's `seq=N` masking the other's `seq=N` (Codex P1 review).
-  const sourceMessageLookupStmt = destDb.prepare(
-    "SELECT turn_index FROM lcm_messages " +
-      "WHERE session_id = ? " +
-      "  AND json_extract(metadata, '$.conversation_id') = ? " +
-      "  AND json_extract(metadata, '$.source_seq') = ? " +
-      "LIMIT 1",
-  );
+  //
+  // To avoid the O(n²) behavior of a per-row `json_extract` lookup with
+  // no covering index (Codex P2 review), pre-fetch existing source
+  // identities once per affected session into an in-memory Map. The
+  // import loop then does O(1) Map lookups for dedup.
   const insertMessageStmt = destDb.prepare(
     "INSERT INTO lcm_messages (session_id, turn_index, role, content, token_count, created_at, metadata) " +
       "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -152,9 +166,36 @@ export function importLosslessClaw(
   const insertMessageFtsStmt = destDb.prepare(
     "INSERT INTO lcm_messages_fts (rowid, content) VALUES (?, ?)",
   );
-  const maxTurnInDestStmt = destDb.prepare(
-    "SELECT IFNULL(MAX(turn_index), -1) AS max FROM lcm_messages WHERE session_id = ?",
+  const existingScanStmt = destDb.prepare(
+    "SELECT turn_index, " +
+      "json_extract(metadata, '$.conversation_id') AS conv, " +
+      "json_extract(metadata, '$.source_seq') AS source_seq " +
+      "FROM lcm_messages WHERE session_id = ?",
   );
+
+  // session → "convId|seq" → turn_index of the existing row. Lookup is
+  // O(1) Map membership instead of a per-row JSON-extract scan.
+  const existingBySession = new Map<string, Map<string, number>>();
+  // session → max(turn_index) currently in dest (so new rows append).
+  const maxTurnBySession = new Map<string, number>();
+  for (const session of convsBySession.keys()) {
+    if (sessionFilter && !sessionFilter.has(session)) continue;
+    const map = new Map<string, number>();
+    let max = -1;
+    const rows = existingScanStmt.iterate(session) as Iterable<{
+      turn_index: number;
+      conv: string | null;
+      source_seq: number | null;
+    }>;
+    for (const row of rows) {
+      if (row.turn_index > max) max = row.turn_index;
+      if (row.conv != null && row.source_seq != null) {
+        map.set(`${row.conv}|${row.source_seq}`, row.turn_index);
+      }
+    }
+    existingBySession.set(session, map);
+    maxTurnBySession.set(session, max);
+  }
 
   const sessionsTouched = new Set<string>();
   // Mapping from source message_id → assigned (or pre-existing)
@@ -165,23 +206,25 @@ export function importLosslessClaw(
   function assignTurnIndices(forWrite: boolean): void {
     for (const [session, convs] of convsBySession) {
       if (sessionFilter && !sessionFilter.has(session)) continue;
-      const startRow = maxTurnInDestStmt.get(session) as { max: number };
-      let nextTurn = startRow.max + 1;
+      const existing =
+        existingBySession.get(session) ?? new Map<string, number>();
+      let nextTurn = (maxTurnBySession.get(session) ?? -1) + 1;
       for (const c of convs) {
         const msgs = messagesByConv.get(c.conversation_id) ?? [];
         for (const m of msgs) {
-          const existing = sourceMessageLookupStmt.get(
-            session,
-            c.conversation_id,
-            m.seq,
-          ) as { turn_index: number } | undefined;
-          if (existing) {
-            turnIndexByMessageId.set(m.message_id, existing.turn_index);
+          const key = `${c.conversation_id}|${m.seq}`;
+          const existingTurn = existing.get(key);
+          if (existingTurn !== undefined) {
+            turnIndexByMessageId.set(m.message_id, existingTurn);
             result.messagesSkipped += 1;
             continue;
           }
           const ti = nextTurn++;
           turnIndexByMessageId.set(m.message_id, ti);
+          // Update the in-memory dedup map so duplicates within this
+          // run also count as skips on subsequent passes (defensive;
+          // shouldn't happen with valid source data).
+          existing.set(key, ti);
           if (forWrite) {
             const mapped = mapMessage(c, m, ti);
             const info = insertMessageStmt.run(

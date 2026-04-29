@@ -616,6 +616,54 @@ describe("importLosslessClaw — multiple conversations per session (Codex P1)",
     );
   });
 
+  it("orders conversations by earliest message timestamp, not by conversation_id (Codex P1 follow-up)", () => {
+    // UUID-like ids that sort the OPPOSITE direction of chronology.
+    // 'aaaa-conv-id' < 'zzzz-conv-id' lexicographically, but 'zzzz' is
+    // chronologically earlier. A conversation_id sort would give the
+    // wrong session timeline.
+    const seed = {
+      conversations: [
+        { conversation_id: "aaaa-conv-id", session_id: "sess" },
+        { conversation_id: "zzzz-conv-id", session_id: "sess" },
+      ],
+      messages: [
+        {
+          message_id: "z1",
+          conversation_id: "zzzz-conv-id",
+          seq: 0,
+          role: "user",
+          content: "earliest in time, conv-z",
+          token_count: 1,
+          created_at: "2026-04-01T00:00:00.000Z",
+        },
+        {
+          message_id: "a1",
+          conversation_id: "aaaa-conv-id",
+          seq: 0,
+          role: "user",
+          content: "later in time, conv-a",
+          token_count: 1,
+          created_at: "2026-04-02T00:00:00.000Z",
+        },
+      ],
+    };
+    const src = buildSourceDb(seed);
+    const dst = buildDestDb();
+    importLosslessClaw({ sourceDb: src, destDb: dst });
+
+    const rows = dst
+      .prepare(
+        "SELECT turn_index, content FROM lcm_messages WHERE session_id = 'sess' ORDER BY turn_index",
+      )
+      .all() as Array<{ turn_index: number; content: string }>;
+    // Earliest message (zzzz-conv-id, 2026-04-01) gets turn_index 0
+    // even though 'zzzz' sorts AFTER 'aaaa' lexicographically.
+    assert.equal(rows[0]!.turn_index, 0);
+    assert.match(rows[0]!.content, /earliest in time/);
+    assert.equal(rows[1]!.turn_index, 1);
+    assert.match(rows[1]!.content, /later in time/);
+  });
+
   it("idempotent re-run still inserts zero new rows when conversations share a session", () => {
     const seed = {
       conversations: [
