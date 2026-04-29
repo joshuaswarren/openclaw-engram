@@ -59,14 +59,28 @@ export function openSourceDatabase(filePath: string): Database.Database {
  * the Remnic LCM schema via `applyLcmSchema(db)` from `@remnic/core` before
  * passing it to `importLosslessClaw`.
  *
- * Used by the `--dry-run` CLI path so a true write-free run can compute
- * insert/skip counts against an empty destination without ever touching
- * the filesystem (Codex P2 review: dry-run must not mutate destination
- * storage).
+ * Used by the `--dry-run` CLI path as a fallback when no existing on-disk
+ * destination exists, so a true write-free run can still compute counts
+ * against an empty destination without touching the filesystem.
  */
 export function openInMemoryDestinationDatabase(): Database.Database {
   const Ctor = loadBetterSqlite3();
   return new Ctor(":memory:");
+}
+
+/**
+ * Open an existing Remnic LCM database file in read-only mode. Used by the
+ * `--dry-run` CLI path so dedup counts reflect the user's real
+ * destination state without any write risk (Codex P2 follow-up: a fresh
+ * in-memory database makes `messagesSkipped`/`summariesSkipped` always
+ * report zero, which is misleading when the user has run a real import
+ * before).
+ */
+export function openExistingLcmDatabaseReadOnly(
+  filePath: string,
+): Database.Database {
+  const Ctor = loadBetterSqlite3();
+  return new Ctor(filePath, { readonly: true, fileMustExist: true });
 }
 
 export interface LosslessClawConversation {

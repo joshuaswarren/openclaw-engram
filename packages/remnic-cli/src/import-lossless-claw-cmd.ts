@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import fs from "node:fs";
+import path from "node:path";
 
 import {
   applyLcmSchema,
@@ -74,16 +75,30 @@ export async function cmdImportLosslessClaw(
 
     const mod = await loadImportLosslessClawModule();
 
-    // Dry-run must not mutate destination storage (Codex P2). For a real
-    // run, ensureLcmStateDir creates the directory (recursive) and
-    // openLcmDatabase opens the on-disk SQLite file with schema applied.
-    // For --dry-run we use an in-memory destination so insert/skip counts
-    // can still be computed against an empty database without ever
-    // touching the filesystem.
+    // Dry-run must not mutate destination storage (Codex P2). The dest
+    // resolution rules are:
+    //   * existing on-disk lcm.sqlite       → open read-only so dedup
+    //                                          counts reflect reality
+    //                                          (Codex P2 follow-up: an
+    //                                          in-memory fallback would
+    //                                          always report "would
+    //                                          insert").
+    //   * no on-disk lcm.sqlite yet         → in-memory + applyLcmSchema,
+    //                                          so counts reflect a
+    //                                          fresh-import scenario
+    //                                          without touching the
+    //                                          filesystem.
+    // Real runs always go through ensureLcmStateDir + openLcmDatabase
+    // (which creates the dir + file + schema as needed).
     let destDb: ReturnType<typeof openLcmDatabase>;
     if (parsed.dryRun) {
-      destDb = mod.openInMemoryDestinationDatabase();
-      applyLcmSchema(destDb);
+      const lcmPath = path.join(memoryDir, "state", "lcm.sqlite");
+      if (fs.existsSync(lcmPath)) {
+        destDb = mod.openExistingLcmDatabaseReadOnly(lcmPath);
+      } else {
+        destDb = mod.openInMemoryDestinationDatabase();
+        applyLcmSchema(destDb);
+      }
     } else {
       await ensureLcmStateDir(memoryDir);
       destDb = openLcmDatabase(memoryDir);

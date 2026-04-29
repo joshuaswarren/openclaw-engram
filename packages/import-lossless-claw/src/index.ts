@@ -12,6 +12,7 @@ export {
   assertLosslessClawSchema,
   openSourceDatabase,
   openInMemoryDestinationDatabase,
+  openExistingLcmDatabaseReadOnly,
   listConversations,
   listMessagesForConversation,
   listSummaries,

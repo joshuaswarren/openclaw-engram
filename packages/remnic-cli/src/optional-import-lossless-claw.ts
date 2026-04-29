@@ -20,6 +20,7 @@ interface BetterSqlite3DatabaseLike {
 export interface ImportLosslessClawModule {
   openSourceDatabase(filePath: string): BetterSqlite3DatabaseLike;
   openInMemoryDestinationDatabase(): BetterSqlite3DatabaseLike;
+  openExistingLcmDatabaseReadOnly(filePath: string): BetterSqlite3DatabaseLike;
   importLosslessClaw(options: {
     sourceDb: BetterSqlite3DatabaseLike;
     destDb: BetterSqlite3DatabaseLike;

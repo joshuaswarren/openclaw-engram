@@ -135,7 +135,6 @@ export function importLosslessClaw(
   );
 
   const sessionsTouched = new Set<string>();
-  const tokensImportedBySession = new Map<string, number>();
 
   const writeMessages = destDb.transaction(() => {
     for (const c of conversations) {
@@ -164,11 +163,6 @@ export function importLosslessClaw(
         insertMessageFtsStmt.run(Number(info.lastInsertRowid), mapped.content);
         result.messagesInserted += 1;
         sessionsTouched.add(mapped.session_id);
-        tokensImportedBySession.set(
-          mapped.session_id,
-          (tokensImportedBySession.get(mapped.session_id) ?? 0) +
-            mapped.token_count,
-        );
       }
     }
   });
@@ -193,11 +187,6 @@ export function importLosslessClaw(
         } else {
           result.messagesInserted += 1;
           sessionsTouched.add(mapped.session_id);
-          tokensImportedBySession.set(
-            mapped.session_id,
-            (tokensImportedBySession.get(mapped.session_id) ?? 0) +
-              mapped.token_count,
-          );
         }
       }
     }
@@ -352,6 +341,13 @@ export function importLosslessClaw(
   // equals tokens_after to encode "this is an import boundary, not a real
   // compaction event"; any consumer that needs the distinction can detect
   // the equality.
+  //
+  // Token totals are queried from the destination at boundary-write time
+  // rather than accumulated from this run's newly-inserted rows. That
+  // way a session whose only new rows are summaries (e.g. partial retry
+  // after a crash between message and summary transactions) still gets
+  // a correct anchor reflecting the messages already in the destination
+  // (Cursor Bugbot review on PR #797).
   if (!dryRun) {
     const insertEventStmt = destDb.prepare(
       "INSERT INTO lcm_compaction_events (session_id, fired_at, msg_before, tokens_before, tokens_after) " +
@@ -360,12 +356,16 @@ export function importLosslessClaw(
     const maxTurnStmt = destDb.prepare(
       "SELECT IFNULL(MAX(turn_index), -1) AS max_turn FROM lcm_messages WHERE session_id = ?",
     );
+    const totalTokensStmt = destDb.prepare(
+      "SELECT IFNULL(SUM(token_count), 0) AS total FROM lcm_messages WHERE session_id = ?",
+    );
     const writeEvents = destDb.transaction(() => {
       const firedAt = new Date().toISOString();
       for (const session of sessionsTouched) {
-        const row = maxTurnStmt.get(session) as { max_turn: number };
-        const msgBefore = row.max_turn + 1;
-        const tokens = tokensImportedBySession.get(session) ?? 0;
+        const turnRow = maxTurnStmt.get(session) as { max_turn: number };
+        const msgBefore = turnRow.max_turn + 1;
+        const tokRow = totalTokensStmt.get(session) as { total: number };
+        const tokens = tokRow.total;
         insertEventStmt.run(session, firedAt, msgBefore, tokens, tokens);
         result.compactionEventsInserted += 1;
       }

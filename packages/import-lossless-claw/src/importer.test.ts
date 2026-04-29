@@ -497,6 +497,41 @@ describe("importLosslessClaw — schema rejection", () => {
   });
 });
 
+describe("importLosslessClaw — compaction-event token aggregation", () => {
+  it("uses the destination's actual SUM(token_count), not just newly-inserted", () => {
+    // Simulate a partial-retry scenario: messages already in dest, only
+    // summaries new this run. The compaction event must reflect the dest's
+    // real token total, not zero.
+    const seed = TWO_CONVS();
+    const src = buildSourceDb(seed);
+    const dst = buildDestDb();
+
+    // Pre-populate dst with the same messages so this run is summary-only.
+    importLosslessClaw({ sourceDb: src, destDb: dst });
+
+    // Wipe summaries + compaction events so the next run re-inserts them
+    // but messages are already there.
+    dst.exec("DELETE FROM lcm_summary_nodes; DELETE FROM lcm_compaction_events;");
+
+    const result = importLosslessClaw({ sourceDb: src, destDb: dst });
+    assert.equal(result.messagesInserted, 0);
+    assert.equal(result.summariesInserted, 1);
+    assert.equal(result.compactionEventsInserted, 1);
+
+    const event = dst
+      .prepare(
+        "SELECT session_id, tokens_before FROM lcm_compaction_events WHERE session_id = 'sess-A'",
+      )
+      .get() as { session_id: string; tokens_before: number };
+    // Total token_count for sess-A is 2 + 3 = 5, all already present in dest.
+    assert.equal(
+      event.tokens_before,
+      5,
+      "summary-only retry must read tokens from dest, not from this run's writes",
+    );
+  });
+});
+
 describe("importLosslessClaw — orphan summaries", () => {
   it("skips summaries with no message references and increments the counter", () => {
     const seed = TWO_CONVS();
