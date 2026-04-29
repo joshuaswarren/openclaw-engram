@@ -27,7 +27,6 @@ import {
   listSummaries,
   listSummaryMessages,
   listSummaryParents,
-  type LosslessClawConversation,
 } from "./source.js";
 import {
   indexSummaryDerivations,
@@ -96,9 +95,6 @@ export function importLosslessClaw(
   // ── Pre-resolve session ids per conversation + per message id ──────────
   const conversations = listConversations(sourceDb);
   result.conversationsScanned = conversations.length;
-
-  const conversationById = new Map<string, LosslessClawConversation>();
-  for (const c of conversations) conversationById.set(c.conversation_id, c);
 
   const sessionByConvId = new Map<string, string>();
   const sessionByMessageId = new Map<string, string>();

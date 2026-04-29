@@ -128,8 +128,17 @@ export function mapSummary(input: MapSummaryInput): MappedSummaryNode {
         "cannot derive msg_start/msg_end. Skip this summary at the caller.",
     );
   }
-  const msg_start = Math.min(...input.messageSeqs);
-  const msg_end = Math.max(...input.messageSeqs);
+  // Iterative min/max — `Math.min(...arr)` / `Math.max(...arr)` push every
+  // element onto the call stack via spread and throw `RangeError: Maximum
+  // call stack size exceeded` on summaries that cover tens of thousands of
+  // messages (Cursor Bugbot review on PR #797).
+  let msg_start = input.messageSeqs[0]!;
+  let msg_end = msg_start;
+  for (let i = 1; i < input.messageSeqs.length; i++) {
+    const seq = input.messageSeqs[i]!;
+    if (seq < msg_start) msg_start = seq;
+    if (seq > msg_end) msg_end = seq;
+  }
   return {
     id: input.summary.summary_id,
     session_id: input.sessionId,
