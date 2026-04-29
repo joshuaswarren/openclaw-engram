@@ -204,6 +204,28 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/import-lossless-claw:
+    dependencies:
+      better-sqlite3:
+        specifier: ^12.6.2
+        version: 12.8.0
+    devDependencies:
+      '@remnic/core':
+        specifier: workspace:*
+        version: link:../remnic-core
+      '@types/better-sqlite3':
+        specifier: ^7.6.0
+        version: 7.6.13
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.10)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      tsx:
+        specifier: ^4.0.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/import-mem0:
     devDependencies:
       '@remnic/core':
@@ -283,6 +305,9 @@ importers:
       '@remnic/import-gemini':
         specifier: workspace:*
         version: link:../import-gemini
+      '@remnic/import-lossless-claw':
+        specifier: workspace:*
+        version: link:../import-lossless-claw
       '@remnic/import-mem0':
         specifier: workspace:*
         version: link:../import-mem0

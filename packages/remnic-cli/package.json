@@ -41,6 +41,7 @@
     "@remnic/import-chatgpt": "^0.1.0",
     "@remnic/import-claude": "^0.1.0",
     "@remnic/import-gemini": "^0.1.0",
+    "@remnic/import-lossless-claw": "^0.1.0",
     "@remnic/import-mem0": "^0.1.0"
   },
   "peerDependenciesMeta": {
@@ -50,6 +51,7 @@
     "@remnic/import-chatgpt": { "optional": true },
     "@remnic/import-claude": { "optional": true },
     "@remnic/import-gemini": { "optional": true },
+    "@remnic/import-lossless-claw": { "optional": true },
     "@remnic/import-mem0": { "optional": true }
   },
   "devDependencies": {
@@ -59,6 +61,7 @@
     "@remnic/import-chatgpt": "workspace:*",
     "@remnic/import-claude": "workspace:*",
     "@remnic/import-gemini": "workspace:*",
+    "@remnic/import-lossless-claw": "workspace:*",
     "@remnic/import-mem0": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"

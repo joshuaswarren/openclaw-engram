@@ -22,6 +22,18 @@ export async function ensureLcmStateDir(memoryDir: string): Promise<void> {
   await mkdir(path.join(memoryDir, "state"), { recursive: true });
 }
 
+/**
+ * Apply (or upgrade) the LCM schema on an already-open SQLite handle.
+ *
+ * Exposed so optional host packages — e.g. importers using an in-memory
+ * destination database for true read-only `--dry-run` execution — can
+ * bootstrap the schema without going through `openLcmDatabase()` (which
+ * always touches the filesystem).
+ */
+export function applyLcmSchema(db: BetterSqlite3Database): void {
+  applySchema(db);
+}
+
 function applySchema(db: BetterSqlite3Database): void {
   const versionRow = db
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='lcm_meta'")
