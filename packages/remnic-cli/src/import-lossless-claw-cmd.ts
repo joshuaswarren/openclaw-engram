@@ -19,6 +19,7 @@ import {
   type ImportLosslessClawCmdArgs,
 } from "./import-lossless-claw-args.js";
 import { loadImportLosslessClawModule } from "./optional-import-lossless-claw.js";
+import { expandTilde } from "./path-utils.js";
 
 export { IMPORT_LOSSLESS_CLAW_USAGE };
 export { parseImportLosslessClawArgs };
@@ -70,7 +71,12 @@ export async function cmdImportLosslessClaw(
 
   try {
     assertFile(parsed.src, "--src");
-    const memoryDir = parsed.memoryDir ?? io.resolveMemoryDir();
+    // CLI flag inputs go through expandTilde at parse time. When the
+    // memory-dir flag is absent, the resolver can still return raw
+    // `~/...` paths from env/config; expand here too so we don't end
+    // up reading/creating a literal `~/...` directory (CLAUDE.md
+    // gotcha #17, Codex P2 review on PR #797).
+    const memoryDir = parsed.memoryDir ?? expandTilde(io.resolveMemoryDir());
     assertDirectoryOrAbsent(memoryDir, "--memory-dir");
 
     const mod = await loadImportLosslessClawModule();
