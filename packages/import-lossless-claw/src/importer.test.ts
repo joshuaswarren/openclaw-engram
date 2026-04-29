@@ -386,7 +386,10 @@ describe("importLosslessClaw — compaction-event boundary", () => {
     assert.equal(byId.get("conv-B")?.tokens_before, 2);
   });
 
-  it("does NOT insert markers in dry-run mode", () => {
+  it("dry-run COUNTS markers (matches other counters) but does not write them", () => {
+    // Cursor low-sev: Messages/Summaries inserted are reported as
+    // 'would insert' counts in dry-run; compactionEventsInserted must
+    // follow the same contract for output consistency.
     const src = buildSourceDb(TWO_CONVS());
     const dst = buildDestDb();
     const result = importLosslessClaw({
@@ -395,11 +398,15 @@ describe("importLosslessClaw — compaction-event boundary", () => {
       dryRun: true,
     });
     assert.equal(result.dryRun, true);
-    assert.equal(result.compactionEventsInserted, 0);
+    assert.equal(
+      result.compactionEventsInserted,
+      2,
+      "dry-run reports the same count as a real run (2 sessions)",
+    );
     const total = dst
       .prepare("SELECT COUNT(*) AS n FROM lcm_compaction_events")
       .get() as { n: number };
-    assert.equal(total.n, 0);
+    assert.equal(total.n, 0, "no actual rows written in dry-run");
   });
 });
 

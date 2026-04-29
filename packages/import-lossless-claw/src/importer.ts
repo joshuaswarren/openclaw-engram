@@ -405,29 +405,41 @@ export function importLosslessClaw(
   // after a crash between message and summary transactions) still gets
   // a correct anchor reflecting the messages already in the destination
   // (Cursor Bugbot review on PR #797).
-  if (!dryRun) {
-    const insertEventStmt = destDb.prepare(
-      "INSERT INTO lcm_compaction_events (session_id, fired_at, msg_before, tokens_before, tokens_after) " +
-        "VALUES (?, ?, ?, ?, ?)",
-    );
-    const maxTurnStmt = destDb.prepare(
-      "SELECT IFNULL(MAX(turn_index), -1) AS max_turn FROM lcm_messages WHERE session_id = ?",
-    );
-    const totalTokensStmt = destDb.prepare(
-      "SELECT IFNULL(SUM(token_count), 0) AS total FROM lcm_messages WHERE session_id = ?",
-    );
-    const writeEvents = destDb.transaction(() => {
-      const firedAt = new Date().toISOString();
-      for (const session of sessionsTouched) {
-        const turnRow = maxTurnStmt.get(session) as { max_turn: number };
-        const msgBefore = turnRow.max_turn + 1;
-        const tokRow = totalTokensStmt.get(session) as { total: number };
-        const tokens = tokRow.total;
+  // Always count what compaction events WOULD be written so dry-run
+  // output matches the rest of the counters (Cursor Bugbot review on
+  // PR #797: dry-run was reporting `Messages inserted: N` but
+  // `Compaction events written: 0` despite the documented "count what
+  // would be imported" contract). Skip the actual INSERTs in dry-run.
+  const insertEventStmt = destDb.prepare(
+    "INSERT INTO lcm_compaction_events (session_id, fired_at, msg_before, tokens_before, tokens_after) " +
+      "VALUES (?, ?, ?, ?, ?)",
+  );
+  const maxTurnStmt = destDb.prepare(
+    "SELECT IFNULL(MAX(turn_index), -1) AS max_turn FROM lcm_messages WHERE session_id = ?",
+  );
+  const totalTokensStmt = destDb.prepare(
+    "SELECT IFNULL(SUM(token_count), 0) AS total FROM lcm_messages WHERE session_id = ?",
+  );
+
+  function processCompactionBoundaries(forWrite: boolean): void {
+    const firedAt = new Date().toISOString();
+    for (const session of sessionsTouched) {
+      const turnRow = maxTurnStmt.get(session) as { max_turn: number };
+      const msgBefore = turnRow.max_turn + 1;
+      const tokRow = totalTokensStmt.get(session) as { total: number };
+      const tokens = tokRow.total;
+      if (forWrite) {
         insertEventStmt.run(session, firedAt, msgBefore, tokens, tokens);
-        result.compactionEventsInserted += 1;
       }
-    });
+      result.compactionEventsInserted += 1;
+    }
+  }
+
+  if (!dryRun) {
+    const writeEvents = destDb.transaction(() => processCompactionBoundaries(true));
     writeEvents();
+  } else {
+    processCompactionBoundaries(false);
   }
 
   result.sessionsTouched = [...sessionsTouched].sort();
