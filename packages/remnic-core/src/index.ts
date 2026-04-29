@@ -318,7 +318,13 @@ export { loadDaySummaryPrompt, buildExtensionsFooterForSummary } from "./day-sum
 // LCM (Lossless Context Management) database helpers — exposed so optional
 // host packages (e.g. @remnic/import-lossless-claw) can open the same
 // SQLite store the runtime uses without re-implementing schema bootstrap.
-export { openLcmDatabase, ensureLcmStateDir } from "./lcm/schema.js";
+// `applyLcmSchema` lets importers bootstrap an in-memory destination for
+// true read-only `--dry-run` execution.
+export {
+  openLcmDatabase,
+  ensureLcmStateDir,
+  applyLcmSchema,
+} from "./lcm/schema.js";
 
 // ---------------------------------------------------------------------------
 // Active memory bridge

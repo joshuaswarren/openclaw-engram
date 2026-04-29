@@ -54,6 +54,21 @@ export function openSourceDatabase(filePath: string): Database.Database {
   return new Ctor(filePath, { readonly: true, fileMustExist: true });
 }
 
+/**
+ * Open an in-memory destination database. The caller is expected to apply
+ * the Remnic LCM schema via `applyLcmSchema(db)` from `@remnic/core` before
+ * passing it to `importLosslessClaw`.
+ *
+ * Used by the `--dry-run` CLI path so a true write-free run can compute
+ * insert/skip counts against an empty destination without ever touching
+ * the filesystem (Codex P2 review: dry-run must not mutate destination
+ * storage).
+ */
+export function openInMemoryDestinationDatabase(): Database.Database {
+  const Ctor = loadBetterSqlite3();
+  return new Ctor(":memory:");
+}
+
 export interface LosslessClawConversation {
   conversation_id: string;
   session_id: string | null;

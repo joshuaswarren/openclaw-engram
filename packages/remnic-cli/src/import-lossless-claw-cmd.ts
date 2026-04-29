@@ -7,6 +7,7 @@
 import fs from "node:fs";
 
 import {
+  applyLcmSchema,
   ensureLcmStateDir,
   openLcmDatabase,
 } from "@remnic/core";
@@ -22,11 +23,14 @@ export { IMPORT_LOSSLESS_CLAW_USAGE };
 export { parseImportLosslessClawArgs };
 export type { ImportLosslessClawCmdArgs };
 
-function assertDirectory(p: string, label: string): void {
-  if (!fs.existsSync(p)) {
-    throw new Error(`${label} does not exist: ${p}`);
-  }
-  if (!fs.statSync(p).isDirectory()) {
+/**
+ * Reject file paths used as directory args (CLAUDE.md gotcha #24), but
+ * permit non-existent directories — `ensureLcmStateDir` creates them with
+ * `recursive: true` during a real run, and `--dry-run` does not need the
+ * directory to exist at all.
+ */
+function assertDirectoryOrAbsent(p: string, label: string): void {
+  if (fs.existsSync(p) && !fs.statSync(p).isDirectory()) {
     throw new Error(`${label} is not a directory: ${p}`);
   }
 }
@@ -66,11 +70,25 @@ export async function cmdImportLosslessClaw(
   try {
     assertFile(parsed.src, "--src");
     const memoryDir = parsed.memoryDir ?? io.resolveMemoryDir();
-    assertDirectory(memoryDir, "--memory-dir");
+    assertDirectoryOrAbsent(memoryDir, "--memory-dir");
 
     const mod = await loadImportLosslessClawModule();
-    await ensureLcmStateDir(memoryDir);
-    const destDb = openLcmDatabase(memoryDir);
+
+    // Dry-run must not mutate destination storage (Codex P2). For a real
+    // run, ensureLcmStateDir creates the directory (recursive) and
+    // openLcmDatabase opens the on-disk SQLite file with schema applied.
+    // For --dry-run we use an in-memory destination so insert/skip counts
+    // can still be computed against an empty database without ever
+    // touching the filesystem.
+    let destDb: ReturnType<typeof openLcmDatabase>;
+    if (parsed.dryRun) {
+      destDb = mod.openInMemoryDestinationDatabase();
+      applyLcmSchema(destDb);
+    } else {
+      await ensureLcmStateDir(memoryDir);
+      destDb = openLcmDatabase(memoryDir);
+    }
+
     const sourceDb = mod.openSourceDatabase(parsed.src);
 
     try {

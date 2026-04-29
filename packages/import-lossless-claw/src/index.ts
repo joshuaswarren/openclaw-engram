@@ -11,6 +11,7 @@ export {
 export {
   assertLosslessClawSchema,
   openSourceDatabase,
+  openInMemoryDestinationDatabase,
   listConversations,
   listMessagesForConversation,
   listSummaries,
