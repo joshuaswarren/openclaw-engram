@@ -189,6 +189,10 @@ import { parseConnectorConfig, stripConfigArgv } from "./parse-connector-config.
 // import; slice 1 ships only the dispatcher and surfaces a clean install hint
 // when an adapter package is absent.
 import { cmdImport, IMPORT_USAGE } from "./import-dispatch.js";
+import {
+  cmdImportLosslessClaw,
+  IMPORT_LOSSLESS_CLAW_USAGE,
+} from "./import-lossless-claw-cmd.js";
 
 export { parseConnectorConfig, stripConfigArgv };
 export {
@@ -235,6 +239,7 @@ type CommandName =
   | "extensions"
   | "training:export"
   | "import"
+  | "import-lossless-claw"
   | "xray"
   | "capsule";
 
@@ -7734,6 +7739,20 @@ Other:
       break;
     }
 
+    case "import-lossless-claw": {
+      // SQLite→SQLite migration of a lossless-claw LCM database into
+      // Remnic's LCM mode. Distinct from `remnic import` because the data
+      // model is structurally different (turns + summary DAG, not facts)
+      // and the destination is the LCM SQLite store, not the orchestrator.
+      const exitCode = await cmdImportLosslessClaw(rest, {
+        resolveMemoryDir,
+        stdout: (line) => console.log(line),
+        stderr: (line) => console.error(line),
+      });
+      if (exitCode !== 0) process.exit(exitCode);
+      break;
+    }
+
     case "capsule": {
       // `remnic capsule fork <source-archive> --target <root> --fork-id <id>`
       // Issue #676 PR 4/6: formalise fork semantics — lineage breadcrumb +
@@ -7948,6 +7967,9 @@ Usage:
   remnic import --adapter <name> --file <path> [--dry-run] [--batch-size <n>]
     Import memory from ChatGPT/Claude/Gemini/Mem0 exports (issue #568).
     Run 'remnic import --help' for the full adapter list.
+  remnic import-lossless-claw --src <path> [--dry-run] [--session-filter <id>]
+    Migrate a lossless-claw LCM database into Remnic's LCM mode. Run
+    'remnic import-lossless-claw --help' for full usage.
   remnic capsule fork <archive> --target <dir> --fork-id <id>
     Fork a capsule archive into a memory root. Records land under
     forks/<source-capsule-id>/ and a lineage breadcrumb is written to

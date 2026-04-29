@@ -22,6 +22,7 @@ export default defineConfig({
     "@remnic/import-weclone",
     "@remnic/import-chatgpt",
     "@remnic/import-gemini",
+    "@remnic/import-lossless-claw",
     "@remnic/import-mem0",
     "@remnic/import-claude",
   ],
