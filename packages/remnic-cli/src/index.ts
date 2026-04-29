@@ -189,10 +189,7 @@ import { parseConnectorConfig, stripConfigArgv } from "./parse-connector-config.
 // import; slice 1 ships only the dispatcher and surfaces a clean install hint
 // when an adapter package is absent.
 import { cmdImport, IMPORT_USAGE } from "./import-dispatch.js";
-import {
-  cmdImportLosslessClaw,
-  IMPORT_LOSSLESS_CLAW_USAGE,
-} from "./import-lossless-claw-cmd.js";
+import { cmdImportLosslessClaw } from "./import-lossless-claw-cmd.js";
 
 export { parseConnectorConfig, stripConfigArgv };
 export {

@@ -104,7 +104,17 @@ export async function cmdImportLosslessClaw(
       destDb = openLcmDatabase(memoryDir);
     }
 
-    const sourceDb = mod.openSourceDatabase(parsed.src);
+    // Open the source DB inside its own try so a failed open (corrupt
+    // SQLite header, permission error, etc.) doesn't leak destDb (Cursor
+    // Bugbot review on PR #797 — `assertFile` catches existence but not
+    // every I/O failure mode).
+    let sourceDb: ReturnType<typeof mod.openSourceDatabase>;
+    try {
+      sourceDb = mod.openSourceDatabase(parsed.src);
+    } catch (err) {
+      destDb.close();
+      throw err;
+    }
 
     try {
       const result = mod.importLosslessClaw({
