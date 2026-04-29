@@ -46,7 +46,12 @@ export interface ImportLosslessClawOptions {
   destDb: Database.Database;
   /** When true, run all reads + transformations but skip writes. */
   dryRun?: boolean;
-  /** Optional set of session_ids (post-resolve) to import. Empty = all. */
+  /**
+   * Optional set of session_ids (post-resolve) to import.
+   *
+   * `undefined` or an empty Set both mean "import every session".
+   * Pass a non-empty Set to restrict to specific resolved session ids.
+   */
   sessionFilter?: ReadonlySet<string>;
   /** Hook for status output (defaults to no-op). */
   onLog?: (line: string) => void;
@@ -75,7 +80,16 @@ export function importLosslessClaw(
 ): ImportLosslessClawResult {
   const { sourceDb, destDb } = options;
   const dryRun = options.dryRun ?? false;
-  const sessionFilter = options.sessionFilter;
+  // Normalise sessionFilter: an empty Set is truthy in JavaScript, so a
+  // raw `sessionFilter && !sessionFilter.has(session)` guard would skip
+  // every session if a caller passed `new Set()` expecting "import all"
+  // (the documented contract on the option). Treat empty-Set the same
+  // as undefined here so every guard below is correct (Cursor Bugbot
+  // review on PR #797).
+  const sessionFilter =
+    options.sessionFilter && options.sessionFilter.size > 0
+      ? options.sessionFilter
+      : undefined;
   const log = options.onLog ?? NOOP_LOG;
 
   assertLosslessClawSchema(sourceDb);

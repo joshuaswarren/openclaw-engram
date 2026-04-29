@@ -428,6 +428,18 @@ describe("importLosslessClaw — dry run", () => {
 });
 
 describe("importLosslessClaw — session filter", () => {
+  it("treats an empty Set as 'import all' (Cursor low-sev: empty Set is truthy)", () => {
+    const src = buildSourceDb(TWO_CONVS());
+    const dst = buildDestDb();
+    const result = importLosslessClaw({
+      sourceDb: src,
+      destDb: dst,
+      sessionFilter: new Set<string>(),
+    });
+    assert.equal(result.messagesInserted, 3, "empty Set must not skip all");
+    assert.equal(result.summariesInserted, 1);
+  });
+
   it("limits import to specified resolved sessions", () => {
     const src = buildSourceDb(TWO_CONVS());
     const dst = buildDestDb();
