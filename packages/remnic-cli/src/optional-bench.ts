@@ -12,6 +12,7 @@
 // optional workspace packages via computed-specifier dynamic imports."
 
 import { isSpecifierNotFoundError } from "./optional-module-loader.js";
+import { assertLocalBenchBuildFreshForDevelopment } from "./bench-build-freshness.js";
 
 type BenchModule = typeof import("@remnic/bench");
 
@@ -51,9 +52,10 @@ export async function loadBenchModule(): Promise<BenchModule> {
         "  npm install -g @remnic/bench\n" +
         "\n" +
         "Or add it to a project:\n" +
-        "  pnpm add @remnic/bench\n",
+      "  pnpm add @remnic/bench\n",
     );
   }
+  assertBenchModuleFreshForDevelopment();
   return cached;
 }
 
@@ -67,4 +69,8 @@ export async function tryLoadBenchModule(): Promise<BenchModule | undefined> {
     cached = await tryImportBench();
   }
   return cached ?? undefined;
+}
+
+export function assertBenchModuleFreshForDevelopment(): void {
+  assertLocalBenchBuildFreshForDevelopment(import.meta.url);
 }

@@ -139,7 +139,11 @@ import type { MemoryCategory, Taxonomy, TaxonomyCategory } from "@remnic/core";
 // top level (erased at compile time); runtime access goes through
 // loadBenchModule() / tryLoadBenchModule() so the CLI stays functional for
 // users who never run `remnic bench *`.
-import { loadBenchModule, tryLoadBenchModule } from "./optional-bench.js";
+import {
+  assertBenchModuleFreshForDevelopment,
+  loadBenchModule,
+  tryLoadBenchModule,
+} from "./optional-bench.js";
 import type {
   BenchConfig,
   BenchmarkDefinition,
@@ -2012,6 +2016,7 @@ async function runBenchPublished(parsed: ParsedBenchArgs): Promise<void> {
       );
       process.exit(1);
     }
+    assertBenchModuleFreshForDevelopment();
     const benchModule = loaded as unknown as PackageBenchModule;
     const benchmarkId = parsed.publishedName;
     const mode = parsed.quick ? "quick" : "full";
@@ -2197,6 +2202,7 @@ async function runBenchViaPackage(
 ): Promise<{ ok: boolean; writtenPath?: string }> {
   const loaded = await tryLoadBenchModule();
   if (!loaded) return { ok: false };
+  assertBenchModuleFreshForDevelopment();
   const benchModule = loaded as unknown as PackageBenchModule;
 
   const definition = benchModule.getBenchmark?.(benchmarkId);
@@ -2475,6 +2481,7 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
   const runtimeProfiles = resolveBenchRunProfiles(parsed);
   const loaded = await tryLoadBenchModule();
   if (!loaded) return false;
+  assertBenchModuleFreshForDevelopment();
   const benchModule = loaded as unknown as PackageBenchModule;
 
   if (!benchModule.runCustomBenchmarkFile || !benchModule.writeBenchmarkResult) {
@@ -2560,9 +2567,24 @@ function resolveBenchReproDatasetDirs(
   return Object.fromEntries(
     benchmarkIds.map((benchmarkId) => [
       benchmarkId,
-      resolveBenchDatasetDir(benchmarkId, parsed.quick, parsed.datasetDir),
+      resolveBenchReproDatasetDir(
+        resolveBenchDatasetDir(benchmarkId, parsed.quick, parsed.datasetDir),
+      ),
     ]),
   );
+}
+
+function resolveBenchReproDatasetDir(
+  datasetDir: string | undefined,
+): string | undefined {
+  if (!datasetDir) {
+    return undefined;
+  }
+  try {
+    return fs.realpathSync(datasetDir);
+  } catch {
+    return datasetDir;
+  }
 }
 
 async function writeBenchReproManifestForPackageRun(args: {
