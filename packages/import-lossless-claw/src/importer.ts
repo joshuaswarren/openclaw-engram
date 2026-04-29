@@ -27,6 +27,8 @@ import {
   listSummaries,
   listSummaryMessages,
   listSummaryParents,
+  type LosslessClawConversation,
+  type LosslessClawMessage,
 } from "./source.js";
 import {
   indexSummaryDerivations,
@@ -119,34 +121,43 @@ export function importLosslessClaw(
     }
   }
 
-  // Group conversations by session, ordered by earliest message
-  // timestamp so cross-conversation turn ordering is chronological — a
-  // raw `conversation_id` sort risks ordering by UUID (Codex P1 review:
-  // session timelines and summary msg_start/msg_end depend on
-  // turn_index reflecting real chronology).
-  const earliestByConv = new Map<string, string>();
-  for (const [convId, msgs] of messagesByConv) {
-    if (msgs.length === 0) continue;
-    let earliest = msgs[0]!.created_at;
-    for (let i = 1; i < msgs.length; i++) {
-      if (msgs[i]!.created_at < earliest) earliest = msgs[i]!.created_at;
-    }
-    earliestByConv.set(convId, earliest);
-  }
-  const orderedConversations = [...conversations].sort((a, b) => {
-    const ea = earliestByConv.get(a.conversation_id) ?? "";
-    const eb = earliestByConv.get(b.conversation_id) ?? "";
-    if (ea !== eb) return ea < eb ? -1 : 1;
-    // Stable tie-break on conversation_id when earliest timestamps match
-    // (or both are missing).
-    return a.conversation_id.localeCompare(b.conversation_id);
-  });
-  const convsBySession = new Map<string, typeof orderedConversations>();
-  for (const c of orderedConversations) {
+  // Build a per-session list of (conversation, message) pairs and sort
+  // by message.created_at. This handles interleaved conversations
+  // correctly: if conv-A has messages at t=0 and t=10 and conv-B has
+  // messages at t=5 and t=6, turn_index ends up as t=0, t=5, t=6,
+  // t=10 (chronological), not t=0, t=10, t=5, t=6 (which a per-
+  // conversation pre-sort produces — Codex P1 follow-up review).
+  type SessionEntry = {
+    conv: LosslessClawConversation;
+    msg: LosslessClawMessage;
+  };
+  const sessionMessages = new Map<string, SessionEntry[]>();
+  const sessionOrder: string[] = [];
+  for (const c of conversations) {
     const session = sessionByConvId.get(c.conversation_id)!;
-    const list = convsBySession.get(session) ?? [];
-    list.push(c);
-    convsBySession.set(session, list);
+    if (!sessionMessages.has(session)) {
+      sessionMessages.set(session, []);
+      sessionOrder.push(session);
+    }
+    const list = sessionMessages.get(session)!;
+    for (const m of messagesByConv.get(c.conversation_id) ?? []) {
+      list.push({ conv: c, msg: m });
+    }
+  }
+  for (const list of sessionMessages.values()) {
+    list.sort((a, b) => {
+      if (a.msg.created_at !== b.msg.created_at) {
+        return a.msg.created_at < b.msg.created_at ? -1 : 1;
+      }
+      // Stable tie-breaker chain when timestamps collide: conversation
+      // id, then per-conversation seq (preserves intra-conversation
+      // order even on identical timestamps).
+      const cidCmp = a.conv.conversation_id.localeCompare(
+        b.conv.conversation_id,
+      );
+      if (cidCmp !== 0) return cidCmp;
+      return a.msg.seq - b.msg.seq;
+    });
   }
 
   // ── Insert messages ────────────────────────────────────────────────────
@@ -178,7 +189,7 @@ export function importLosslessClaw(
   const existingBySession = new Map<string, Map<string, number>>();
   // session → max(turn_index) currently in dest (so new rows append).
   const maxTurnBySession = new Map<string, number>();
-  for (const session of convsBySession.keys()) {
+  for (const session of sessionMessages.keys()) {
     if (sessionFilter && !sessionFilter.has(session)) continue;
     const map = new Map<string, number>();
     let max = -1;
@@ -204,46 +215,44 @@ export function importLosslessClaw(
   const turnIndexByMessageId = new Map<string, number>();
 
   function assignTurnIndices(forWrite: boolean): void {
-    for (const [session, convs] of convsBySession) {
+    for (const session of sessionOrder) {
       if (sessionFilter && !sessionFilter.has(session)) continue;
+      const entries = sessionMessages.get(session) ?? [];
       const existing =
         existingBySession.get(session) ?? new Map<string, number>();
       let nextTurn = (maxTurnBySession.get(session) ?? -1) + 1;
-      for (const c of convs) {
-        const msgs = messagesByConv.get(c.conversation_id) ?? [];
-        for (const m of msgs) {
-          const key = `${c.conversation_id}|${m.seq}`;
-          const existingTurn = existing.get(key);
-          if (existingTurn !== undefined) {
-            turnIndexByMessageId.set(m.message_id, existingTurn);
-            result.messagesSkipped += 1;
-            continue;
-          }
-          const ti = nextTurn++;
-          turnIndexByMessageId.set(m.message_id, ti);
-          // Update the in-memory dedup map so duplicates within this
-          // run also count as skips on subsequent passes (defensive;
-          // shouldn't happen with valid source data).
-          existing.set(key, ti);
-          if (forWrite) {
-            const mapped = mapMessage(c, m, ti);
-            const info = insertMessageStmt.run(
-              mapped.session_id,
-              mapped.turn_index,
-              mapped.role,
-              mapped.content,
-              mapped.token_count,
-              mapped.created_at,
-              mapped.metadata,
-            );
-            insertMessageFtsStmt.run(
-              Number(info.lastInsertRowid),
-              mapped.content,
-            );
-          }
-          result.messagesInserted += 1;
-          sessionsTouched.add(session);
+      for (const { conv, msg } of entries) {
+        const key = `${conv.conversation_id}|${msg.seq}`;
+        const existingTurn = existing.get(key);
+        if (existingTurn !== undefined) {
+          turnIndexByMessageId.set(msg.message_id, existingTurn);
+          result.messagesSkipped += 1;
+          continue;
         }
+        const ti = nextTurn++;
+        turnIndexByMessageId.set(msg.message_id, ti);
+        // Update the in-memory dedup map so duplicates within this
+        // run also count as skips on subsequent passes (defensive;
+        // shouldn't happen with valid source data).
+        existing.set(key, ti);
+        if (forWrite) {
+          const mapped = mapMessage(conv, msg, ti);
+          const info = insertMessageStmt.run(
+            mapped.session_id,
+            mapped.turn_index,
+            mapped.role,
+            mapped.content,
+            mapped.token_count,
+            mapped.created_at,
+            mapped.metadata,
+          );
+          insertMessageFtsStmt.run(
+            Number(info.lastInsertRowid),
+            mapped.content,
+          );
+        }
+        result.messagesInserted += 1;
+        sessionsTouched.add(session);
       }
     }
   }

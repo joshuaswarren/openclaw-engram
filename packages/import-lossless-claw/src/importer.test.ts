@@ -616,6 +616,70 @@ describe("importLosslessClaw — multiple conversations per session (Codex P1)",
     );
   });
 
+  it("interleaves messages across conversations by created_at (Codex P1 follow-up #2)", () => {
+    // Conv-A: messages at t=0 and t=10
+    // Conv-B: messages at t=5 and t=6
+    // Expected turn_index order: A@t0, B@t5, B@t6, A@t10
+    const seed = {
+      conversations: [
+        { conversation_id: "conv-A", session_id: "sess" },
+        { conversation_id: "conv-B", session_id: "sess" },
+      ],
+      messages: [
+        {
+          message_id: "a1",
+          conversation_id: "conv-A",
+          seq: 0,
+          role: "user",
+          content: "A@t0",
+          token_count: 1,
+          created_at: "2026-04-01T00:00:00.000Z",
+        },
+        {
+          message_id: "a2",
+          conversation_id: "conv-A",
+          seq: 1,
+          role: "assistant",
+          content: "A@t10",
+          token_count: 1,
+          created_at: "2026-04-01T00:00:10.000Z",
+        },
+        {
+          message_id: "b1",
+          conversation_id: "conv-B",
+          seq: 0,
+          role: "user",
+          content: "B@t5",
+          token_count: 1,
+          created_at: "2026-04-01T00:00:05.000Z",
+        },
+        {
+          message_id: "b2",
+          conversation_id: "conv-B",
+          seq: 1,
+          role: "assistant",
+          content: "B@t6",
+          token_count: 1,
+          created_at: "2026-04-01T00:00:06.000Z",
+        },
+      ],
+    };
+    const src = buildSourceDb(seed);
+    const dst = buildDestDb();
+    importLosslessClaw({ sourceDb: src, destDb: dst });
+
+    const rows = dst
+      .prepare(
+        "SELECT turn_index, content FROM lcm_messages WHERE session_id = 'sess' ORDER BY turn_index",
+      )
+      .all() as Array<{ turn_index: number; content: string }>;
+    assert.deepEqual(
+      rows.map((r) => r.content),
+      ["A@t0", "B@t5", "B@t6", "A@t10"],
+      "interleaved messages must appear in chronological order",
+    );
+  });
+
   it("orders conversations by earliest message timestamp, not by conversation_id (Codex P1 follow-up)", () => {
     // UUID-like ids that sort the OPPOSITE direction of chronology.
     // 'aaaa-conv-id' < 'zzzz-conv-id' lexicographically, but 'zzzz' is
