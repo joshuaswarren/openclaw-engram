@@ -108,7 +108,8 @@ rather than replace.
 
 | lossless-claw | Remnic LCM |
 |---|---|
-| `messages.seq, role, content, token_count, created_at` | `lcm_messages.turn_index, role, content, token_count, created_at` |
+| `messages.role, content, token_count, created_at` | `lcm_messages.role, content, token_count, created_at` |
+| `messages.seq` (per-conversation) | `lcm_messages.turn_index` (session-global) — original `seq` preserved in `metadata.source_seq` |
 | `summaries.summary_id, depth, content, token_count` | `lcm_summary_nodes.id, depth, summary_text, token_count` |
 | `MIN/MAX(messages.seq)` per summary (via `summary_messages`) | `lcm_summary_nodes.msg_start, msg_end` |
 | `conversations.session_id` (or `conversation_id` fallback) | `lcm_messages.session_id` |

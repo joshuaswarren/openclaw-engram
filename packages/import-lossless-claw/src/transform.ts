@@ -54,33 +54,47 @@ export function resolveSessionId(
 /**
  * Build a JSON metadata blob attached to each imported message. Sorted keys
  * (gotcha #38) so dedup or hashing downstream stays stable across runs.
+ *
+ * `source_seq` is the original `messages.seq` value from lossless-claw —
+ * preserved alongside `conversation_id` so dedup can use a stable source
+ * identity. The Remnic LCM `turn_index` is now a session-global running
+ * counter (Codex P1: previously equal to `seq`, which collided when
+ * multiple source conversations resolved to the same session).
  */
 export function buildMessageMetadata(
   conversation: LosslessClawConversation,
   message: LosslessClawMessage,
 ): string {
-  const meta: Record<string, string | null> = {
+  const meta: Record<string, string | number | null> = {
     conversation_id: conversation.conversation_id,
     identity_hash: message.identity_hash ?? null,
     source: LOSSLESS_CLAW_SOURCE_LABEL,
+    source_seq: message.seq,
     title: conversation.title ?? null,
   };
   const sorted = Object.keys(meta)
     .sort()
-    .reduce<Record<string, string | null>>((acc, key) => {
+    .reduce<Record<string, string | number | null>>((acc, key) => {
       acc[key] = meta[key] ?? null;
       return acc;
     }, {});
   return JSON.stringify(sorted);
 }
 
+/**
+ * Map a source message to a Remnic LCM row. `turnIndex` is supplied by the
+ * caller (importer.ts) which assigns a session-global running counter so
+ * multiple conversations sharing one session id do not collide on
+ * (session_id, turn_index).
+ */
 export function mapMessage(
   conversation: LosslessClawConversation,
   message: LosslessClawMessage,
+  turnIndex: number,
 ): MappedMessage {
   return {
     session_id: resolveSessionId(conversation),
-    turn_index: message.seq,
+    turn_index: turnIndex,
     role: message.role,
     content: message.content,
     token_count: message.token_count,

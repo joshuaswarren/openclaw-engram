@@ -532,6 +532,128 @@ describe("importLosslessClaw — compaction-event token aggregation", () => {
   });
 });
 
+describe("importLosslessClaw — multiple conversations per session (Codex P1)", () => {
+  it("preserves all messages when two conversations share a session_id, despite seq overlap", () => {
+    // Two conversations under one session, both starting at seq=0.
+    // Naive (session_id, turn_index) dedup would silently drop the
+    // second conversation's seq=0,1 as 'already present'. The fix
+    // assigns session-global turn_index and dedupes on
+    // metadata.{conversation_id, source_seq}.
+    const seed = {
+      conversations: [
+        { conversation_id: "conv-A", session_id: "shared-sess" },
+        { conversation_id: "conv-B", session_id: "shared-sess" },
+      ],
+      messages: [
+        {
+          message_id: "ma1",
+          conversation_id: "conv-A",
+          seq: 0,
+          role: "user",
+          content: "A says hello",
+          token_count: 3,
+          created_at: "2026-04-01T00:00:00.000Z",
+        },
+        {
+          message_id: "ma2",
+          conversation_id: "conv-A",
+          seq: 1,
+          role: "assistant",
+          content: "A responds",
+          token_count: 2,
+          created_at: "2026-04-01T00:00:01.000Z",
+        },
+        {
+          message_id: "mb1",
+          conversation_id: "conv-B",
+          seq: 0,
+          role: "user",
+          content: "B says hello",
+          token_count: 3,
+          created_at: "2026-04-01T00:01:00.000Z",
+        },
+        {
+          message_id: "mb2",
+          conversation_id: "conv-B",
+          seq: 1,
+          role: "assistant",
+          content: "B responds",
+          token_count: 2,
+          created_at: "2026-04-01T00:01:01.000Z",
+        },
+      ],
+    };
+    const src = buildSourceDb(seed);
+    const dst = buildDestDb();
+    const result = importLosslessClaw({ sourceDb: src, destDb: dst });
+
+    assert.equal(result.messagesInserted, 4, "all 4 messages must land");
+    assert.equal(result.messagesSkipped, 0);
+
+    const rows = dst
+      .prepare(
+        "SELECT turn_index, content, json_extract(metadata, '$.conversation_id') AS conv, " +
+          "json_extract(metadata, '$.source_seq') AS source_seq " +
+          "FROM lcm_messages WHERE session_id = 'shared-sess' ORDER BY turn_index",
+      )
+      .all() as Array<{
+      turn_index: number;
+      content: string;
+      conv: string;
+      source_seq: number;
+    }>;
+    assert.equal(rows.length, 4);
+    // Session-global turn_index 0..3, no collisions
+    assert.deepEqual(
+      rows.map((r) => r.turn_index),
+      [0, 1, 2, 3],
+    );
+    // Conversation order is deterministic by conversation_id sort:
+    // conv-A first (seqs 0,1), then conv-B (seqs 0,1).
+    assert.deepEqual(
+      rows.map((r) => `${r.conv}:${r.source_seq}`),
+      ["conv-A:0", "conv-A:1", "conv-B:0", "conv-B:1"],
+    );
+  });
+
+  it("idempotent re-run still inserts zero new rows when conversations share a session", () => {
+    const seed = {
+      conversations: [
+        { conversation_id: "conv-A", session_id: "shared-sess" },
+        { conversation_id: "conv-B", session_id: "shared-sess" },
+      ],
+      messages: [
+        {
+          message_id: "ma1",
+          conversation_id: "conv-A",
+          seq: 0,
+          role: "user",
+          content: "A0",
+          token_count: 1,
+          created_at: "2026-04-01T00:00:00.000Z",
+        },
+        {
+          message_id: "mb1",
+          conversation_id: "conv-B",
+          seq: 0,
+          role: "user",
+          content: "B0",
+          token_count: 1,
+          created_at: "2026-04-01T00:01:00.000Z",
+        },
+      ],
+    };
+    const src = buildSourceDb(seed);
+    const dst = buildDestDb();
+
+    const first = importLosslessClaw({ sourceDb: src, destDb: dst });
+    const second = importLosslessClaw({ sourceDb: src, destDb: dst });
+    assert.equal(first.messagesInserted, 2);
+    assert.equal(second.messagesInserted, 0);
+    assert.equal(second.messagesSkipped, 2);
+  });
+});
+
 describe("importLosslessClaw — orphan summaries", () => {
   it("skips summaries with no message references and increments the counter", () => {
     const seed = TWO_CONVS();

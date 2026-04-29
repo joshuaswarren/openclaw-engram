@@ -59,16 +59,18 @@ describe("resolveSessionId", () => {
 });
 
 describe("buildMessageMetadata", () => {
-  it("emits sorted JSON keys for stable hashing", () => {
+  it("emits sorted JSON keys including source_seq (Codex P1)", () => {
     const json = buildMessageMetadata(conv, msg);
     const parsed = JSON.parse(json);
     assert.deepEqual(Object.keys(parsed), [
       "conversation_id",
       "identity_hash",
       "source",
+      "source_seq",
       "title",
     ]);
     assert.equal(parsed.source, LOSSLESS_CLAW_SOURCE_LABEL);
+    assert.equal(parsed.source_seq, 7);
     assert.equal(parsed.conversation_id, "conv-A");
     assert.equal(parsed.identity_hash, "abc");
     assert.equal(parsed.title, "Hello world");
@@ -86,15 +88,16 @@ describe("buildMessageMetadata", () => {
 });
 
 describe("mapMessage", () => {
-  it("preserves seq, role, content, token_count, created_at", () => {
-    const mapped = mapMessage(conv, msg);
+  it("preserves role, content, token_count, created_at; turn_index from caller", () => {
+    const mapped = mapMessage(conv, msg, 42);
     assert.equal(mapped.session_id, "sess-A");
-    assert.equal(mapped.turn_index, 7);
+    assert.equal(mapped.turn_index, 42, "caller-supplied session-global turn_index");
     assert.equal(mapped.role, "user");
     assert.equal(mapped.content, "what is the answer?");
     assert.equal(mapped.token_count, 5);
     assert.equal(mapped.created_at, "2026-04-01T00:00:00.000Z");
     assert.match(mapped.metadata, /"source":"lossless-claw"/);
+    assert.match(mapped.metadata, /"source_seq":7/);
   });
 });
 

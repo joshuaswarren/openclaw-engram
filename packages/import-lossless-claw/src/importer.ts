@@ -98,15 +98,13 @@ export function importLosslessClaw(
 
   const sessionByConvId = new Map<string, string>();
   const sessionByMessageId = new Map<string, string>();
-  const seqByMessageId = new Map<string, number>();
 
   for (const c of conversations) {
     sessionByConvId.set(c.conversation_id, resolveSessionId(c));
   }
 
-  // We materialize messages once per conversation, twice traversed:
-  // first pass populates sessionByMessageId + seqByMessageId, second pass
-  // (below) writes them. Cheaper than re-querying per summary lookup.
+  // Materialize messages once per conversation; reused for the write pass
+  // and (via sessionByMessageId) for summary mapping.
   const messagesByConv = new Map<
     string,
     ReturnType<typeof listMessagesForConversation>
@@ -118,13 +116,34 @@ export function importLosslessClaw(
     const session = sessionByConvId.get(c.conversation_id)!;
     for (const m of msgs) {
       sessionByMessageId.set(m.message_id, session);
-      seqByMessageId.set(m.message_id, m.seq);
     }
   }
 
+  // Group conversations by session in deterministic order so two
+  // conversations resolving to the same session id get a consistent
+  // assignment of session-global turn_index values across runs.
+  const orderedConversations = [...conversations].sort((a, b) =>
+    a.conversation_id.localeCompare(b.conversation_id),
+  );
+  const convsBySession = new Map<string, typeof orderedConversations>();
+  for (const c of orderedConversations) {
+    const session = sessionByConvId.get(c.conversation_id)!;
+    const list = convsBySession.get(session) ?? [];
+    list.push(c);
+    convsBySession.set(session, list);
+  }
+
   // ── Insert messages ────────────────────────────────────────────────────
-  const messageExistsStmt = destDb.prepare(
-    "SELECT 1 AS hit FROM lcm_messages WHERE session_id = ? AND turn_index = ? LIMIT 1",
+  // Dedup uses source identity (`metadata.conversation_id` +
+  // `metadata.source_seq`) rather than `(session_id, turn_index)` so two
+  // source conversations sharing one session can both contribute messages
+  // without one's `seq=N` masking the other's `seq=N` (Codex P1 review).
+  const sourceMessageLookupStmt = destDb.prepare(
+    "SELECT turn_index FROM lcm_messages " +
+      "WHERE session_id = ? " +
+      "  AND json_extract(metadata, '$.conversation_id') = ? " +
+      "  AND json_extract(metadata, '$.source_seq') = ? " +
+      "LIMIT 1",
   );
   const insertMessageStmt = destDb.prepare(
     "INSERT INTO lcm_messages (session_id, turn_index, role, content, token_count, created_at, metadata) " +
@@ -133,63 +152,66 @@ export function importLosslessClaw(
   const insertMessageFtsStmt = destDb.prepare(
     "INSERT INTO lcm_messages_fts (rowid, content) VALUES (?, ?)",
   );
+  const maxTurnInDestStmt = destDb.prepare(
+    "SELECT IFNULL(MAX(turn_index), -1) AS max FROM lcm_messages WHERE session_id = ?",
+  );
 
   const sessionsTouched = new Set<string>();
+  // Mapping from source message_id → assigned (or pre-existing)
+  // turn_index. Populated for both inserted rows and dedup-skipped rows
+  // so summary mapping (msg_start/msg_end) reflects real turn indices.
+  const turnIndexByMessageId = new Map<string, number>();
 
-  const writeMessages = destDb.transaction(() => {
-    for (const c of conversations) {
-      const session = sessionByConvId.get(c.conversation_id)!;
+  function assignTurnIndices(forWrite: boolean): void {
+    for (const [session, convs] of convsBySession) {
       if (sessionFilter && !sessionFilter.has(session)) continue;
-      const msgs = messagesByConv.get(c.conversation_id) ?? [];
-      for (const m of msgs) {
-        const mapped = mapMessage(c, m);
-        const existing = messageExistsStmt.get(
-          mapped.session_id,
-          mapped.turn_index,
-        ) as { hit: number } | undefined;
-        if (existing) {
-          result.messagesSkipped += 1;
-          continue;
+      const startRow = maxTurnInDestStmt.get(session) as { max: number };
+      let nextTurn = startRow.max + 1;
+      for (const c of convs) {
+        const msgs = messagesByConv.get(c.conversation_id) ?? [];
+        for (const m of msgs) {
+          const existing = sourceMessageLookupStmt.get(
+            session,
+            c.conversation_id,
+            m.seq,
+          ) as { turn_index: number } | undefined;
+          if (existing) {
+            turnIndexByMessageId.set(m.message_id, existing.turn_index);
+            result.messagesSkipped += 1;
+            continue;
+          }
+          const ti = nextTurn++;
+          turnIndexByMessageId.set(m.message_id, ti);
+          if (forWrite) {
+            const mapped = mapMessage(c, m, ti);
+            const info = insertMessageStmt.run(
+              mapped.session_id,
+              mapped.turn_index,
+              mapped.role,
+              mapped.content,
+              mapped.token_count,
+              mapped.created_at,
+              mapped.metadata,
+            );
+            insertMessageFtsStmt.run(
+              Number(info.lastInsertRowid),
+              mapped.content,
+            );
+          }
+          result.messagesInserted += 1;
+          sessionsTouched.add(session);
         }
-        const info = insertMessageStmt.run(
-          mapped.session_id,
-          mapped.turn_index,
-          mapped.role,
-          mapped.content,
-          mapped.token_count,
-          mapped.created_at,
-          mapped.metadata,
-        );
-        insertMessageFtsStmt.run(Number(info.lastInsertRowid), mapped.content);
-        result.messagesInserted += 1;
-        sessionsTouched.add(mapped.session_id);
       }
     }
-  });
+  }
 
   if (!dryRun) {
+    const writeMessages = destDb.transaction(() => assignTurnIndices(true));
     writeMessages();
   } else {
-    // Dry run: count what would have been inserted vs skipped without
-    // mutating either DB. Re-walk for counters only.
-    for (const c of conversations) {
-      const session = sessionByConvId.get(c.conversation_id)!;
-      if (sessionFilter && !sessionFilter.has(session)) continue;
-      const msgs = messagesByConv.get(c.conversation_id) ?? [];
-      for (const m of msgs) {
-        const mapped = mapMessage(c, m);
-        const existing = messageExistsStmt.get(
-          mapped.session_id,
-          mapped.turn_index,
-        ) as { hit: number } | undefined;
-        if (existing) {
-          result.messagesSkipped += 1;
-        } else {
-          result.messagesInserted += 1;
-          sessionsTouched.add(mapped.session_id);
-        }
-      }
-    }
+    // Dry run: walk the same iteration to populate counters and
+    // turnIndexByMessageId without mutating either DB.
+    assignTurnIndices(false);
   }
 
   // ── Insert summaries ───────────────────────────────────────────────────
@@ -237,7 +259,7 @@ export function importLosslessClaw(
 
       const messageSeqs: number[] = [];
       for (const mid of derivation.messageIds) {
-        const seq = seqByMessageId.get(mid);
+        const seq = turnIndexByMessageId.get(mid);
         if (typeof seq === "number") messageSeqs.push(seq);
       }
       if (messageSeqs.length === 0) {
@@ -314,7 +336,7 @@ export function importLosslessClaw(
       if (sessionFilter && !sessionFilter.has(session)) continue;
       const messageSeqs: number[] = [];
       for (const mid of derivation.messageIds) {
-        const seq = seqByMessageId.get(mid);
+        const seq = turnIndexByMessageId.get(mid);
         if (typeof seq === "number") messageSeqs.push(seq);
       }
       if (messageSeqs.length === 0) {
