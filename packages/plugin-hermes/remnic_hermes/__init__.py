@@ -309,6 +309,22 @@ def _register_issue_814_tools(  # type: ignore[no-untyped-def]
         )
 
 
+def _register_issue_815_hooks(ctx, provider: RemnicMemoryProvider):  # type: ignore[no-untyped-def]
+    register_hook = getattr(ctx, "register_hook", None)
+    if not callable(register_hook):
+        return
+
+    def _on_session_reset(session_id: str = "", **kwargs):  # type: ignore[no-untyped-def]
+        provider.on_session_switch(
+            session_id,
+            reset=True,
+            reason="hermes_session_reset",
+            **kwargs,
+        )
+
+    register_hook("on_session_reset", _on_session_reset)
+
+
 def register(ctx):  # type: ignore[no-untyped-def]
     """Hermes plugin entry point. Registers the MemoryProvider and explicit tools."""
     config = ctx.config.get("remnic")
@@ -317,6 +333,7 @@ def register(ctx):  # type: ignore[no-untyped-def]
 
     provider = RemnicMemoryProvider(config)
     ctx.register_memory_provider(provider)
+    _register_issue_815_hooks(ctx, provider)
 
     # Primary tool names (Remnic-branded).
     ctx.register_tool("remnic_recall", provider.recall_schema, provider.recall)

@@ -86,6 +86,7 @@ class RemnicMemoryProvider:
         self._port = cfg.port
         self._token = cfg.token
         self._timeout = cfg.timeout
+        self._configured_session_key = bool(cfg.session_key)
         self._session_key = cfg.session_key or f"hermes-{uuid.uuid4().hex[:12]}"
         self._client: RemnicClient | None = None
 
@@ -164,6 +165,22 @@ class RemnicMemoryProvider:
             )
         except Exception:
             pass
+
+    def on_session_switch(
+        self,
+        new_session_id: str,
+        *,
+        parent_session_id: str = "",
+        reset: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        """Refresh daemon session scoping when Hermes rotates its session id."""
+        del parent_session_id, reset, kwargs
+        if self._configured_session_key:
+            return
+        normalized = new_session_id.strip()
+        if normalized:
+            self._session_key = normalized
 
     async def shutdown(self) -> None:
         """Close the HTTP client."""

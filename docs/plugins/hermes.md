@@ -19,6 +19,7 @@ Canonical upstream references:
 - [Environment variable overrides](#environment-variable-overrides)
 - [Token bootstrap](#token-bootstrap)
 - [How the provider works](#how-the-provider-works)
+- [Lifecycle parity audit](#lifecycle-parity-audit)
 - [Tools registered](#tools-registered)
 - [Profile and session isolation](#profile-and-session-isolation)
 - [Error handling philosophy](#error-handling-philosophy)
@@ -217,9 +218,30 @@ Called when the session ends. Receives a `session` dict; reads `session["message
 
 Exceptions are swallowed.
 
+### `on_session_switch`
+
+Called by Hermes when its active session id changes without tearing down the provider. If `remnic.session_key` is explicitly configured, Remnic preserves that stable key. If `session_key` is omitted and the plugin generated an ephemeral key, Remnic updates it to the new Hermes session id so recalls and observations remain scoped to the current Hermes conversation after `/new`, `/reset`, or similar session-boundary operations.
+
 ### `shutdown`
 
 Closes the `httpx.AsyncClient`. Safe to call when the client was never initialized.
+
+---
+
+## Lifecycle parity audit
+
+Audit date: 2026-04-30. Upstream Hermes reference used: `NousResearch/hermes-agent` commit `1d8068d` (`2026-04-30T12:57:02-07:00`).
+
+Remnic remains a `memory_provider` plugin. The Hermes `context_engine` slot is still intentionally unused because it replaces Hermes' local `ContextCompressor`; it is not the right slot for recall, observation, heartbeat, dreams, or reset handling.
+
+| OpenClaw surface | Hermes surface | Status | Remnic behavior |
+|------------------|----------------|--------|-----------------|
+| `agent_heartbeat` | Hermes cron scheduler (`cron/scheduler.py`) and agent/tool jobs | Equivalent but different | Remnic does not register a plugin tick hook. Hermes scheduled jobs can call Remnic maintenance tools such as `remnic_memory_summarize_hourly`, `remnic_conversation_index_update`, `remnic_dreams_run`, and `remnic_compounding_weekly_synthesize`. |
+| `before_reset` | Plugin hooks `on_session_finalize` and `on_session_reset`, plus MemoryProvider `on_session_end` / `on_session_switch` | Wired for session scoping | Remnic registers an `on_session_reset` hook when Hermes exposes `ctx.register_hook`, and the provider implements `on_session_switch` so generated session keys follow the new Hermes session id. Stable configured `session_key` values are preserved. |
+| `commands.list` / `registerCommand` | `ctx.register_command` for in-session slash commands and `ctx.register_cli_command` for `hermes <subcommand>` commands | Available, not wired | Remnic exposes explicit capabilities as agent tools rather than Hermes slash/CLI commands today. The command surfaces exist upstream and can be used later for operator-style commands if there is a concrete UX need. |
+| `dreaming` slot | No dedicated dreaming plugin slot; Hermes uses cron/background jobs and context-engine lifecycle for compression only | Equivalent but different | Remnic keeps dream/consolidation semantics inside the daemon. Hermes can invoke them through `remnic_dreams_status` and `remnic_dreams_run`; recurring background execution should be modeled as a Hermes cron job, not as a `context_engine`. |
+
+No upstream Hermes feature request is needed from this audit: each OpenClaw lifecycle surface has either a direct Hermes plugin hook or a supported Hermes scheduling/command equivalent. The only non-equivalent detail is naming: Hermes does not have an OpenClaw-style `dreaming` slot, but its cron/background-task model is the correct host-native way to schedule Remnic dream work.
 
 ---
 
