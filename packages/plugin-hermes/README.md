@@ -2,6 +2,8 @@
 
 Remnic MemoryProvider plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Automatically injects memories into every LLM call and observes every conversation turn — no agent code changes required.
 
+Current PyPI package: `remnic-hermes` v1.0.2. This release includes automatic MemoryProvider recall/observation, daemon-side LCM recall enrichment, session reset scoping, the full explicit Remnic tool parity surface, and legacy `engram_*` aliases for existing configs.
+
 ## Why MemoryProvider
 
 MCP tools give an agent the ability to call memory functions, but only when the agent decides to. With the MemoryProvider protocol, recall happens structurally on every turn before the LLM is called, and observation happens after every response. The agent cannot forget to recall because the hook is not optional. A plain MCP integration requires the LLM to recognize that it should search for memories and then choose to call the tool; the MemoryProvider removes that dependency entirely.
@@ -31,7 +33,7 @@ If you have read documentation or third-party reviews suggesting Remnic must reg
 
 1. Install the plugin:
    ```bash
-   pip install remnic-hermes
+   pip install --upgrade remnic-hermes
    ```
 
 2. Wire Hermes to Remnic (generates an auth token, writes the Hermes config entry, and checks daemon health):
@@ -45,7 +47,7 @@ If you have read documentation or third-party reviews suggesting Remnic must reg
    ```bash
    hermes --version && pip show remnic-hermes
    ```
-Your agent should now have access to `remnic_recall`, `remnic_store`, `remnic_search`, `remnic_lcm_search`, and `remnic_profiling_report` tools. Call `remnic_recall` with any query to confirm memories are returned.
+Your agent should now have structural memory on every turn plus explicit tools such as `remnic_recall`, `remnic_lcm_search`, `remnic_recall_xray`, `remnic_memory_store`, `remnic_context_checkpoint`, and `remnic_profiling_report`. Call `remnic_recall` with any query to confirm memories are returned.
 
 ## Manual configuration
 
@@ -109,6 +111,7 @@ The plugin searches for a `connector: "hermes"` entry first, then falls back to 
 | `pre_llm_call` | Before every LLM call | Recalls up to 8 memories using the last user message as the query. Skipped if the user message is fewer than 3 words. Injects a `<remnic-memory>` block into the system prompt when results are found. |
 | `sync_turn` | After every response | Sends the last 2 messages (user + assistant) to the Remnic daemon for real-time observation. |
 | `extract_memories` | Session ends | Sends the full session transcript to the daemon for deep structured extraction. |
+| `on_session_switch` / `on_session_reset` | Hermes session boundary | Keeps generated session keys aligned with the active Hermes session while preserving configured stable keys. |
 | `shutdown` | Plugin unloads | Closes the HTTP client. |
 
 ## Tools it registers
@@ -178,6 +181,12 @@ During the Engram to Remnic compat window, legacy `engram_*` aliases are also re
 
 The existing simple `remnic_store` / `engram_store` compatibility tools remain available. Use `remnic_memory_store` / `engram_memory_store` when the caller needs the richer daemon schema.
 
+In practice:
+
+- Automatic recall/observation is always handled by the MemoryProvider hooks.
+- Use explicit tools when Hermes needs to search a different query, write a specific fact, inspect recall attribution, search LCM directly, curate memory, manage continuity/work-board state, create a checkpoint, or generate reports.
+- Lossless Context Management does not require Hermes `context_engine`; LCM results arrive through the daemon recall envelope when enabled in Remnic.
+
 ## Profiles and namespaces
 
 Hermes isolates agent state per profile under `~/.hermes/profiles/<name>/`. Each profile loads its own `config.yaml`, so you can run separate `remnic:` blocks with different `session_key` values to keep memory contexts distinct. See [docs/plugins/hermes.md](../../docs/plugins/hermes.md) for a worked example.
@@ -216,7 +225,7 @@ which python && pip show remnic-hermes
 hermes --version
 ```
 
-If they differ, install into the correct environment: `<path-to-hermes-python> -m pip install remnic-hermes`.
+If they differ, install into the correct environment: `<path-to-hermes-python> -m pip install --upgrade remnic-hermes`.
 
 **Memories not appearing in context**
 

@@ -13,11 +13,13 @@ See:
 ## Quick install
 
 ```bash
-pip install remnic-hermes
+pip install --upgrade remnic-hermes
 remnic connectors install hermes
 ```
 
 Then restart Hermes to pick up the new plugin.
+
+`remnic-hermes` v1.0.2 includes the full Remnic parity surface in Hermes: automatic MemoryProvider recall/observation, daemon-side LCM recall enrichment, session reset scoping, and explicit `remnic_*` tools for recall debugging, LCM search, memory CRUD, continuity, identity, governance, work boards, shared context, compounding, day summaries, briefings, context checkpoints, and profiling. Legacy `engram_*` aliases are still registered during the compatibility window.
 
 ## Which Hermes plugin slot Remnic uses
 
