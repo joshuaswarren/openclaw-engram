@@ -15,7 +15,7 @@ MCP tools give an agent the ability to call memory functions, but only when the 
 
 ## Which Hermes plugin slot does Remnic use?
 
-Remnic ships as a **`memory_provider`** plugin in Hermes (declared in `plugin.yaml` as `type: memory_provider`).
+Remnic ships as a Hermes memory provider plugin (declared in `plugin.yaml` as `kind: exclusive`, the Hermes manifest kind used for provider plugins selected through `memory.provider`).
 
 **Remnic does not use, and does not need to use, Hermes' `context_engine` slot.** That slot replaces the built-in `ContextCompressor` — it is for *compressing the agent's own outgoing conversation history*. Remnic delivers external memory recall (and, when enabled daemon-side, Lossless Context Management archive content) through the `memory_provider` hook (`pre_llm_call`), which is the correct slot for this concern.
 
