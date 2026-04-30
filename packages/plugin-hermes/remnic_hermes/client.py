@@ -337,6 +337,9 @@ class RemnicClient:
     async def conversation_index_update(self, **kwargs: Any) -> dict[str, Any]:
         return await self._mcp_tool("engram.conversation_index_update", kwargs)
 
+    async def profiling_report(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.profiling_report", kwargs)
+
     async def day_summary(self, **kwargs: Any) -> dict[str, Any]:
         return await self._mcp_tool("engram.day_summary", kwargs)
 

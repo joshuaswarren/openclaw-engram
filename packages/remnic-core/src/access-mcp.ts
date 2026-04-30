@@ -1164,6 +1164,28 @@ export class EngramMcpServer {
         },
       },
       {
+        name: "engram.profiling_report",
+        description:
+          "Return timing and performance data for Remnic recall and extraction pipelines. Requires profilingEnabled: true.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            format: {
+              type: "string",
+              enum: ["ascii", "json"],
+              description: "Output format. Defaults to ascii.",
+            },
+            limit: {
+              type: "integer",
+              minimum: 1,
+              maximum: 20,
+              description: "Number of recent traces to include. Defaults to 5.",
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
         name: "engram.graph_edge_decay_run",
         description:
           "Run the graph-edge-confidence decay maintenance pass (issue #681 PR 2/3). Respects graphEdgeDecayEnabled; writes a structured telemetry record to state/graph-edge-decay-status.json.",
@@ -2362,6 +2384,19 @@ export class EngramMcpServer {
           sessionKey,
           hours: typeof args.hours === "number" && Number.isFinite(args.hours) ? args.hours : undefined,
           embed: typeof args.embed === "boolean" ? args.embed : undefined,
+        });
+      }
+      case "engram.profiling_report":
+      case "remnic.profiling_report": {
+        if ("format" in args && args.format !== undefined && typeof args.format !== "string") {
+          throw new EngramAccessInputError("format must be a string when provided");
+        }
+        if ("limit" in args && args.limit !== undefined && typeof args.limit !== "number") {
+          throw new EngramAccessInputError("limit must be a number when provided");
+        }
+        return this.service.profilingReport({
+          format: typeof args.format === "string" ? args.format : undefined,
+          limit: typeof args.limit === "number" ? args.limit : undefined,
         });
       }
       case "engram.graph_edge_decay_run":
