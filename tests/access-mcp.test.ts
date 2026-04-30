@@ -85,6 +85,17 @@ function createFakeService(): EngramAccessService {
       status: dryRun === true ? "validated" : "stored",
       memoryId: "fact-new",
     }),
+    memoryActionApply: async (request) => ({
+      recorded: true,
+      event: {
+        action: request.action,
+        outcome: request.outcome ?? "skipped",
+        inputSummary: [
+          request.category ? `category=${request.category}` : undefined,
+          typeof request.execute === "boolean" ? `execute=${request.execute}` : undefined,
+        ].filter(Boolean).join(" | "),
+      },
+    }),
     suggestionSubmit: async ({ dryRun }) => ({
       schemaVersion: 1,
       operation: "suggestion_submit",
@@ -361,6 +372,7 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.memory_feedback",
     "engram.memory_promote",
     "engram.memory_outcome",
+    "engram.memory_action_apply",
     "engram.context_checkpoint",
     "engram.briefing",
     "engram.review_list",
@@ -405,6 +417,27 @@ test("MCP server advertises tools and dispatches recall", async () => {
   });
   const storeResult = store?.result as { structuredContent: { status: string } };
   assert.equal(storeResult.structuredContent.status, "stored");
+
+  const memoryAction = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 44,
+    method: "tools/call",
+    params: {
+      name: "engram.memory_action_apply",
+      arguments: {
+        action: "store_note",
+        content: "Keep the category.",
+        category: "fact",
+        execute: true,
+      },
+    },
+  });
+  const memoryActionResult = memoryAction?.result as {
+    structuredContent: { event: { outcome: string; inputSummary: string } };
+  };
+  assert.equal(memoryActionResult.structuredContent.event.outcome, "skipped");
+  assert.match(memoryActionResult.structuredContent.event.inputSummary, /category=fact/);
+  assert.match(memoryActionResult.structuredContent.event.inputSummary, /execute=true/);
 
   const governance = await server.handleRequest({
     jsonrpc: "2.0",

@@ -1033,6 +1033,44 @@ export class EngramMcpServer {
         },
       },
       {
+        name: "engram.memory_action_apply",
+        description:
+          "Record a memory-action application event for policy-learning telemetry.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: [
+                "store_episode",
+                "store_note",
+                "update_note",
+                "create_artifact",
+                "summarize_node",
+                "discard",
+                "link_graph",
+              ],
+            },
+            category: { type: "string" },
+            content: { type: "string" },
+            outcome: { type: "string", enum: ["applied", "skipped", "failed"] },
+            reason: { type: "string" },
+            memoryId: { type: "string" },
+            sessionKey: { type: "string" },
+            linkTargetId: { type: "string" },
+            linkType: { type: "string" },
+            linkStrength: { type: "number" },
+            artifactType: { type: "string" },
+            execute: { type: "boolean" },
+            sourcePrompt: { type: "string" },
+            namespace: { type: "string" },
+            dryRun: { type: "boolean" },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+      },
+      {
         name: "engram.context_checkpoint",
         description: "Save a structured context checkpoint for a session (preserves conversation state to disk).",
         inputSchema: {
@@ -2207,6 +2245,25 @@ export class EngramMcpServer {
           timestamp: typeof args.timestamp === "string" ? args.timestamp : undefined,
         });
       }
+      case "engram.memory_action_apply":
+        return this.service.memoryActionApply({
+          action: typeof args.action === "string" ? args.action : "",
+          outcome: typeof args.outcome === "string" ? args.outcome : undefined,
+          reason: typeof args.reason === "string" ? args.reason : undefined,
+          memoryId: typeof args.memoryId === "string" ? args.memoryId : undefined,
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
+          sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
+          content: typeof args.content === "string" ? args.content : undefined,
+          category: typeof args.category === "string" ? args.category : undefined,
+          linkTargetId: typeof args.linkTargetId === "string" ? args.linkTargetId : undefined,
+          linkType: typeof args.linkType === "string" ? args.linkType : undefined,
+          linkStrength: typeof args.linkStrength === "number" ? args.linkStrength : undefined,
+          artifactType: typeof args.artifactType === "string" ? args.artifactType : undefined,
+          execute: typeof args.execute === "boolean" ? args.execute : undefined,
+          sourcePrompt: typeof args.sourcePrompt === "string" ? args.sourcePrompt : undefined,
+          dryRun: args.dryRun === true,
+        });
       case "engram.context_checkpoint":
         return this.service.contextCheckpoint({
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : "",

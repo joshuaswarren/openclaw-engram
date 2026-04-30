@@ -128,8 +128,22 @@ The plugin searches for a `connector: "hermes"` entry first, then falls back to 
 | `remnic_memory_graph_explain` | Inspect graph recall expansion from the last recall |
 | `remnic_memory_feedback_last_recall` | Record relevance feedback for a recalled memory |
 | `remnic_set_coding_context` | Attach coding project context to a session |
+| `remnic_memory_get` | Fetch one stored memory by id |
+| `remnic_memory_store` | Store a memory with the daemon's richer memory-store schema |
+| `remnic_memory_timeline` | Fetch the timeline for one stored memory |
+| `remnic_memory_profile` | Read the user profile surface |
+| `remnic_memory_entities` | List tracked entities |
+| `remnic_memory_questions` | List open memory questions |
+| `remnic_memory_identity` | Read identity memory state |
+| `remnic_memory_promote` | Promote a memory candidate or stored memory |
+| `remnic_memory_outcome` | Record or inspect a memory outcome |
+| `remnic_entity_get` | Fetch one tracked entity by name |
+| `remnic_memory_capture` | Capture an explicit memory note |
+| `remnic_memory_action_apply` | Apply a memory action |
 
 During the Engram to Remnic compat window, legacy `engram_*` aliases are also registered for each tool. These route to the same handlers. Their schema descriptions intentionally say "Engram" (not "Remnic") so that tool names and descriptions agree when a language model surfaces the legacy names. The `engram_*` aliases will be removed in a future major release. New integrations should use the `remnic_*` names.
+
+The existing simple `remnic_store` / `engram_store` compatibility tools remain available. Use `remnic_memory_store` / `engram_memory_store` when the caller needs the richer daemon schema.
 
 ## Profiles and namespaces
 

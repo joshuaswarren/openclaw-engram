@@ -240,10 +240,22 @@ Closes the `httpx.AsyncClient`. Safe to call when the client was never initializ
 | `remnic_memory_graph_explain` | `namespace?: string` | Inspect graph recall expansion from the last recall |
 | `remnic_memory_feedback_last_recall` | `memoryId: string`, `vote: up|down`, `note?: string` | Record relevance feedback for a recalled memory |
 | `remnic_set_coding_context` | `sessionKey: string`, `codingContext?: object|null`, `projectTag?: string` | Attach coding project context to a session |
+| `remnic_memory_get` | `memoryId: string`, `namespace?: string` | Fetch one stored memory by id |
+| `remnic_memory_store` | `content: string`, plus memory metadata fields | Store a memory with the daemon's richer memory-store schema |
+| `remnic_memory_timeline` | `memoryId: string`, `namespace?: string`, `limit?: number` | Fetch the timeline for one stored memory |
+| `remnic_memory_profile` | `namespace?: string` | Read the user profile surface |
+| `remnic_memory_entities` | `namespace?: string` | List tracked entities |
+| `remnic_memory_questions` | `namespace?: string` | List open memory questions |
+| `remnic_memory_identity` | `namespace?: string` | Read identity memory state |
+| `remnic_memory_promote` | `memoryId: string`, `namespace?: string`, `sessionKey?: string` | Promote a memory candidate or stored memory |
+| `remnic_memory_outcome` | `memoryId: string`, `outcome: success|failure`, `namespace?: string`, `sessionKey?: string`, `timestamp?: string` | Record or inspect a memory outcome |
+| `remnic_entity_get` | `name: string`, `namespace?: string` | Fetch one tracked entity by name |
+| `remnic_memory_capture` | `content: string`, plus memory metadata fields | Capture an explicit memory note |
+| `remnic_memory_action_apply` | `action: string`, plus action-specific fields | Apply a memory action |
 
-Each tool handler returns the raw JSON response from the daemon or `{"error": "Not connected to Remnic"}` when the client is not initialized. Debug and explain tools are forwarded through the daemon's MCP endpoint because those surfaces are MCP-native.
+Each tool handler returns the raw JSON response from the daemon or `{"error": "Not connected to Remnic"}` when the client is not initialized. Direct memory tools use the daemon's REST endpoints where available; debug, explain, and MCP-native memory surfaces are forwarded through the daemon MCP endpoint.
 
-The `remnic_*` tools give the agent explicit control for cases where automatic recall is insufficient — for example, storing a specific fact the agent has derived mid-session, searching the LCM archive directly, or inspecting why a recall result appeared.
+The `remnic_*` tools give the agent explicit control for cases where automatic recall is insufficient — for example, storing a specific fact the agent has derived mid-session, searching the LCM archive directly, inspecting why a recall result appeared, or curating stored memories.
 
 ---
 

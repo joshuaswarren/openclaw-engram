@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises";
 import * as nodeFs from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
+import { createHash } from "node:crypto";
 import { ZodError } from "zod";
 import { AccessIdempotencyStore, hashAccessIdempotencyPayload } from "./access-idempotency.js";
 import { AccessAuditAdapter, type AccessAuditConfig, type AccessAuditResult } from "./access-audit.js";
@@ -88,6 +89,8 @@ import {
 import type {
   EntityFile,
   MemoryFile,
+  MemoryActionOutcome,
+  MemoryActionType,
   MemoryLifecycleEvent,
   MemoryStatus,
   PluginConfig,
@@ -4123,6 +4126,96 @@ export class EngramAccessService {
       updated: new Date().toISOString(),
     });
     return { promoted: true, memoryId: request.memoryId };
+  }
+
+  async memoryActionApply(request: {
+    action: string;
+    outcome?: string;
+    reason?: string;
+    memoryId?: string;
+    namespace?: string;
+    principal?: string;
+    sessionKey?: string;
+    content?: string;
+    category?: string;
+    linkTargetId?: string;
+    linkType?: string;
+    linkStrength?: number;
+    artifactType?: string;
+    execute?: boolean;
+    sourcePrompt?: string;
+    dryRun?: boolean;
+  }): Promise<unknown> {
+    const actionTypes = new Set<MemoryActionType>([
+      "store_episode",
+      "store_note",
+      "update_note",
+      "create_artifact",
+      "summarize_node",
+      "discard",
+      "link_graph",
+    ]);
+    if (!actionTypes.has(request.action as MemoryActionType)) {
+      throw new EngramAccessInputError(
+        `memory_action_apply: invalid action ${JSON.stringify(request.action)}`,
+      );
+    }
+
+    if (this.orchestrator.config.contextCompressionActionsEnabled !== true) {
+      throw new EngramAccessInputError(
+        "memory_action_apply is disabled; enable contextCompressionActionsEnabled to use this tool",
+      );
+    }
+
+    const outcome = request.outcome ?? "skipped";
+    if (outcome !== "applied" && outcome !== "skipped" && outcome !== "failed") {
+      throw new EngramAccessInputError(
+        `memory_action_apply: outcome must be "applied", "skipped", or "failed"; got ${JSON.stringify(outcome)}`,
+      );
+    }
+
+    const resolvedNs = this.resolveWritableNamespace(
+      request.namespace,
+      request.sessionKey,
+      request.principal,
+    );
+    const inputSummaryParts = [
+      request.content,
+      request.category ? `category=${request.category}` : undefined,
+      request.linkTargetId ? `linkTargetId=${request.linkTargetId}` : undefined,
+      request.linkType ? `linkType=${request.linkType}` : undefined,
+      typeof request.linkStrength === "number"
+        ? `linkStrength=${request.linkStrength}`
+        : undefined,
+      request.artifactType ? `artifactType=${request.artifactType}` : undefined,
+      typeof request.execute === "boolean" ? `execute=${request.execute}` : undefined,
+    ].filter((part): part is string => typeof part === "string" && part.length > 0);
+
+    const event = {
+      action: request.action as MemoryActionType,
+      outcome: outcome as MemoryActionOutcome,
+      namespace: resolvedNs,
+      actor: "access.memory_action_apply",
+      subsystem: "access.memory_action_apply",
+      reason: request.reason,
+      memoryId: request.memoryId,
+      sourceSessionKey: request.sessionKey,
+      inputSummary: inputSummaryParts.length > 0
+        ? inputSummaryParts.join(" | ").slice(0, 500)
+        : undefined,
+      dryRun: request.dryRun === true,
+      promptHash:
+        typeof request.sourcePrompt === "string" && request.sourcePrompt.length > 0
+          ? createHash("sha256").update(request.sourcePrompt).digest("hex")
+          : undefined,
+    };
+    const preview = this.orchestrator.previewMemoryActionEvent(event);
+    if (request.dryRun === true) {
+      return { recorded: false, dryRun: true, event: preview };
+    }
+
+    const recorded = await this.orchestrator.appendMemoryActionEvent(event);
+    return { recorded, event: preview };
   }
 
   async contextCheckpoint(request: {

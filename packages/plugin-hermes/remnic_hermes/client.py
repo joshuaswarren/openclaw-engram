@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -40,6 +41,21 @@ class RemnicClient:
             },
         )
 
+    async def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        resp = await self._http.post(path, json=payload)
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
+
+    async def _get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        clean_params = {
+            key: value
+            for key, value in (params or {}).items()
+            if value is not None
+        }
+        resp = await self._http.get(path, params=clean_params)
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
+
     async def _mcp_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self._mcp_request_id += 1
         resp = await self._http.post(
@@ -55,7 +71,10 @@ class RemnicClient:
             },
         )
         resp.raise_for_status()
-        return resp.json()  # type: ignore[no-any-return]
+        payload = resp.json()
+        if "error" in payload:
+            raise RuntimeError(str(payload["error"]))
+        return payload.get("result", payload)  # type: ignore[no-any-return]
 
     async def recall(
         self,
@@ -72,34 +91,24 @@ class RemnicClient:
         }
         if mode:
             body["mode"] = mode
-        resp = await self._http.post(
-            "/recall",
-            json=body,
-        )
-        resp.raise_for_status()
-        return resp.json()  # type: ignore[no-any-return]
+        return await self._post_json("/recall", body)
 
     async def observe(
         self,
         session_key: str,
         messages: list[dict[str, str]],
+        **kwargs: Any,
     ) -> dict[str, Any]:
-        resp = await self._http.post(
+        return await self._post_json(
             "/observe",
-            json={"sessionKey": session_key, "messages": messages},
+            {"sessionKey": session_key, "messages": messages, **kwargs},
         )
-        resp.raise_for_status()
-        return resp.json()  # type: ignore[no-any-return]
 
     async def store(self, content: str, **kwargs: Any) -> dict[str, Any]:
-        resp = await self._http.post("/memories", json={"content": content, **kwargs})
-        resp.raise_for_status()
-        return resp.json()  # type: ignore[no-any-return]
+        return await self._post_json("/memories", {"content": content, **kwargs})
 
     async def search(self, query: str, *, top_k: int = 10) -> dict[str, Any]:
-        resp = await self._http.post("/search", json={"query": query, "topK": top_k})
-        resp.raise_for_status()
-        return resp.json()  # type: ignore[no-any-return]
+        return await self._post_json("/search", {"query": query, "topK": top_k})
 
     async def lcm_search(
         self,
@@ -116,9 +125,7 @@ class RemnicClient:
             body["namespace"] = namespace
         if limit is not None:
             body["limit"] = limit
-        resp = await self._http.post("/lcm/search", json=body)
-        resp.raise_for_status()
-        return resp.json()  # type: ignore[no-any-return]
+        return await self._post_json("/lcm/search", body)
 
     async def recall_explain(self, **kwargs: Any) -> dict[str, Any]:
         return await self._mcp_tool("engram.recall_explain", kwargs)
@@ -151,9 +158,43 @@ class RemnicClient:
         )
 
     async def health(self) -> dict[str, Any]:
-        resp = await self._http.get("/health")
-        resp.raise_for_status()
-        return resp.json()  # type: ignore[no-any-return]
+        return await self._get_json("/health")
+
+    async def memory_get(self, memory_id: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._get_json(f"/memories/{quote(memory_id, safe='')}", kwargs)
+
+    async def memory_store(self, content: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._post_json("/memories", {"content": content, **kwargs})
+
+    async def memory_timeline(self, memory_id: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._get_json(f"/memories/{quote(memory_id, safe='')}/timeline", kwargs)
+
+    async def memory_entities(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_entities_list", kwargs)
+
+    async def entity_get(self, name: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._get_json(f"/entities/{quote(name, safe='')}", kwargs)
+
+    async def memory_profile(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_profile", kwargs)
+
+    async def memory_questions(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_questions", kwargs)
+
+    async def memory_identity(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_identity", kwargs)
+
+    async def memory_promote(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_promote", kwargs)
+
+    async def memory_outcome(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_outcome", kwargs)
+
+    async def memory_capture(self, content: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_store", {"content": content, **kwargs})
+
+    async def memory_action_apply(self, action: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_action_apply", {"action": action, **kwargs})
 
     async def close(self) -> None:
         await self._http.aclose()

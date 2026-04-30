@@ -1563,6 +1563,12 @@ export class EngramAccessHttpServer {
       typeof toolArgs === "object" &&
       !Array.isArray(toolArgs) &&
       (toolArgs as { dryRun?: unknown }).dryRun === true;
+    const memoryActionApplyDryRun =
+      (toolName === "engram.memory_action_apply" || toolName === "remnic.memory_action_apply") &&
+      toolArgs !== null &&
+      typeof toolArgs === "object" &&
+      !Array.isArray(toolArgs) &&
+      (toolArgs as { dryRun?: unknown }).dryRun === true;
     const isMcpWrite =
       request.method === "tools/call" &&
       (
@@ -1579,6 +1585,13 @@ export class EngramAccessHttpServer {
         (
           !dreamsRunDryRun &&
           (toolName === "engram.dreams_run" || toolName === "remnic.dreams_run")
+        ) ||
+        (
+          !memoryActionApplyDryRun &&
+          (
+            toolName === "engram.memory_action_apply" ||
+            toolName === "remnic.memory_action_apply"
+          )
         )
       );
     if (isMcpWrite) {
