@@ -1,12 +1,11 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import os from "node:os";
 import { log } from "../logger.js";
 import { sanitizeMemoryContent } from "../sanitize.js";
 import { StorageManager } from "../storage.js";
 import type { ContinuityIncidentRecord, PluginConfig } from "../types.js";
-import { SharedFeedbackEntrySchema, type SharedFeedbackEntry } from "../shared-context/manager.js";
+import { resolveSharedContextDir, SharedFeedbackEntrySchema, type SharedFeedbackEntry } from "../shared-context/manager.js";
 import { parseContinuityImprovementLoops } from "../identity-continuity.js";
 
 type MistakesFile = {
@@ -407,13 +406,6 @@ function monthIdFromIsoWeek(weekId: string): string {
   return isoMonthId(monday);
 }
 
-function sharedContextDir(config: PluginConfig): string {
-  if (typeof config.sharedContextDir === "string" && config.sharedContextDir.length > 0) {
-    return config.sharedContextDir;
-  }
-  return path.join(os.homedir(), ".openclaw", "workspace", "shared-context");
-}
-
 function cadenceStaleWindowMs(cadence: "daily" | "weekly" | "monthly" | "quarterly"): number {
   switch (cadence) {
     case "daily":
@@ -453,7 +445,7 @@ export class CompoundingEngine {
     this.rubricsWorkflowsDir = path.join(this.rubricsDir, "workflows");
     this.rubricsPath = path.join(config.memoryDir, "compounding", "rubrics.md");
     this.mistakesPath = path.join(config.memoryDir, "compounding", "mistakes.json");
-    this.feedbackInboxPath = path.join(sharedContextDir(config), "feedback", "inbox.jsonl");
+    this.feedbackInboxPath = path.join(resolveSharedContextDir(config), "feedback", "inbox.jsonl");
     this.identityAuditWeeklyDir = path.join(config.memoryDir, "identity", "audits", "weekly");
     this.identityAuditMonthlyDir = path.join(config.memoryDir, "identity", "audits", "monthly");
     this.memoryActionEventsPath = path.join(config.memoryDir, "state", "memory-actions.jsonl");

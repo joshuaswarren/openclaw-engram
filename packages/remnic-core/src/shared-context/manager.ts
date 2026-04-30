@@ -1,9 +1,9 @@
 import { mkdir, readFile, readdir, appendFile, writeFile, stat } from "node:fs/promises";
 import path from "node:path";
-import os from "node:os";
 import { z } from "zod";
 import { log } from "../logger.js";
 import type { PluginConfig } from "../types.js";
+import { expandTildePath } from "../utils/path.js";
 
 export const SharedFeedbackEntrySchema = z.object({
   agent: z.string().min(1),
@@ -335,6 +335,12 @@ function formatOverlapLine(entry: SharedCrossSignalOverlap): string {
   return `- \`${entry.token}\` (${entry.agentCount} agents: ${entry.agents.join(", ")}) [sources: ${entry.sourcePaths.join(", ")}]`;
 }
 
+export function resolveSharedContextDir(config: PluginConfig): string {
+  return typeof config.sharedContextDir === "string" && config.sharedContextDir.length > 0
+    ? expandTildePath(config.sharedContextDir)
+    : path.join(expandTildePath(config.workspaceDir), "shared-context");
+}
+
 export class SharedContextManager {
   readonly dir: string;
   private readonly prioritiesPath: string;
@@ -346,10 +352,7 @@ export class SharedContextManager {
   private readonly crossSignalsDir: string;
 
   constructor(private readonly config: PluginConfig) {
-    const base =
-      typeof config.sharedContextDir === "string" && config.sharedContextDir.length > 0
-        ? config.sharedContextDir
-        : path.join(os.homedir(), ".openclaw", "workspace", "shared-context");
+    const base = resolveSharedContextDir(config);
 
     this.dir = base;
     this.prioritiesPath = path.join(base, "priorities.md");
