@@ -99,5 +99,5 @@ async def test_issue_812_provider_handlers_return_not_connected_before_initializ
     assert await provider.procedure_mining_run() == {"error": "Not connected to Remnic"}
     assert await provider.procedural_stats() == {"error": "Not connected to Remnic"}
     assert await provider.contradiction_scan_run() == {"error": "Not connected to Remnic"}
-    assert await provider.memory_summarize_hourly() == {"error": "Not connected to Remnic"}
+    assert await provider.memory_summarize_hourly(framework_metadata=True) == {"error": "Not connected to Remnic"}
     assert await provider.conversation_index_update() == {"error": "Not connected to Remnic"}

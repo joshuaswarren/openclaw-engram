@@ -1388,7 +1388,7 @@ class RemnicMemoryProvider:
             return {"error": "Not connected to Remnic"}
         return await self._client.contradiction_scan_run(**kwargs)
 
-    async def memory_summarize_hourly(self) -> dict[str, Any]:
+    async def memory_summarize_hourly(self, **kwargs: Any) -> dict[str, Any]:
         if not self._client:
             return {"error": "Not connected to Remnic"}
         return await self._client.memory_summarize_hourly()
