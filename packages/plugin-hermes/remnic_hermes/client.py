@@ -275,6 +275,30 @@ class RemnicClient:
     async def work_board(self, action: str, **kwargs: Any) -> dict[str, Any]:
         return await self._mcp_tool("engram.work_board", {"action": action, **kwargs})
 
+    async def shared_context_write_output(self, agent_id: str, title: str, content: str) -> dict[str, Any]:
+        return await self._mcp_tool(
+            "engram.shared_context_write_output",
+            {"agentId": agent_id, "title": title, "content": content},
+        )
+
+    async def shared_feedback_record(self, agent: str, decision: str, reason: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool(
+            "engram.shared_feedback_record",
+            {"agent": agent, "decision": decision, "reason": reason, **kwargs},
+        )
+
+    async def shared_priorities_append(self, agent_id: str, text: str) -> dict[str, Any]:
+        return await self._mcp_tool(
+            "engram.shared_priorities_append",
+            {"agentId": agent_id, "text": text},
+        )
+
+    async def shared_context_cross_signals_run(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.shared_context_cross_signals_run", kwargs)
+
+    async def shared_context_curate_daily(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.shared_context_curate_daily", kwargs)
+
     async def close(self) -> None:
         await self._http.aclose()
 

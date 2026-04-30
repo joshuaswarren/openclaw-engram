@@ -35,6 +35,13 @@ _WORK_BOARD_TOOL_SUFFIXES = [
     "work_project",
     "work_board",
 ]
+_SHARED_CONTEXT_TOOL_SUFFIXES = [
+    "shared_context_write_output",
+    "shared_feedback_record",
+    "shared_priorities_append",
+    "shared_context_cross_signals_run",
+    "shared_context_curate_daily",
+]
 
 
 def _populate_provider_mock(provider):  # type: ignore[no-untyped-def]
@@ -63,6 +70,10 @@ def _populate_provider_mock(provider):  # type: ignore[no-untyped-def]
         setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
         setattr(provider, suffix, object())
     for suffix in _WORK_BOARD_TOOL_SUFFIXES:
+        setattr(provider, f"{suffix}_schema", {"name": f"remnic_{suffix}"})
+        setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
+        setattr(provider, suffix, object())
+    for suffix in _SHARED_CONTEXT_TOOL_SUFFIXES:
         setattr(provider, f"{suffix}_schema", {"name": f"remnic_{suffix}"})
         setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
         setattr(provider, suffix, object())
@@ -105,6 +116,8 @@ def test_register_prefers_remnic_config_key():
     assert "engram_review_queue_list" in registered_tools
     assert "remnic_work_task" in registered_tools
     assert "engram_work_task" in registered_tools
+    assert "remnic_shared_context_write_output" in registered_tools
+    assert "engram_shared_context_write_output" in registered_tools
 
 
 def test_register_falls_back_to_engram_config_key():

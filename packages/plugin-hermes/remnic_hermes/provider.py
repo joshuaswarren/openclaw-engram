@@ -50,6 +50,8 @@ _WORK_TASK_PRIORITIES = ["low", "medium", "high"]
 _WORK_PROJECT_ACTIONS = ["create", "get", "list", "update", "delete", "link_task"]
 _WORK_PROJECT_STATUSES = ["active", "on_hold", "completed", "archived"]
 _WORK_BOARD_ACTIONS = ["export_markdown", "export_snapshot", "import_snapshot"]
+_SHARED_FEEDBACK_DECISIONS = ["approved", "approved_with_feedback", "rejected"]
+_SHARED_FEEDBACK_SEVERITIES = ["low", "medium", "high"]
 
 
 def _schema(
@@ -836,6 +838,84 @@ class RemnicMemoryProvider:
         "Export/import Engram work-layer board snapshots and markdown.",
     )
 
+    # -- Issue #809 shared context / peer modeling tool schemas --
+
+    shared_context_write_output_schema = _schema(
+        "remnic_shared_context_write_output",
+        "Write agent work product into the shared-context directory.",
+        {
+            "agentId": {"type": "string", "description": "Agent ID producing this output."},
+            "title": {"type": "string", "description": "Short title for the output."},
+            "content": {"type": "string", "description": "Markdown content to write."},
+        },
+        ["agentId", "title", "content"],
+    )
+    shared_feedback_record_schema = _schema(
+        "remnic_shared_feedback_record",
+        "Append an approval/rejection decision into the shared-context feedback inbox.",
+        {
+            "agent": {"type": "string", "description": "Agent name that produced the output."},
+            "decision": {"type": "string", "enum": _SHARED_FEEDBACK_DECISIONS},
+            "reason": {"type": "string"},
+            "date": {"type": "string", "description": "ISO timestamp. Defaults to now."},
+            "learning": {"type": "string"},
+            "outcome": {"type": "string"},
+            "severity": {"type": "string", "enum": _SHARED_FEEDBACK_SEVERITIES},
+            "confidence": {"type": "number", "description": "Confidence 0-1."},
+            "workflow": {"type": "string"},
+            "tags": _STRING_ARRAY,
+            "evidenceWindowStart": {"type": "string"},
+            "evidenceWindowEnd": {"type": "string"},
+            "refs": _STRING_ARRAY,
+        },
+        ["agent", "decision", "reason"],
+    )
+    shared_priorities_append_schema = _schema(
+        "remnic_shared_priorities_append",
+        "Append priorities text into the shared-context inbox.",
+        {
+            "agentId": {"type": "string"},
+            "text": {"type": "string", "description": "Priority notes (markdown)."},
+        },
+        ["agentId", "text"],
+    )
+    shared_context_cross_signals_run_schema = _schema(
+        "remnic_shared_context_cross_signals_run",
+        "Generate cross-signal markdown and JSON artifacts.",
+        {"date": {"type": "string", "description": "YYYY-MM-DD. Defaults to today."}},
+    )
+    shared_context_curate_daily_schema = _schema(
+        "remnic_shared_context_curate_daily",
+        "Generate a daily roundtable summary.",
+        {"date": {"type": "string", "description": "YYYY-MM-DD. Defaults to today."}},
+    )
+
+    legacy_shared_context_write_output_schema = _legacy_schema(
+        shared_context_write_output_schema,
+        "engram_shared_context_write_output",
+        "Write agent work product into the Engram shared-context directory.",
+    )
+    legacy_shared_feedback_record_schema = _legacy_schema(
+        shared_feedback_record_schema,
+        "engram_shared_feedback_record",
+        "Append an approval/rejection decision into the Engram shared-context feedback inbox.",
+    )
+    legacy_shared_priorities_append_schema = _legacy_schema(
+        shared_priorities_append_schema,
+        "engram_shared_priorities_append",
+        "Append priorities text into the Engram shared-context inbox.",
+    )
+    legacy_shared_context_cross_signals_run_schema = _legacy_schema(
+        shared_context_cross_signals_run_schema,
+        "engram_shared_context_cross_signals_run",
+        "Generate Engram cross-signal markdown and JSON artifacts.",
+    )
+    legacy_shared_context_curate_daily_schema = _legacy_schema(
+        shared_context_curate_daily_schema,
+        "engram_shared_context_curate_daily",
+        "Generate an Engram daily roundtable summary.",
+    )
+
     async def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
         """Tool handler for remnic_recall / engram_recall."""
         if not self._client:
@@ -1079,6 +1159,51 @@ class RemnicMemoryProvider:
         if not self._client:
             return {"error": "Not connected to Remnic"}
         return await self._client.work_board(action=action, **kwargs)
+
+    async def shared_context_write_output(
+        self,
+        agentId: str,  # noqa: N803
+        title: str,
+        content: str,
+    ) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.shared_context_write_output(
+            agent_id=agentId,
+            title=title,
+            content=content,
+        )
+
+    async def shared_feedback_record(
+        self,
+        agent: str,
+        decision: str,
+        reason: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.shared_feedback_record(
+            agent=agent,
+            decision=decision,
+            reason=reason,
+            **kwargs,
+        )
+
+    async def shared_priorities_append(self, agentId: str, text: str) -> dict[str, Any]:  # noqa: N803
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.shared_priorities_append(agent_id=agentId, text=text)
+
+    async def shared_context_cross_signals_run(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.shared_context_cross_signals_run(**kwargs)
+
+    async def shared_context_curate_daily(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.shared_context_curate_daily(**kwargs)
 
 
 # Legacy class alias — import path compat for pre-rename consumers.
