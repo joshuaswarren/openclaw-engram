@@ -131,6 +131,29 @@ def _register_issue_806_tools(  # type: ignore[no-untyped-def]
         )
 
 
+_REVIEW_SUGGESTION_TOOLS = [
+    ("review_queue_list", "review_queue_list"),
+    ("review_list", "review_list"),
+    ("review_resolve", "review_resolve"),
+    ("suggestion_submit", "suggestion_submit"),
+]
+
+
+def _register_issue_807_tools(  # type: ignore[no-untyped-def]
+    ctx,
+    provider: RemnicMemoryProvider,
+    prefix: str,
+    legacy: bool = False,
+):
+    schema_prefix = "legacy_" if legacy else ""
+    for tool_suffix, handler_name in _REVIEW_SUGGESTION_TOOLS:
+        ctx.register_tool(
+            f"{prefix}_{tool_suffix}",
+            getattr(provider, f"{schema_prefix}{tool_suffix}_schema"),
+            getattr(provider, handler_name),
+        )
+
+
 def register(ctx):  # type: ignore[no-untyped-def]
     """Hermes plugin entry point. Registers the MemoryProvider and explicit tools."""
     config = ctx.config.get("remnic")
@@ -150,6 +173,7 @@ def register(ctx):  # type: ignore[no-untyped-def]
     _register_recall_debug_tools(ctx, provider, "remnic")
     _register_issue_805_tools(ctx, provider, "remnic")
     _register_issue_806_tools(ctx, provider, "remnic")
+    _register_issue_807_tools(ctx, provider, "remnic")
 
     # Legacy tool aliases — existing Hermes configs may reference the engram_*
     # names. Keep them wired until the compat window closes.
@@ -162,3 +186,4 @@ def register(ctx):  # type: ignore[no-untyped-def]
     _register_recall_debug_tools(ctx, provider, "engram", legacy=True)
     _register_issue_805_tools(ctx, provider, "engram", legacy=True)
     _register_issue_806_tools(ctx, provider, "engram", legacy=True)
+    _register_issue_807_tools(ctx, provider, "engram", legacy=True)

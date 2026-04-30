@@ -148,6 +148,10 @@ The plugin searches for a `connector: "hermes"` entry first, then falls back to 
 | `remnic_continuity_loop_review` | Review an existing continuity improvement loop |
 | `remnic_identity_anchor_get` | Read the identity continuity anchor |
 | `remnic_identity_anchor_update` | Conservatively merge identity anchor sections |
+| `remnic_review_queue_list` | Fetch the latest review queue artifact bundle |
+| `remnic_review_list` | List contradiction review items |
+| `remnic_review_resolve` | Resolve a contradiction review pair |
+| `remnic_suggestion_submit` | Queue a suggested memory for review |
 
 During the Engram to Remnic compat window, legacy `engram_*` aliases are also registered for each tool. These route to the same handlers. Their schema descriptions intentionally say "Engram" (not "Remnic") so that tool names and descriptions agree when a language model surfaces the legacy names. The `engram_*` aliases will be removed in a future major release. New integrations should use the `remnic_*` names.
 
