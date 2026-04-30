@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "remnic-hermes"
-version = "1.0.1"
+version = "1.0.2"
 description = "Remnic MemoryProvider plugin for Hermes Agent"
 readme = "README.md"
 license = "MIT"
@@ -45,6 +45,7 @@ Issues = "https://github.com/joshuaswarren/remnic/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["remnic_hermes"]
+force-include = { "plugin.yaml" = "plugin.yaml" }
 
 [tool.hatch.build.targets.sdist]
 include = [
