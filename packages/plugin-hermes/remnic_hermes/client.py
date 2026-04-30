@@ -196,6 +196,64 @@ class RemnicClient:
     async def memory_action_apply(self, action: str, **kwargs: Any) -> dict[str, Any]:
         return await self._mcp_tool("engram.memory_action_apply", {"action": action, **kwargs})
 
+    async def continuity_audit_generate(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.continuity_audit_generate", kwargs)
+
+    async def continuity_incident_open(self, symptom: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.continuity_incident_open", {"symptom": symptom, **kwargs})
+
+    async def continuity_incident_close(
+        self,
+        incident_id: str,
+        *,
+        fix_applied: str,
+        verification_result: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._mcp_tool(
+            "engram.continuity_incident_close",
+            {
+                "id": incident_id,
+                "fixApplied": fix_applied,
+                "verificationResult": verification_result,
+                **kwargs,
+            },
+        )
+
+    async def continuity_incident_list(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.continuity_incident_list", kwargs)
+
+    async def continuity_loop_add_or_update(
+        self,
+        loop_id: str,
+        *,
+        cadence: str,
+        purpose: str,
+        status: str,
+        kill_condition: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._mcp_tool(
+            "engram.continuity_loop_add_or_update",
+            {
+                "id": loop_id,
+                "cadence": cadence,
+                "purpose": purpose,
+                "status": status,
+                "killCondition": kill_condition,
+                **kwargs,
+            },
+        )
+
+    async def continuity_loop_review(self, loop_id: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.continuity_loop_review", {"id": loop_id, **kwargs})
+
+    async def identity_anchor_get(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.identity_anchor_get", kwargs)
+
+    async def identity_anchor_update(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.identity_anchor_update", kwargs)
+
     async def close(self) -> None:
         await self._http.aclose()
 

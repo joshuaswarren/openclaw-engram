@@ -104,6 +104,33 @@ def _register_issue_805_tools(  # type: ignore[no-untyped-def]
     )
 
 
+_CONTINUITY_IDENTITY_TOOLS = [
+    ("continuity_audit_generate", "continuity_audit_generate"),
+    ("continuity_incident_open", "continuity_incident_open"),
+    ("continuity_incident_close", "continuity_incident_close"),
+    ("continuity_incident_list", "continuity_incident_list"),
+    ("continuity_loop_add_or_update", "continuity_loop_add_or_update"),
+    ("continuity_loop_review", "continuity_loop_review"),
+    ("identity_anchor_get", "identity_anchor_get"),
+    ("identity_anchor_update", "identity_anchor_update"),
+]
+
+
+def _register_issue_806_tools(  # type: ignore[no-untyped-def]
+    ctx,
+    provider: RemnicMemoryProvider,
+    prefix: str,
+    legacy: bool = False,
+):
+    schema_prefix = "legacy_" if legacy else ""
+    for tool_suffix, handler_name in _CONTINUITY_IDENTITY_TOOLS:
+        ctx.register_tool(
+            f"{prefix}_{tool_suffix}",
+            getattr(provider, f"{schema_prefix}{tool_suffix}_schema"),
+            getattr(provider, handler_name),
+        )
+
+
 def register(ctx):  # type: ignore[no-untyped-def]
     """Hermes plugin entry point. Registers the MemoryProvider and explicit tools."""
     config = ctx.config.get("remnic")
@@ -122,6 +149,7 @@ def register(ctx):  # type: ignore[no-untyped-def]
     )
     _register_recall_debug_tools(ctx, provider, "remnic")
     _register_issue_805_tools(ctx, provider, "remnic")
+    _register_issue_806_tools(ctx, provider, "remnic")
 
     # Legacy tool aliases — existing Hermes configs may reference the engram_*
     # names. Keep them wired until the compat window closes.
@@ -133,3 +161,4 @@ def register(ctx):  # type: ignore[no-untyped-def]
     )
     _register_recall_debug_tools(ctx, provider, "engram", legacy=True)
     _register_issue_805_tools(ctx, provider, "engram", legacy=True)
+    _register_issue_806_tools(ctx, provider, "engram", legacy=True)

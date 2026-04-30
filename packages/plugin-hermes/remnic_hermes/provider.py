@@ -39,6 +39,9 @@ _ACTION_TYPES = [
     "discard",
     "link_graph",
 ]
+_CONTINUITY_INCIDENT_STATES = ["open", "closed", "all"]
+_CONTINUITY_LOOP_CADENCES = ["daily", "weekly", "monthly", "quarterly"]
+_CONTINUITY_LOOP_STATUSES = ["active", "paused", "retired"]
 
 
 def _schema(
@@ -521,6 +524,166 @@ class RemnicMemoryProvider:
         "Apply an Engram memory action.",
     )
 
+    # -- Issue #806 continuity / identity tool schemas --
+
+    continuity_audit_generate_schema = _schema(
+        "remnic_continuity_audit_generate",
+        "Generate a deterministic identity continuity audit report.",
+        {
+            "period": {"type": "string", "enum": ["weekly", "monthly"]},
+            "key": {
+                "type": "string",
+                "description": "Period key (weekly: YYYY-Www, monthly: YYYY-MM). Defaults to current.",
+            },
+        },
+    )
+    continuity_incident_open_schema = _schema(
+        "remnic_continuity_incident_open",
+        "Create a new continuity incident record in append-only storage.",
+        {
+            "symptom": {
+                "type": "string",
+                "description": "Observed continuity failure symptom.",
+            },
+            "namespace": _NAMESPACE,
+            "triggerWindow": {
+                "type": "string",
+                "description": "Time window when incident occurred.",
+            },
+            "suspectedCause": {"type": "string"},
+        },
+        ["symptom"],
+    )
+    continuity_incident_close_schema = _schema(
+        "remnic_continuity_incident_close",
+        "Close an open continuity incident with verification details.",
+        {
+            "id": {"type": "string", "description": "Incident ID to close."},
+            "namespace": _NAMESPACE,
+            "fixApplied": {"type": "string", "description": "What fix was applied."},
+            "verificationResult": {"type": "string", "description": "How closure was verified."},
+            "preventiveRule": {"type": "string", "description": "Optional preventive follow-up rule."},
+        },
+        ["id", "fixApplied", "verificationResult"],
+    )
+    continuity_incident_list_schema = _schema(
+        "remnic_continuity_incident_list",
+        "List continuity incidents, optionally filtered by state.",
+        {
+            "state": {"type": "string", "enum": _CONTINUITY_INCIDENT_STATES},
+            "namespace": _NAMESPACE,
+            "limit": {
+                "type": "number",
+                "description": "Max incidents (default 25, max 200).",
+            },
+        },
+    )
+    continuity_loop_add_or_update_schema = _schema(
+        "remnic_continuity_loop_add_or_update",
+        "Add or update a continuity improvement loop entry.",
+        {
+            "id": {"type": "string", "description": "Stable loop identifier."},
+            "cadence": {"type": "string", "enum": _CONTINUITY_LOOP_CADENCES},
+            "purpose": {"type": "string", "description": "What this recurring loop improves."},
+            "status": {"type": "string", "enum": _CONTINUITY_LOOP_STATUSES},
+            "killCondition": {
+                "type": "string",
+                "description": "Clear condition for retiring this loop.",
+            },
+            "namespace": _NAMESPACE,
+            "lastReviewed": {
+                "type": "string",
+                "description": "ISO timestamp for last review.",
+            },
+            "notes": {"type": "string"},
+        },
+        ["id", "cadence", "purpose", "status", "killCondition"],
+    )
+    continuity_loop_review_schema = _schema(
+        "remnic_continuity_loop_review",
+        "Update review metadata for an existing continuity improvement loop.",
+        {
+            "id": {"type": "string", "description": "Loop ID to review."},
+            "namespace": _NAMESPACE,
+            "status": {"type": "string", "enum": _CONTINUITY_LOOP_STATUSES},
+            "notes": {"type": "string"},
+            "reviewedAt": {
+                "type": "string",
+                "description": "ISO timestamp for review event.",
+            },
+        },
+        ["id"],
+    )
+    identity_anchor_get_schema = _schema(
+        "remnic_identity_anchor_get",
+        "Read the identity continuity anchor document.",
+        {"namespace": _NAMESPACE},
+    )
+    identity_anchor_update_schema = _schema(
+        "remnic_identity_anchor_update",
+        "Conservatively merge identity anchor sections without overwriting existing material.",
+        {
+            "namespace": _NAMESPACE,
+            "identityTraits": {
+                "type": "string",
+                "description": "Updates for 'Identity Traits' section.",
+            },
+            "communicationPreferences": {
+                "type": "string",
+                "description": "Updates for 'Communication Preferences' section.",
+            },
+            "operatingPrinciples": {
+                "type": "string",
+                "description": "Updates for 'Operating Principles' section.",
+            },
+            "continuityNotes": {
+                "type": "string",
+                "description": "Updates for 'Continuity Notes' section.",
+            },
+        },
+    )
+
+    legacy_continuity_audit_generate_schema = _legacy_schema(
+        continuity_audit_generate_schema,
+        "engram_continuity_audit_generate",
+        "Generate a deterministic Engram identity continuity audit report.",
+    )
+    legacy_continuity_incident_open_schema = _legacy_schema(
+        continuity_incident_open_schema,
+        "engram_continuity_incident_open",
+        "Create a new Engram continuity incident record.",
+    )
+    legacy_continuity_incident_close_schema = _legacy_schema(
+        continuity_incident_close_schema,
+        "engram_continuity_incident_close",
+        "Close an open Engram continuity incident.",
+    )
+    legacy_continuity_incident_list_schema = _legacy_schema(
+        continuity_incident_list_schema,
+        "engram_continuity_incident_list",
+        "List Engram continuity incidents.",
+    )
+    legacy_continuity_loop_add_or_update_schema = _legacy_schema(
+        continuity_loop_add_or_update_schema,
+        "engram_continuity_loop_add_or_update",
+        "Add or update an Engram continuity improvement loop.",
+    )
+    legacy_continuity_loop_review_schema = _legacy_schema(
+        continuity_loop_review_schema,
+        "engram_continuity_loop_review",
+        "Update review metadata for an Engram continuity improvement loop.",
+    )
+    legacy_identity_anchor_get_schema = _legacy_schema(
+        identity_anchor_get_schema,
+        "engram_identity_anchor_get",
+        "Read the Engram identity continuity anchor document.",
+    )
+    legacy_identity_anchor_update_schema = _legacy_schema(
+        identity_anchor_update_schema,
+        "engram_identity_anchor_update",
+        "Conservatively merge Engram identity anchor sections.",
+    )
+
     async def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
         """Tool handler for remnic_recall / engram_recall."""
         if not self._client:
@@ -662,6 +825,72 @@ class RemnicMemoryProvider:
         if not self._client:
             return {"error": "Not connected to Remnic"}
         return await self._client.memory_action_apply(action=action, **kwargs)
+
+    async def continuity_audit_generate(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.continuity_audit_generate(**kwargs)
+
+    async def continuity_incident_open(self, symptom: str, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.continuity_incident_open(symptom=symptom, **kwargs)
+
+    async def continuity_incident_close(
+        self,
+        id: str,  # noqa: A002,N803
+        fixApplied: str,  # noqa: N803
+        verificationResult: str,  # noqa: N803
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.continuity_incident_close(
+            incident_id=id,
+            fix_applied=fixApplied,
+            verification_result=verificationResult,
+            **kwargs,
+        )
+
+    async def continuity_incident_list(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.continuity_incident_list(**kwargs)
+
+    async def continuity_loop_add_or_update(
+        self,
+        id: str,  # noqa: A002,N803
+        cadence: str,
+        purpose: str,
+        status: str,
+        killCondition: str,  # noqa: N803
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.continuity_loop_add_or_update(
+            loop_id=id,
+            cadence=cadence,
+            purpose=purpose,
+            status=status,
+            kill_condition=killCondition,
+            **kwargs,
+        )
+
+    async def continuity_loop_review(self, id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: A002,N803
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.continuity_loop_review(loop_id=id, **kwargs)
+
+    async def identity_anchor_get(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.identity_anchor_get(**kwargs)
+
+    async def identity_anchor_update(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.identity_anchor_update(**kwargs)
 
 
 # Legacy class alias — import path compat for pre-rename consumers.

@@ -14,6 +14,16 @@ _RECALL_DEBUG_TOOL_SUFFIXES = [
     "memory_feedback_last_recall",
     "set_coding_context",
 ]
+_CONTINUITY_IDENTITY_TOOL_SUFFIXES = [
+    "continuity_audit_generate",
+    "continuity_incident_open",
+    "continuity_incident_close",
+    "continuity_incident_list",
+    "continuity_loop_add_or_update",
+    "continuity_loop_review",
+    "identity_anchor_get",
+    "identity_anchor_update",
+]
 
 
 def _populate_provider_mock(provider):  # type: ignore[no-untyped-def]
@@ -30,6 +40,10 @@ def _populate_provider_mock(provider):  # type: ignore[no-untyped-def]
     provider.legacy_lcm_search_schema = {"name": "engram_lcm_search"}
     provider.lcm_search = object()
     for suffix in _RECALL_DEBUG_TOOL_SUFFIXES:
+        setattr(provider, f"{suffix}_schema", {"name": f"remnic_{suffix}"})
+        setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
+        setattr(provider, suffix, object())
+    for suffix in _CONTINUITY_IDENTITY_TOOL_SUFFIXES:
         setattr(provider, f"{suffix}_schema", {"name": f"remnic_{suffix}"})
         setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
         setattr(provider, suffix, object())
@@ -66,6 +80,8 @@ def test_register_prefers_remnic_config_key():
     assert "engram_lcm_search" in registered_tools
     assert "remnic_recall_explain" in registered_tools
     assert "engram_recall_explain" in registered_tools
+    assert "remnic_continuity_incident_open" in registered_tools
+    assert "engram_continuity_incident_open" in registered_tools
 
 
 def test_register_falls_back_to_engram_config_key():

@@ -140,6 +140,14 @@ The plugin searches for a `connector: "hermes"` entry first, then falls back to 
 | `remnic_entity_get` | Fetch one tracked entity by name |
 | `remnic_memory_capture` | Capture an explicit memory note |
 | `remnic_memory_action_apply` | Apply a memory action |
+| `remnic_continuity_audit_generate` | Generate a continuity audit report |
+| `remnic_continuity_incident_open` | Open a continuity incident |
+| `remnic_continuity_incident_close` | Close a continuity incident with verification |
+| `remnic_continuity_incident_list` | List continuity incidents by state |
+| `remnic_continuity_loop_add_or_update` | Add or update a continuity improvement loop |
+| `remnic_continuity_loop_review` | Review an existing continuity improvement loop |
+| `remnic_identity_anchor_get` | Read the identity continuity anchor |
+| `remnic_identity_anchor_update` | Conservatively merge identity anchor sections |
 
 During the Engram to Remnic compat window, legacy `engram_*` aliases are also registered for each tool. These route to the same handlers. Their schema descriptions intentionally say "Engram" (not "Remnic") so that tool names and descriptions agree when a language model surfaces the legacy names. The `engram_*` aliases will be removed in a future major release. New integrations should use the `remnic_*` names.
 
