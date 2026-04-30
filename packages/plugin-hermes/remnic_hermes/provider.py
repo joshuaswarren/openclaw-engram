@@ -64,7 +64,7 @@ def _legacy_schema(schema: dict[str, Any], name: str, description: str) -> dict[
 
 
 class RemnicMemoryProvider:
-    """MemoryProvider that delegates to the Remnic daemon via HTTP.
+    """MemoryProvider that delegates to the Remnic daemon via HTTP."""
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         cfg = RemnicHermesConfig.from_hermes_config(config or {})

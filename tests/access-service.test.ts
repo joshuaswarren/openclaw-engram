@@ -106,6 +106,60 @@ function createService(dreamsPhases = dreamsPhasesConfig()) {
   return new EngramAccessService(orchestrator as any);
 }
 
+function createMemoryActionService(contextCompressionActionsEnabled: boolean) {
+  const capturedEvents: any[] = [];
+  const service = new EngramAccessService({
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: false,
+      defaultNamespace: "global",
+      contextCompressionActionsEnabled,
+    },
+    previewMemoryActionEvent: (event: any) => ({
+      timestamp: "2026-04-30T00:00:00.000Z",
+      namespace: event.namespace ?? "global",
+      ...event,
+    }),
+    appendMemoryActionEvent: async (event: any) => {
+      capturedEvents.push(event);
+      return true;
+    },
+  } as any);
+  return { service, capturedEvents };
+}
+
+test("memoryActionApply is gated by context compression actions", async () => {
+  const { service, capturedEvents } = createMemoryActionService(false);
+
+  await assert.rejects(
+    () => service.memoryActionApply({ action: "store_note", content: "Remember this." }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /contextCompressionActionsEnabled/.test(err.message),
+  );
+  assert.equal(capturedEvents.length, 0);
+});
+
+test("memoryActionApply defaults missing outcome to skipped and preserves action fields", async () => {
+  const { service, capturedEvents } = createMemoryActionService(true);
+
+  const result = await service.memoryActionApply({
+    action: "store_note",
+    content: "Remember this.",
+    category: "fact",
+    execute: true,
+    sourcePrompt: "Please remember this fact.",
+  }) as { recorded: boolean; event: { outcome: string; inputSummary?: string } };
+
+  assert.equal(result.recorded, true);
+  assert.equal(result.event.outcome, "skipped");
+  assert.equal(capturedEvents[0]?.outcome, "skipped");
+  assert.match(capturedEvents[0]?.inputSummary ?? "", /category=fact/);
+  assert.match(capturedEvents[0]?.inputSummary ?? "", /execute=true/);
+  assert.equal(typeof capturedEvents[0]?.promptHash, "string");
+  assert.equal(capturedEvents[0]?.promptHash.length, 64);
+});
+
 test("dreamsRun rejects deepSleep when the phase is explicitly disabled", async () => {
   const service = createService(dreamsPhasesConfig(false, true));
 

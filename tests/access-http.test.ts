@@ -2157,6 +2157,10 @@ test("access HTTP server rate-limits MCP write tool calls", async () => {
         durationMs: 1,
         itemsProcessed: 1,
       }),
+      memoryActionApply: async ({ dryRun }: { dryRun?: boolean }) => ({
+        recorded: dryRun !== true,
+        dryRun: dryRun === true,
+      }),
     } as unknown as EngramAccessService,
     host: "127.0.0.1",
     port: 0,
@@ -2224,6 +2228,40 @@ test("access HTTP server rate-limits MCP write tool calls", async () => {
       result: { structuredContent: { dryRun: boolean } };
     };
     assert.equal(previewPayload.result.structuredContent.dryRun, true);
+
+    const previewMemoryAction = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1004,
+        method: "tools/call",
+        params: {
+          name: "engram.memory_action_apply",
+          arguments: { action: "store_note", dryRun: true },
+        },
+      }),
+    });
+    assert.equal(previewMemoryAction.status, 200);
+    const previewMemoryActionPayload = await previewMemoryAction.json() as {
+      result: { structuredContent: { dryRun: boolean } };
+    };
+    assert.equal(previewMemoryActionPayload.result.structuredContent.dryRun, true);
+
+    const limitedMemoryAction = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1005,
+        method: "tools/call",
+        params: {
+          name: "engram.memory_action_apply",
+          arguments: { action: "store_note" },
+        },
+      }),
+    });
+    assert.equal(limitedMemoryAction.status, 429);
 
     const limitedDreamsRun = await fetch(`${base}/mcp`, {
       method: "POST",

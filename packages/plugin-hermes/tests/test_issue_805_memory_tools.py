@@ -85,8 +85,8 @@ async def test_issue_805_client_methods_call_daemon_surfaces() -> None:
         {"name": "engram.memory_identity", "arguments": {"namespace": "ns"}},
         {"name": "engram.memory_promote", "arguments": {"memoryId": "fact-1", "sessionKey": "hermes-session"}},
         {"name": "engram.memory_outcome", "arguments": {"memoryId": "fact-1", "outcome": "success"}},
-        {"name": "memory_capture", "arguments": {"content": "capture me", "category": "fact"}},
-        {"name": "memory_action_apply", "arguments": {"action": "store_note", "content": "note"}},
+        {"name": "engram.memory_store", "arguments": {"content": "capture me", "category": "fact"}},
+        {"name": "engram.memory_action_apply", "arguments": {"action": "store_note", "content": "note"}},
     ]
 
 
