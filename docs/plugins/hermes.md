@@ -279,7 +279,7 @@ No upstream Hermes feature request is needed from this audit: each OpenClaw life
 | `remnic_continuity_audit_generate` | `namespace?: string` and audit options | Generate a continuity audit report |
 | `remnic_continuity_incident_open` | `symptom: string`, plus incident metadata | Open a continuity incident |
 | `remnic_continuity_incident_close` | `id: string`, `fixApplied: string`, `verificationResult: string` | Close a continuity incident with verification |
-| `remnic_continuity_incident_list` | `status?: string`, `namespace?: string` | List continuity incidents by state |
+| `remnic_continuity_incident_list` | `state?: open|closed|all`, `namespace?: string` | List continuity incidents by state |
 | `remnic_continuity_loop_add_or_update` | `id: string`, `cadence: string`, `purpose: string`, `status: string`, `killCondition: string` | Add or update a continuity improvement loop |
 | `remnic_continuity_loop_review` | `id: string` | Review an existing continuity improvement loop |
 | `remnic_identity_anchor_get` | `namespace?: string` | Read the identity continuity anchor |
