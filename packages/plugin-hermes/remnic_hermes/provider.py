@@ -1050,6 +1050,55 @@ class RemnicMemoryProvider:
         "Chunk Engram transcript history into conversation-index documents.",
     )
 
+    # -- Issue #813 context recap tool schemas --
+
+    day_summary_schema = _schema(
+        "remnic_day_summary",
+        "Generate a structured end-of-day summary.",
+        {
+            "memories": {"type": "string"},
+            "sessionKey": {"type": "string"},
+            "namespace": _NAMESPACE,
+        },
+    )
+    briefing_schema = _schema(
+        "remnic_briefing",
+        "Generate a daily context briefing.",
+        {
+            "since": {"type": "string", "description": "Lookback window, e.g. yesterday, 3d, 1w, or 24h."},
+            "focus": {"type": "string", "description": "Optional filter, e.g. person:Jane Doe or project:remnic."},
+            "namespace": _NAMESPACE,
+            "format": {"type": "string", "enum": ["markdown", "json"]},
+            "maxFollowups": {"type": "number"},
+        },
+    )
+    context_checkpoint_schema = _schema(
+        "remnic_context_checkpoint",
+        "Save a structured context checkpoint for a session.",
+        {
+            "sessionKey": {"type": "string"},
+            "context": {"type": "string"},
+            "namespace": _NAMESPACE,
+        },
+        ["sessionKey", "context"],
+    )
+
+    legacy_day_summary_schema = _legacy_schema(
+        day_summary_schema,
+        "engram_day_summary",
+        "Generate a structured Engram end-of-day summary.",
+    )
+    legacy_briefing_schema = _legacy_schema(
+        briefing_schema,
+        "engram_briefing",
+        "Generate an Engram daily context briefing.",
+    )
+    legacy_context_checkpoint_schema = _legacy_schema(
+        context_checkpoint_schema,
+        "engram_context_checkpoint",
+        "Save a structured Engram context checkpoint for a session.",
+    )
+
     async def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
         """Tool handler for remnic_recall / engram_recall."""
         if not self._client:
@@ -1397,6 +1446,30 @@ class RemnicMemoryProvider:
         if not self._client:
             return {"error": "Not connected to Remnic"}
         return await self._client.conversation_index_update(**kwargs)
+
+    async def day_summary(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.day_summary(**kwargs)
+
+    async def briefing(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.briefing(**kwargs)
+
+    async def context_checkpoint(
+        self,
+        sessionKey: str,  # noqa: N803
+        context: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.context_checkpoint(
+            session_key=sessionKey,
+            context=context,
+            **kwargs,
+        )
 
 
 # Legacy class alias — import path compat for pre-rename consumers.

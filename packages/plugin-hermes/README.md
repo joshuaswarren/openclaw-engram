@@ -170,6 +170,9 @@ The plugin searches for a `connector: "hermes"` entry first, then falls back to 
 | `remnic_contradiction_scan_run` | Run an on-demand contradiction scan |
 | `remnic_memory_summarize_hourly` | Generate hourly conversation summaries |
 | `remnic_conversation_index_update` | Update the conversation index |
+| `remnic_day_summary` | Generate a structured end-of-day summary |
+| `remnic_briefing` | Generate a daily context briefing |
+| `remnic_context_checkpoint` | Save a structured context checkpoint for a session |
 
 During the Engram to Remnic compat window, legacy `engram_*` aliases are also registered for each tool. These route to the same handlers. Their schema descriptions intentionally say "Engram" (not "Remnic") so that tool names and descriptions agree when a language model surfaces the legacy names. The `engram_*` aliases will be removed in a future major release. New integrations should use the `remnic_*` names.
 
