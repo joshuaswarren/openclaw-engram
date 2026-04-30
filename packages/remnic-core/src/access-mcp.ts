@@ -2357,7 +2357,7 @@ export class EngramMcpServer {
         return this.service.conversationIndexUpdate({
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
           hours: typeof args.hours === "number" && Number.isFinite(args.hours) ? args.hours : undefined,
-          embed: args.embed === true,
+          embed: typeof args.embed === "boolean" ? args.embed : undefined,
         });
       case "engram.graph_edge_decay_run":
       case "remnic.graph_edge_decay_run": {
