@@ -63,7 +63,6 @@ class RemnicMemoryProvider:
                 query=query,
                 session_key=self._session_key,
                 top_k=8,
-                mode="minimal",
             )
             context = result.get("context", "")
             count = result.get("count", 0)
@@ -149,6 +148,21 @@ class RemnicMemoryProvider:
             "required": ["query"],
         },
     }
+    lcm_search_schema = {
+        "name": "remnic_lcm_search",
+        "description": "Search the daemon-side Lossless Context Management conversation archive",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "sessionKey": {"type": "string", "description": "Optional session filter"},
+                "namespace": {"type": "string"},
+                "limit": {"type": "number", "description": "Max results to return"},
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    }
 
     # Legacy schemas — same handlers, engram_* tool names. Kept so existing
     # Hermes configs that reference engram_recall / engram_store / engram_search
@@ -170,6 +184,11 @@ class RemnicMemoryProvider:
         "name": "engram_search",
         "description": "Full-text search across all Engram memories",
     }
+    legacy_lcm_search_schema = {
+        **lcm_search_schema,
+        "name": "engram_lcm_search",
+        "description": "Search the daemon-side Engram Lossless Context Management conversation archive",
+    }
 
     async def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
         """Tool handler for remnic_recall / engram_recall."""
@@ -188,6 +207,24 @@ class RemnicMemoryProvider:
         if not self._client:
             return {"error": "Not connected to Remnic"}
         return await self._client.search(query=query)
+
+    async def lcm_search(
+        self,
+        query: str,
+        sessionKey: str = "",
+        namespace: str | None = None,
+        limit: int | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Tool handler for remnic_lcm_search / engram_lcm_search."""
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.lcm_search(
+            query=query,
+            session_key=sessionKey or self._session_key,
+            namespace=namespace,
+            limit=limit,
+        )
 
 
 # Legacy class alias — import path compat for pre-rename consumers.

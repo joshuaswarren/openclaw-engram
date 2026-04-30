@@ -201,7 +201,7 @@ Called before every LLM request. Behavior:
 
 1. Scans `messages` in reverse to find the last message with `role: "user"`.
 2. **Skips recall entirely** if the user message is absent or fewer than 3 words (whitespace-split). This avoids triggering recall on very short acknowledgments like "ok" or "thanks".
-3. Issues `POST /recall` with the user message as the query, `sessionKey`, `topK: 8`, and `mode: "minimal"`.
+3. Issues `POST /recall` with the user message as the query, `sessionKey`, and `topK: 8`. The plugin leaves recall mode unset so the daemon default can include LCM compressed-history sections when `lcmEnabled: true`.
 4. If the response has a non-empty `context` field and `count > 0`, returns a `<remnic-memory count="N">` block that Hermes injects into the system prompt.
 5. Exceptions are swallowed; returns `""` on any error so the LLM call proceeds normally.
 
@@ -230,10 +230,11 @@ Closes the `httpx.AsyncClient`. Safe to call when the client was never initializ
 | `remnic_recall` | `query: string` | Recall memories from Remnic matching a natural language query |
 | `remnic_store` | `content: string` | Store a memory in Remnic for future recall |
 | `remnic_search` | `query: string` | Full-text search across all Remnic memories |
+| `remnic_lcm_search` | `query: string`, `sessionKey?: string`, `namespace?: string`, `limit?: number` | Search the daemon-side LCM conversation archive |
 
 Each tool handler returns the raw JSON response from the daemon or `{"error": "Not connected to Remnic"}` when the client is not initialized.
 
-The `remnic_*` tools give the agent explicit control for cases where automatic recall is insufficient — for example, storing a specific fact the agent has derived mid-session.
+The `remnic_*` tools give the agent explicit control for cases where automatic recall is insufficient — for example, storing a specific fact the agent has derived mid-session, or searching the LCM archive directly.
 
 ---
 
@@ -299,6 +300,7 @@ During the Engram to Remnic rebrand, the plugin registers six tools instead of t
 | `engram_recall` | Legacy alias | Routes to the same handler as `remnic_recall` |
 | `engram_store` | Legacy alias | Routes to the same handler as `remnic_store` |
 | `engram_search` | Legacy alias | Routes to the same handler as `remnic_search` |
+| `engram_lcm_search` | Legacy alias | Routes to the same handler as `remnic_lcm_search` |
 
 The legacy tool schemas deliberately describe themselves as "Engram" tools (e.g., "Recall memories from Engram..."). This is intentional: when a language model surfaces the `engram_*` names, the description must agree with the name so the model does not confuse the two tool sets. Do not update these descriptions to say "Remnic".
 

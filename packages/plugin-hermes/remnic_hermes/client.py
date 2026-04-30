@@ -44,16 +44,18 @@ class RemnicClient:
         *,
         session_key: str = "",
         top_k: int = 8,
-        mode: str = "minimal",
+        mode: str | None = None,
     ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "query": query,
+            "sessionKey": session_key,
+            "topK": top_k,
+        }
+        if mode:
+            body["mode"] = mode
         resp = await self._http.post(
             "/recall",
-            json={
-                "query": query,
-                "sessionKey": session_key,
-                "topK": top_k,
-                "mode": mode,
-            },
+            json=body,
         )
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
@@ -77,6 +79,25 @@ class RemnicClient:
 
     async def search(self, query: str, *, top_k: int = 10) -> dict[str, Any]:
         resp = await self._http.post("/search", json={"query": query, "topK": top_k})
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
+
+    async def lcm_search(
+        self,
+        query: str,
+        *,
+        session_key: str = "",
+        namespace: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"query": query}
+        if session_key:
+            body["sessionKey"] = session_key
+        if namespace:
+            body["namespace"] = namespace
+        if limit is not None:
+            body["limit"] = limit
+        resp = await self._http.post("/lcm/search", json=body)
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
 

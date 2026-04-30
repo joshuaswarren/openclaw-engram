@@ -96,6 +96,23 @@ class TestPreLlmCall:
             assert result.endswith("</remnic-memory>")
 
 
+    @pytest.mark.asyncio
+    async def test_default_recall_does_not_force_minimal_mode(self, provider):
+        """pre_llm_call should let daemon recall defaults include LCM sections."""
+        with patch("remnic_hermes.provider.RemnicClient") as MockClient:
+            instance = MockClient.return_value
+            instance.health = AsyncMock()
+            instance.recall = AsyncMock(return_value={"context": "prior", "count": 1})
+
+            await provider.initialize()
+            await provider.pre_llm_call(
+                [{"role": "user", "content": "what did we decide last week"}]
+            )
+
+            _, kwargs = instance.recall.call_args
+            assert "mode" not in kwargs
+
+
 class TestSyncTurn:
     @pytest.mark.asyncio
     async def test_no_op_without_client(self, provider):
@@ -120,6 +137,37 @@ class TestSyncTurn:
             instance.observe.assert_awaited_once()
             call_args = instance.observe.call_args
             assert len(call_args.kwargs["messages"]) == 2
+
+
+class TestLcmSearchTool:
+    def test_lcm_schema_matches_daemon_surface(self, provider):
+        schema = provider.lcm_search_schema["parameters"]
+
+        assert provider.lcm_search_schema["name"] == "remnic_lcm_search"
+        assert schema["required"] == ["query"]
+        assert schema["additionalProperties"] is False
+        assert set(schema["properties"]) == {"query", "sessionKey", "namespace", "limit"}
+
+    @pytest.mark.asyncio
+    async def test_lcm_search_handler_uses_client(self, provider):
+        client = AsyncMock()
+        client.lcm_search = AsyncMock(return_value={"count": 1, "results": []})
+        provider._client = client
+
+        result = await provider.lcm_search(
+            "archive",
+            sessionKey="explicit-session",
+            namespace="research",
+            limit=3,
+        )
+
+        assert result == {"count": 1, "results": []}
+        client.lcm_search.assert_awaited_once_with(
+            query="archive",
+            session_key="explicit-session",
+            namespace="research",
+            limit=3,
+        )
 
 
 class TestLegacyAlias:
