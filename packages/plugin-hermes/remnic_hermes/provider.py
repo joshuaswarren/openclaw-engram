@@ -44,6 +44,12 @@ _CONTINUITY_LOOP_CADENCES = ["daily", "weekly", "monthly", "quarterly"]
 _CONTINUITY_LOOP_STATUSES = ["active", "paused", "retired"]
 _REVIEW_FILTERS = ["all", "unresolved", "contradicts", "independent", "duplicates", "needs-user"]
 _REVIEW_RESOLUTION_VERBS = ["keep-a", "keep-b", "merge", "both-valid", "needs-more-context"]
+_WORK_TASK_ACTIONS = ["create", "get", "list", "update", "transition", "delete"]
+_WORK_TASK_STATUSES = ["todo", "in_progress", "blocked", "done", "cancelled"]
+_WORK_TASK_PRIORITIES = ["low", "medium", "high"]
+_WORK_PROJECT_ACTIONS = ["create", "get", "list", "update", "delete", "link_task"]
+_WORK_PROJECT_STATUSES = ["active", "on_hold", "completed", "archived"]
+_WORK_BOARD_ACTIONS = ["export_markdown", "export_snapshot", "import_snapshot"]
 
 
 def _schema(
@@ -763,6 +769,73 @@ class RemnicMemoryProvider:
         "Queue a suggested Engram memory for review.",
     )
 
+    # -- Issue #808 work boards / peer co-tracking tool schemas --
+
+    work_task_schema = _schema(
+        "remnic_work_task",
+        "Manage work-layer tasks (create, get, list, update, transition, delete).",
+        {
+            "action": {"type": "string", "enum": _WORK_TASK_ACTIONS},
+            "id": {"type": "string"},
+            "title": {"type": "string"},
+            "description": {"type": "string"},
+            "status": {"type": "string", "enum": _WORK_TASK_STATUSES},
+            "priority": {"type": "string", "enum": _WORK_TASK_PRIORITIES},
+            "owner": {"type": "string"},
+            "assignee": {"type": "string"},
+            "projectId": {"type": "string"},
+            "tags": _STRING_ARRAY,
+            "dueAt": {"type": "string"},
+        },
+        ["action"],
+    )
+    work_project_schema = _schema(
+        "remnic_work_project",
+        "Manage work-layer projects (create, get, list, update, delete, link_task).",
+        {
+            "action": {"type": "string", "enum": _WORK_PROJECT_ACTIONS},
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "status": {"type": "string", "enum": _WORK_PROJECT_STATUSES},
+            "owner": {"type": "string"},
+            "tags": _STRING_ARRAY,
+            "taskId": {"type": "string", "description": "Task ID for link_task."},
+            "projectId": {"type": "string", "description": "Project ID for link_task."},
+        },
+        ["action"],
+    )
+    work_board_schema = _schema(
+        "remnic_work_board",
+        "Export/import work-layer board snapshots and markdown.",
+        {
+            "action": {"type": "string", "enum": _WORK_BOARD_ACTIONS},
+            "projectId": {"type": "string"},
+            "snapshotJson": {"type": "string", "description": "Snapshot JSON for import_snapshot."},
+            "linkToMemory": {
+                "type": "boolean",
+                "description": "If true, output can be retained as long-term memory.",
+            },
+        },
+        ["action"],
+    )
+
+    legacy_work_task_schema = _legacy_schema(
+        work_task_schema,
+        "engram_work_task",
+        "Manage Engram work-layer tasks.",
+    )
+    legacy_work_project_schema = _legacy_schema(
+        work_project_schema,
+        "engram_work_project",
+        "Manage Engram work-layer projects.",
+    )
+    legacy_work_board_schema = _legacy_schema(
+        work_board_schema,
+        "engram_work_board",
+        "Export/import Engram work-layer board snapshots and markdown.",
+    )
+
     async def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
         """Tool handler for remnic_recall / engram_recall."""
         if not self._client:
@@ -991,6 +1064,21 @@ class RemnicMemoryProvider:
             return {"error": "Not connected to Remnic"}
         session_key = kwargs.pop("sessionKey", self._session_key)
         return await self._client.suggestion_submit(content=content, sessionKey=session_key, **kwargs)
+
+    async def work_task(self, action: str, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.work_task(action=action, **kwargs)
+
+    async def work_project(self, action: str, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.work_project(action=action, **kwargs)
+
+    async def work_board(self, action: str, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.work_board(action=action, **kwargs)
 
 
 # Legacy class alias — import path compat for pre-rename consumers.

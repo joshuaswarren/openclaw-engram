@@ -266,6 +266,15 @@ class RemnicClient:
     async def suggestion_submit(self, content: str, **kwargs: Any) -> dict[str, Any]:
         return await self._mcp_tool("engram.suggestion_submit", {"content": content, **kwargs})
 
+    async def work_task(self, action: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.work_task", {"action": action, **kwargs})
+
+    async def work_project(self, action: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.work_project", {"action": action, **kwargs})
+
+    async def work_board(self, action: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.work_board", {"action": action, **kwargs})
+
     async def close(self) -> None:
         await self._http.aclose()
 

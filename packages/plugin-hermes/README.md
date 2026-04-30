@@ -152,6 +152,9 @@ The plugin searches for a `connector: "hermes"` entry first, then falls back to 
 | `remnic_review_list` | List contradiction review items |
 | `remnic_review_resolve` | Resolve a contradiction review pair |
 | `remnic_suggestion_submit` | Queue a suggested memory for review |
+| `remnic_work_task` | Manage work-layer tasks |
+| `remnic_work_project` | Manage work-layer projects |
+| `remnic_work_board` | Export or import work-layer board snapshots and markdown |
 
 During the Engram to Remnic compat window, legacy `engram_*` aliases are also registered for each tool. These route to the same handlers. Their schema descriptions intentionally say "Engram" (not "Remnic") so that tool names and descriptions agree when a language model surfaces the legacy names. The `engram_*` aliases will be removed in a future major release. New integrations should use the `remnic_*` names.
 
