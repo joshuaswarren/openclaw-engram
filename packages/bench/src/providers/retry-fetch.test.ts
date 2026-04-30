@@ -171,6 +171,55 @@ test("retryFetch retries 429 beyond maxAttempts when max429WaitMs is set", async
   }
 });
 
+test("retryFetch retries provider 5xx beyond maxAttempts within extended wait budget", async () => {
+  const mock = mockFetchSequence([
+    { status: 429, headers: { "retry-after": "0" } },
+    { status: 429, headers: { "retry-after": "0" } },
+    {
+      status: 500,
+      body: "The server encountered an error. Please try again in 0 seconds.",
+    },
+    { status: 200, body: "recovered" },
+  ]);
+  try {
+    const startedAt = Date.now();
+    const response = await retryFetch(
+      "https://example.com/api",
+      { method: "GET" },
+      { maxAttempts: 3, baseBackoffMs: 1, timeoutMs: 5000, max429WaitMs: 1000 },
+    );
+    const elapsedMs = Date.now() - startedAt;
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), "recovered");
+    assert.equal(mock.calls.length, 4);
+    assert.ok(elapsedMs >= 100, `expected minimum extended 5xx backoff, got ${elapsedMs}ms`);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("retryFetch still fails repeated 5xx when no extended wait budget is configured", async () => {
+  const mock = mockFetchSequence([
+    { status: 500, body: "try again later" },
+    { status: 500, body: "try again later" },
+    { status: 500, body: "try again later" },
+  ]);
+  try {
+    await assert.rejects(
+      () =>
+        retryFetch(
+          "https://example.com/api",
+          { method: "GET" },
+          { maxAttempts: 3, baseBackoffMs: 1, timeoutMs: 5000 },
+        ),
+      /HTTP 500/,
+    );
+    assert.equal(mock.calls.length, 3);
+  } finally {
+    mock.restore();
+  }
+});
+
 test("retryFetch respects max429WaitMs budget and returns 429 when exhausted", async () => {
   // Always returns 429 — budget should expire quickly.
   const mock = mockFetchSequence([{ status: 429 }]);

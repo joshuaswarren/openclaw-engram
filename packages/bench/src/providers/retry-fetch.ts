@@ -2,7 +2,9 @@
  * Fetch wrapper with retry for transient failures.
  * Retries on ECONNREFUSED, ECONNRESET, ETIMEDOUT, HTTP 429 (rate limit),
  * and HTTP 5xx. 429 pauses according to the Retry-After header (or a
- * default backoff) before retrying, up to maxAttempts total.
+ * default backoff) before retrying. When max429WaitMs is set, the same
+ * wall-clock budget also covers transient 5xx responses from throttled
+ * provider backends that surface quota resets as server errors.
  */
 
 export interface RetryFetchOptions {
@@ -80,6 +82,14 @@ export function parseRetryAfterMs(value: string | null): number | undefined {
   return undefined;
 }
 
+function parseBodySuggestedRetryMs(body: string): number | undefined {
+  const match = body.match(/try again in\s+(\d+)\s+seconds?/i);
+  if (!match) return undefined;
+  const seconds = Number(match[1]);
+  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
+  return Math.min(seconds, MAX_RETRY_AFTER_S) * 1000;
+}
+
 function abortAwareSleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
   return new Promise<void>((resolve) => {
     if (signal?.aborted) { resolve(); return; }
@@ -103,6 +113,11 @@ export async function retryFetch(
   let last429IsStale = false;
   const loopStartMs = Date.now();
 
+  const remainingExtendedBudgetMs = () =>
+    opts.max429WaitMs > 0
+      ? Math.max(0, opts.max429WaitMs - (Date.now() - loopStartMs))
+      : 0;
+
   for (let attempt = 1; ; attempt++) {
     const callerSignal = init.signal as AbortSignal | undefined;
     if (callerSignal?.aborted) {
@@ -112,18 +127,17 @@ export async function retryFetch(
     // Non-429 errors (transient, 5xx) are always capped by maxAttempts.
     // The 429 budget only extends retries for 429 responses beyond maxAttempts.
     if (attempt > opts.maxAttempts) {
-      const in429Budget = opts.max429WaitMs > 0 &&
-        (Date.now() - loopStartMs) < opts.max429WaitMs;
-      if (!in429Budget) {
+      const remainingBudget = remainingExtendedBudgetMs();
+      if (remainingBudget <= 0) {
         // Only return a saved 429 when the budget feature is active and
         // no non-429 failures have occurred since the last 429.
         // With max429WaitMs=0 (default), always break to throw lastError.
         if (opts.max429WaitMs > 0 && last429Response && !last429IsStale) return last429Response;
         break;
       }
-      // Past maxAttempts but within 429 budget — only continue if we've
-      // seen a 429. Otherwise transient/5xx errors would loop uncapped.
-      if (!last429Response) {
+      // Past maxAttempts but within the extended provider budget — only
+      // continue if a retryable response/error has already been observed.
+      if (!last429Response && !lastError) {
         break;
       }
     }
@@ -151,8 +165,7 @@ export async function retryFetch(
 
       // 429 Too Many Requests — pause and retry.
       if (response.status === 429) {
-        const inBudget = opts.max429WaitMs > 0 &&
-          (Date.now() - loopStartMs) < opts.max429WaitMs;
+        const inBudget = remainingExtendedBudgetMs() > 0;
         const underMaxAttempts = attempt < opts.maxAttempts;
 
         // Stop if past maxAttempts with no budget remaining.
@@ -180,8 +193,7 @@ export async function retryFetch(
 
         // Clamp to remaining 429 budget so we don't overshoot.
         if (opts.max429WaitMs > 0) {
-          const remaining = opts.max429WaitMs - (Date.now() - loopStartMs);
-          waitMs = Math.min(waitMs, Math.max(remaining, 0));
+          waitMs = Math.min(waitMs, remainingExtendedBudgetMs());
         }
 
         const budgetTag = inBudget
@@ -204,19 +216,38 @@ export async function retryFetch(
         return response;
       }
 
-      // 5xx — retry with exponential backoff (bounded by maxAttempts only).
-      if (attempt >= opts.maxAttempts) {
+      // 5xx — retry with exponential backoff. When an extended provider
+      // wait budget is configured, keep retrying transient server errors
+      // within that same wall-clock budget so cloud throttling does not
+      // become a false benchmark task failure.
+      const bodyPreview = await readBodyPreview(response, 512);
+      if (attempt >= opts.maxAttempts && remainingExtendedBudgetMs() <= 0) {
         callerSignal?.removeEventListener("abort", onCallerAbort);
-        const bodyPreview = await readBodyPreview(response, 512);
         throw new Error(
           `HTTP ${response.status} ${response.statusText} (attempt ${attempt}/${opts.maxAttempts}): ${bodyPreview}`,
         );
       }
-      const bodyPreview = await readBodyPreview(response, 512);
       lastError = new Error(
         `HTTP ${response.status} ${response.statusText} (attempt ${attempt}/${opts.maxAttempts}): ${bodyPreview}`,
       );
       last429IsStale = true;
+
+      if (attempt >= opts.maxAttempts) {
+        const retryAfter =
+          parseRetryAfterMs(response.headers.get("retry-after")) ??
+          parseBodySuggestedRetryMs(bodyPreview);
+        const waitMs = Math.min(
+          Math.max(retryAfter ?? opts.baseBackoffMs * Math.pow(2, attempt - 1), 100),
+          remainingExtendedBudgetMs(),
+        );
+        console.error(
+          `[transient] HTTP ${response.status} received (attempt ${attempt}/${opts.maxAttempts}) ` +
+            `within extended provider budget, pausing ${Math.round(waitMs / 1000)}s before retry…`,
+        );
+        await abortAwareSleep(waitMs, callerSignal);
+        callerSignal?.removeEventListener("abort", onCallerAbort);
+        continue;
+      }
     } catch (err) {
       clearTimeout(timeout);
       if (callerSignal?.aborted) {
@@ -230,6 +261,19 @@ export async function retryFetch(
       lastError = err instanceof Error ? err : new Error(String(err));
       last429IsStale = true;
       callerSignal?.removeEventListener("abort", onCallerAbort);
+
+      if (attempt >= opts.maxAttempts && remainingExtendedBudgetMs() > 0) {
+        const waitMs = Math.min(
+          Math.max(opts.baseBackoffMs * Math.pow(2, attempt - 1), 100),
+          remainingExtendedBudgetMs(),
+        );
+        console.error(
+          `[transient] ${lastError.message} (attempt ${attempt}/${opts.maxAttempts}) ` +
+            `within extended provider budget, pausing ${Math.round(waitMs / 1000)}s before retry…`,
+        );
+        await abortAwareSleep(waitMs, callerSignal);
+        continue;
+      }
     }
 
     // Backoff before next attempt. Capped at maxAttempts for non-429 errors.
