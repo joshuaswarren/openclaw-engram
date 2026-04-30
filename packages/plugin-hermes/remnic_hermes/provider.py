@@ -42,6 +42,8 @@ _ACTION_TYPES = [
 _CONTINUITY_INCIDENT_STATES = ["open", "closed", "all"]
 _CONTINUITY_LOOP_CADENCES = ["daily", "weekly", "monthly", "quarterly"]
 _CONTINUITY_LOOP_STATUSES = ["active", "paused", "retired"]
+_REVIEW_FILTERS = ["all", "unresolved", "contradicts", "independent", "duplicates", "needs-user"]
+_REVIEW_RESOLUTION_VERBS = ["keep-a", "keep-b", "merge", "both-valid", "needs-more-context"]
 
 
 def _schema(
@@ -684,6 +686,83 @@ class RemnicMemoryProvider:
         "Conservatively merge Engram identity anchor sections.",
     )
 
+    # -- Issue #807 review queue / suggestions tool schemas --
+
+    review_queue_list_schema = _schema(
+        "remnic_review_queue_list",
+        "Fetch the latest review queue artifact bundle.",
+        {"runId": {"type": "string"}, "namespace": _NAMESPACE},
+    )
+    review_list_schema = _schema(
+        "remnic_review_list",
+        "List contradiction review items pending user resolution.",
+        {
+            "filter": {
+                "type": "string",
+                "enum": _REVIEW_FILTERS,
+                "description": "Filter by verdict type. Default: unresolved.",
+            },
+            "namespace": _NAMESPACE,
+            "limit": {"type": "number", "description": "Max items to return (default 50)."},
+        },
+    )
+    review_resolve_schema = _schema(
+        "remnic_review_resolve",
+        "Resolve a contradiction pair with a chosen verb.",
+        {
+            "pairId": {
+                "type": "string",
+                "description": "The contradiction pair ID to resolve.",
+            },
+            "verb": {
+                "type": "string",
+                "enum": _REVIEW_RESOLUTION_VERBS,
+                "description": "Resolution action.",
+            },
+        },
+        ["pairId", "verb"],
+    )
+    suggestion_submit_schema = _schema(
+        "remnic_suggestion_submit",
+        "Queue a suggested memory for review.",
+        {
+            "schemaVersion": {"type": "number"},
+            "idempotencyKey": {"type": "string"},
+            "dryRun": {"type": "boolean"},
+            "sessionKey": {"type": "string"},
+            "content": {"type": "string"},
+            "category": {"type": "string"},
+            "confidence": {"type": "number"},
+            "namespace": _NAMESPACE,
+            "tags": _STRING_ARRAY,
+            "entityRef": {"type": "string"},
+            "ttl": {"type": "string"},
+            "sourceReason": {"type": "string"},
+        },
+        ["content"],
+    )
+
+    legacy_review_queue_list_schema = _legacy_schema(
+        review_queue_list_schema,
+        "engram_review_queue_list",
+        "Fetch the latest Engram review queue artifact bundle.",
+    )
+    legacy_review_list_schema = _legacy_schema(
+        review_list_schema,
+        "engram_review_list",
+        "List Engram contradiction review items pending user resolution.",
+    )
+    legacy_review_resolve_schema = _legacy_schema(
+        review_resolve_schema,
+        "engram_review_resolve",
+        "Resolve an Engram contradiction pair with a chosen verb.",
+    )
+    legacy_suggestion_submit_schema = _legacy_schema(
+        suggestion_submit_schema,
+        "engram_suggestion_submit",
+        "Queue a suggested Engram memory for review.",
+    )
+
     async def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
         """Tool handler for remnic_recall / engram_recall."""
         if not self._client:
@@ -891,6 +970,27 @@ class RemnicMemoryProvider:
         if not self._client:
             return {"error": "Not connected to Remnic"}
         return await self._client.identity_anchor_update(**kwargs)
+
+    async def review_queue_list(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.review_queue_list(**kwargs)
+
+    async def review_list(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.review_list(**kwargs)
+
+    async def review_resolve(self, pairId: str, verb: str, **kwargs: Any) -> dict[str, Any]:  # noqa: N803
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.review_resolve(pair_id=pairId, verb=verb)
+
+    async def suggestion_submit(self, content: str, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        session_key = kwargs.pop("sessionKey", self._session_key)
+        return await self._client.suggestion_submit(content=content, sessionKey=session_key, **kwargs)
 
 
 # Legacy class alias — import path compat for pre-rename consumers.

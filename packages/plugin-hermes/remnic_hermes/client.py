@@ -254,6 +254,18 @@ class RemnicClient:
     async def identity_anchor_update(self, **kwargs: Any) -> dict[str, Any]:
         return await self._mcp_tool("engram.identity_anchor_update", kwargs)
 
+    async def review_queue_list(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.review_queue_list", kwargs)
+
+    async def review_list(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.review_list", kwargs)
+
+    async def review_resolve(self, pair_id: str, verb: str) -> dict[str, Any]:
+        return await self._mcp_tool("engram.review_resolve", {"pairId": pair_id, "verb": verb})
+
+    async def suggestion_submit(self, content: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.suggestion_submit", {"content": content, **kwargs})
+
     async def close(self) -> None:
         await self._http.aclose()
 

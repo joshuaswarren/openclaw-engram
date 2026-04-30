@@ -24,6 +24,12 @@ _CONTINUITY_IDENTITY_TOOL_SUFFIXES = [
     "identity_anchor_get",
     "identity_anchor_update",
 ]
+_REVIEW_SUGGESTION_TOOL_SUFFIXES = [
+    "review_queue_list",
+    "review_list",
+    "review_resolve",
+    "suggestion_submit",
+]
 
 
 def _populate_provider_mock(provider):  # type: ignore[no-untyped-def]
@@ -44,6 +50,10 @@ def _populate_provider_mock(provider):  # type: ignore[no-untyped-def]
         setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
         setattr(provider, suffix, object())
     for suffix in _CONTINUITY_IDENTITY_TOOL_SUFFIXES:
+        setattr(provider, f"{suffix}_schema", {"name": f"remnic_{suffix}"})
+        setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
+        setattr(provider, suffix, object())
+    for suffix in _REVIEW_SUGGESTION_TOOL_SUFFIXES:
         setattr(provider, f"{suffix}_schema", {"name": f"remnic_{suffix}"})
         setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
         setattr(provider, suffix, object())
@@ -82,6 +92,8 @@ def test_register_prefers_remnic_config_key():
     assert "engram_recall_explain" in registered_tools
     assert "remnic_continuity_incident_open" in registered_tools
     assert "engram_continuity_incident_open" in registered_tools
+    assert "remnic_review_queue_list" in registered_tools
+    assert "engram_review_queue_list" in registered_tools
 
 
 def test_register_falls_back_to_engram_config_key():
