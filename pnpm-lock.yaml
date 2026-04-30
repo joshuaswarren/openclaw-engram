@@ -353,6 +353,9 @@ importers:
       meilisearch:
         specifier: ^0.46.0
         version: 0.46.0
+      node-gyp:
+        specifier: ^12.3.0
+        version: 12.3.0
       openai:
         specifier: ^6.0.0
         version: 6.33.0(zod@3.25.76)
