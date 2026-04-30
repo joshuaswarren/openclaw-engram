@@ -2948,19 +2948,27 @@ export class EngramAccessService {
         ? Math.max(1, Math.floor(request.hours))
         : 24;
 
-    if (request.sessionKey) {
+    let sessionKey: string | undefined;
+    if (request.sessionKey !== undefined) {
+      if (typeof request.sessionKey !== "string" || request.sessionKey.trim().length === 0) {
+        throw new EngramAccessInputError("sessionKey must be a non-empty string when provided");
+      }
+      sessionKey = request.sessionKey.trim();
+    }
+
+    if (sessionKey) {
       const result = await this.orchestrator.updateConversationIndex(
-        request.sessionKey,
+        sessionKey,
         hours,
         { embed: request.embed },
       );
       return {
         enabled: true,
-        sessionKey: request.sessionKey,
+        sessionKey,
         sessions: 1,
         chunks: result.chunks,
         skipped: result.skipped ? 1 : 0,
-        skippedSessionKeys: result.skipped ? [request.sessionKey] : [],
+        skippedSessionKeys: result.skipped ? [sessionKey] : [],
         embeddedRuns: result.embedded ? 1 : 0,
         reason: result.reason,
         retryAfterMs: result.retryAfterMs,
