@@ -916,6 +916,35 @@ class RemnicMemoryProvider:
         "Generate an Engram daily roundtable summary.",
     )
 
+    # -- Issue #810 compounding learning tool schemas --
+
+    compounding_weekly_synthesize_schema = _schema(
+        "remnic_compounding_weekly_synthesize",
+        "Generate weekly compounding outputs.",
+        {"weekId": {"type": "string", "description": "ISO week ID (YYYY-Www). Defaults to current week."}},
+    )
+    compounding_promote_candidate_schema = _schema(
+        "remnic_compounding_promote_candidate",
+        "Promote a compounding candidate into durable memory.",
+        {
+            "weekId": {"type": "string"},
+            "candidateId": {"type": "string"},
+            "dryRun": {"type": "boolean", "description": "Preview without writing."},
+        },
+        ["weekId", "candidateId"],
+    )
+
+    legacy_compounding_weekly_synthesize_schema = _legacy_schema(
+        compounding_weekly_synthesize_schema,
+        "engram_compounding_weekly_synthesize",
+        "Generate weekly Engram compounding outputs.",
+    )
+    legacy_compounding_promote_candidate_schema = _legacy_schema(
+        compounding_promote_candidate_schema,
+        "engram_compounding_promote_candidate",
+        "Promote an Engram compounding candidate into durable memory.",
+    )
+
     async def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
         """Tool handler for remnic_recall / engram_recall."""
         if not self._client:
@@ -1204,6 +1233,25 @@ class RemnicMemoryProvider:
         if not self._client:
             return {"error": "Not connected to Remnic"}
         return await self._client.shared_context_curate_daily(**kwargs)
+
+    async def compounding_weekly_synthesize(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.compounding_weekly_synthesize(**kwargs)
+
+    async def compounding_promote_candidate(
+        self,
+        weekId: str,  # noqa: N803
+        candidateId: str,  # noqa: N803
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.compounding_promote_candidate(
+            week_id=weekId,
+            candidate_id=candidateId,
+            **kwargs,
+        )
 
 
 # Legacy class alias — import path compat for pre-rename consumers.
