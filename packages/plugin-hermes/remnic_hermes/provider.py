@@ -1099,6 +1099,22 @@ class RemnicMemoryProvider:
         "Save a structured Engram context checkpoint for a session.",
     )
 
+    # -- Issue #814 profiling tool schema --
+
+    profiling_report_schema = _schema(
+        "remnic_profiling_report",
+        "Return timing and performance data for Remnic recall and extraction pipelines.",
+        {
+            "format": {"type": "string", "enum": ["ascii", "json"]},
+            "limit": {"type": "number", "minimum": 1, "maximum": 20},
+        },
+    )
+    legacy_profiling_report_schema = _legacy_schema(
+        profiling_report_schema,
+        "engram_profiling_report",
+        "Return timing and performance data for Engram recall and extraction pipelines.",
+    )
+
     async def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
         """Tool handler for remnic_recall / engram_recall."""
         if not self._client:
@@ -1446,6 +1462,11 @@ class RemnicMemoryProvider:
         if not self._client:
             return {"error": "Not connected to Remnic"}
         return await self._client.conversation_index_update(**kwargs)
+
+    async def profiling_report(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.profiling_report(**kwargs)
 
     async def day_summary(self, **kwargs: Any) -> dict[str, Any]:
         if not self._client:

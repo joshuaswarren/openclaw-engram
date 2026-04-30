@@ -45,7 +45,7 @@ If you have read documentation or third-party reviews suggesting Remnic must reg
    ```bash
    hermes --version && pip show remnic-hermes
    ```
-Your agent should now have access to `remnic_recall`, `remnic_store`, `remnic_search`, and `remnic_lcm_search` tools. Call `remnic_recall` with any query to confirm memories are returned.
+Your agent should now have access to `remnic_recall`, `remnic_store`, `remnic_search`, `remnic_lcm_search`, and `remnic_profiling_report` tools. Call `remnic_recall` with any query to confirm memories are returned.
 
 ## Manual configuration
 

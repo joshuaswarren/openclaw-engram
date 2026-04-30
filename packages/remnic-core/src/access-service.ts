@@ -129,8 +129,25 @@ import {
   defaultCapsulesDir,
   type CapsuleListEntry,
 } from "./capsule-cli.js";
+import { formatProfileTraceAscii } from "./profiling.js";
 
 export class EngramAccessInputError extends Error {}
+
+type AccessProfilingReportRequest = {
+  format?: string;
+  limit?: number;
+};
+
+type AccessProfilingReportResponse = {
+  enabled: boolean;
+  format?: "ascii" | "json";
+  report?: string;
+  traces?: unknown[];
+  stats?: unknown;
+  bottleneck?: string | null;
+  reason?: string;
+  message?: string;
+};
 
 let cachedPackageVersion: string | null = null;
 
@@ -3004,6 +3021,86 @@ export class EngramAccessService {
       skipped,
       skippedSessionKeys,
       embeddedRuns,
+    };
+  }
+
+  async profilingReport(
+    request: AccessProfilingReportRequest = {},
+  ): Promise<AccessProfilingReportResponse> {
+    const profiler = this.orchestrator.profiler;
+    if (!profiler.isEnabled) {
+      return {
+        enabled: false,
+        reason: "disabled",
+        message: "Profiling is disabled. Set profilingEnabled: true in your plugin config to enable.",
+      };
+    }
+
+    const format = request.format ?? "ascii";
+    if (format !== "ascii" && format !== "json") {
+      throw new EngramAccessInputError("format must be one of: ascii, json");
+    }
+
+    const limit = request.limit ?? 5;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
+      throw new EngramAccessInputError("limit must be an integer between 1 and 20");
+    }
+
+    const traces = profiler.getRecentTraces(limit);
+    const stats = profiler.getStats();
+    const bottleneck = profiler.identifyBottleneck();
+
+    if (format === "json") {
+      return {
+        enabled: true,
+        format,
+        traces,
+        stats,
+        bottleneck,
+      };
+    }
+
+    const lines: string[] = [];
+    lines.push("Engram Profiling Report");
+    lines.push("=".repeat(60));
+    lines.push("");
+
+    type BucketEntry = { count: number; avgMs: number; p50Ms: number; p95Ms: number; maxMs: number };
+    const allBuckets: Array<[string, Record<string, BucketEntry>]> = [
+      ["byKind", stats.byKind],
+      ["bySpan", stats.bySpan],
+    ];
+    const hasStats = allBuckets.some(([, entries]) => Object.keys(entries).length > 0);
+    if (hasStats) {
+      lines.push("Aggregate Stats (all retained traces):");
+      for (const [bucket, entries] of allBuckets) {
+        for (const [key, summary] of Object.entries(entries)) {
+          lines.push(
+            `  ${bucket}/${key}: avg=${summary.avgMs}ms p50=${summary.p50Ms}ms p95=${summary.p95Ms}ms max=${summary.maxMs}ms (n=${summary.count})`,
+          );
+        }
+      }
+      lines.push("");
+    }
+
+    if (bottleneck) {
+      lines.push(`Bottleneck: ${bottleneck}`);
+      lines.push("");
+    }
+
+    if (traces.length === 0) {
+      lines.push("No traces recorded yet. Trigger a recall or extraction to see timing data.");
+    } else {
+      for (const trace of traces) {
+        lines.push(formatProfileTraceAscii(trace));
+        lines.push("");
+      }
+    }
+
+    return {
+      enabled: true,
+      format,
+      report: lines.join("\n"),
     };
   }
 

@@ -380,6 +380,7 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.contradiction_scan_run",
     "engram.memory_summarize_hourly",
     "engram.conversation_index_update",
+    "engram.profiling_report",
     "engram.graph_edge_decay_run",
     "engram.live_connectors_run",
     "engram.peer_list",

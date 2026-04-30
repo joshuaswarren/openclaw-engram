@@ -45,6 +45,13 @@ function makeMockService(briefingFn?: () => Promise<unknown>): EngramAccessServi
     workProject: () => Promise.resolve({ ok: true }),
     memorySummarizeHourly: () => Promise.resolve({ ok: true }),
     conversationIndexUpdate: () => Promise.resolve({ ok: true }),
+    profilingReport: () => Promise.resolve({
+      enabled: true,
+      format: "json",
+      traces: [],
+      stats: {},
+      bottleneck: null,
+    }),
   } as unknown as EngramAccessService;
 }
 
@@ -236,4 +243,53 @@ test("MCP maintenance: conversation index update rejects non-string sessionKey",
 
   assert.equal(called, false);
   assert.equal((response as Record<string, unknown> & { result?: { isError?: boolean } }).result?.isError, true);
+});
+
+test("MCP profiling report dispatches sanitized args to the access service", async () => {
+  let received: Record<string, unknown> | undefined;
+  const service = {
+    ...makeMockService(),
+    profilingReport: async (args: Record<string, unknown>) => {
+      received = args;
+      return { enabled: true, format: "json", traces: [], stats: {}, bottleneck: null };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(service);
+
+  const response = await server.handleRequest(
+    makeToolRequest("remnic.profiling_report", {
+      format: "json",
+      limit: 3,
+    }),
+  );
+
+  assert.deepEqual(received, { format: "json", limit: 3 });
+  assert.equal((response as Record<string, unknown> & { result?: { isError?: boolean } }).result?.isError, false);
+});
+
+test("MCP profiling report rejects invalid argument types before dispatch", async () => {
+  let called = false;
+  const service = {
+    ...makeMockService(),
+    profilingReport: async () => {
+      called = true;
+      return { enabled: true };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(service);
+
+  const badFormat = await server.handleRequest(
+    makeToolRequest("engram.profiling_report", {
+      format: false,
+    }),
+  );
+  const badLimit = await server.handleRequest(
+    makeToolRequest("engram.profiling_report", {
+      limit: "5",
+    }),
+  );
+
+  assert.equal(called, false);
+  assert.equal((badFormat as Record<string, unknown> & { result?: { isError?: boolean } }).result?.isError, true);
+  assert.equal((badLimit as Record<string, unknown> & { result?: { isError?: boolean } }).result?.isError, true);
 });
