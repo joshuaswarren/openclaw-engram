@@ -16,7 +16,7 @@ Remnic gives AI agents long-term memory that survives across conversations. Deci
 > [`@remnic/cli`](https://www.npmjs.com/package/@remnic/cli).
 > OpenClaw installs should use [`@remnic/plugin-openclaw`](https://www.npmjs.com/package/@remnic/plugin-openclaw).
 > The legacy `engram` CLI name remains available as a forwarder during the rename window.
-> Python users: [`remnic-hermes`](https://pypi.org/project/remnic-hermes/) on PyPI.
+> Hermes users: [`remnic-hermes`](https://pypi.org/project/remnic-hermes/) v1.0.2 on PyPI.
 
 ## Support Remnic
 
@@ -153,7 +153,8 @@ Once the Remnic daemon is running, connect any supported agent:
 remnic connectors install claude-code   # Claude Code (hooks + MCP)
 remnic connectors install codex-cli     # Codex CLI (hooks + MCP + memory extension)
 remnic connectors install replit        # Replit (MCP only)
-pip install remnic-hermes               # Hermes Agent (Python MemoryProvider)
+pip install --upgrade remnic-hermes     # Hermes Agent (Python MemoryProvider)
+remnic connectors install hermes        # Writes Hermes config + token
 ```
 
 For Codex CLI, installation also drops a phase-2 memory extension at
@@ -163,6 +164,8 @@ consolidation sub-agent auto-discovers Remnic. Opt out with
 yourself.
 
 Each connector generates a unique auth token, installs the appropriate plugin/hooks, and verifies the connection. All agents share the same memory store — tell one agent your preference, and every agent remembers it.
+
+Hermes uses Remnic as a Hermes **MemoryProvider**, not a `context_engine`. Automatic recall runs in `pre_llm_call`, observations run after each turn, and the provider now registers the full Remnic parity tool surface (`remnic_lcm_search`, recall explain/X-ray, memory CRUD, continuity, identity, governance, work-board, shared-context, compounding, day-summary, briefing, checkpoint, and profiling tools) plus legacy `engram_*` aliases. Lossless Context Management is delivered through the daemon recall envelope when `lcmEnabled` is on; no Hermes `context_engine` registration is required. See [docs/plugins/hermes.md](docs/plugins/hermes.md) for the full reference.
 
 | Platform | Integration | Auto-recall | Auto-observe |
 |----------|------------|-------------|--------------|

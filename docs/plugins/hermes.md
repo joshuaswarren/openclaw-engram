@@ -76,7 +76,7 @@ The plugin also registers the `remnic_*` tools for cases where the agent should 
 ### Option A: pip + CLI (recommended)
 
 ```bash
-pip install remnic-hermes
+pip install --upgrade remnic-hermes
 remnic connectors install hermes
 ```
 
@@ -85,7 +85,7 @@ remnic connectors install hermes
 ### Option B: pip only (manual config)
 
 ```bash
-pip install remnic-hermes
+pip install --upgrade remnic-hermes
 ```
 
 Then add the config block manually — see [Configuration reference](#configuration-reference).
@@ -276,10 +276,44 @@ No upstream Hermes feature request is needed from this audit: each OpenClaw life
 | `remnic_entity_get` | `name: string`, `namespace?: string` | Fetch one tracked entity by name |
 | `remnic_memory_capture` | `content: string`, plus memory metadata fields | Capture an explicit memory note |
 | `remnic_memory_action_apply` | `action: string`, plus action-specific fields | Apply a memory action |
+| `remnic_continuity_audit_generate` | `namespace?: string` and audit options | Generate a continuity audit report |
+| `remnic_continuity_incident_open` | `symptom: string`, plus incident metadata | Open a continuity incident |
+| `remnic_continuity_incident_close` | `id: string`, `fixApplied: string`, `verificationResult: string` | Close a continuity incident with verification |
+| `remnic_continuity_incident_list` | `status?: string`, `namespace?: string` | List continuity incidents by state |
+| `remnic_continuity_loop_add_or_update` | `id: string`, `cadence: string`, `purpose: string`, `status: string`, `killCondition: string` | Add or update a continuity improvement loop |
+| `remnic_continuity_loop_review` | `id: string` | Review an existing continuity improvement loop |
+| `remnic_identity_anchor_get` | `namespace?: string` | Read the identity continuity anchor |
+| `remnic_identity_anchor_update` | identity anchor fields | Conservatively merge identity anchor sections |
+| `remnic_review_queue_list` | review queue filters | Fetch the latest review queue artifact bundle |
+| `remnic_review_list` | contradiction review filters | List contradiction review items |
+| `remnic_review_resolve` | `pairId: string`, `verb: string` | Resolve a contradiction review pair |
+| `remnic_suggestion_submit` | `content: string`, plus suggestion metadata | Queue a suggested memory for review |
+| `remnic_work_task` | `action: string`, plus task fields | Manage work-layer tasks |
+| `remnic_work_project` | `action: string`, plus project fields | Manage work-layer projects |
+| `remnic_work_board` | `action: string`, plus board fields | Export or import work-layer board snapshots and markdown |
+| `remnic_shared_context_write_output` | `agentId: string`, `title: string`, `content: string` | Write agent work product into shared context |
+| `remnic_shared_feedback_record` | `agent: string`, `decision: string`, `reason: string` | Record shared feedback for peer modeling |
+| `remnic_shared_priorities_append` | `agentId: string`, `text: string` | Append priorities notes for curator merge |
+| `remnic_shared_context_cross_signals_run` | shared-context options | Generate shared-context cross-signal artifacts |
+| `remnic_shared_context_curate_daily` | curation options | Generate the daily shared-context roundtable |
+| `remnic_compounding_weekly_synthesize` | compounding options | Generate weekly compounding outputs |
+| `remnic_compounding_promote_candidate` | `weekId: string`, `candidateId: string` | Promote a compounding candidate into durable memory |
+| `remnic_compression_guidelines_optimize` | optimization options | Run compression-guideline policy optimization |
+| `remnic_compression_guidelines_activate` | activation options | Activate a staged compression-guideline draft |
+| `remnic_memory_governance_run` | governance options | Run memory governance in shadow or apply mode |
+| `remnic_procedure_mining_run` | procedure mining options | Run procedural memory mining |
+| `remnic_procedural_stats` | `namespace?: string` | Read procedural memory stats |
+| `remnic_contradiction_scan_run` | scan options | Run an on-demand contradiction scan |
+| `remnic_memory_summarize_hourly` | none | Generate hourly conversation summaries |
+| `remnic_conversation_index_update` | indexing options | Update the conversation index |
+| `remnic_day_summary` | summary options | Generate a structured end-of-day summary |
+| `remnic_briefing` | briefing options | Generate a daily context briefing |
+| `remnic_context_checkpoint` | `sessionKey: string`, `context: string`, plus checkpoint metadata | Save a structured context checkpoint for a session |
+| `remnic_profiling_report` | profiling options | Generate a profiling report |
 
 Each tool handler returns the raw JSON response from the daemon or `{"error": "Not connected to Remnic"}` when the client is not initialized. Direct memory tools use the daemon's REST endpoints where available; debug, explain, and MCP-native memory surfaces are forwarded through the daemon MCP endpoint.
 
-The `remnic_*` tools give the agent explicit control for cases where automatic recall is insufficient — for example, storing a specific fact the agent has derived mid-session, searching the LCM archive directly, inspecting why a recall result appeared, or curating stored memories.
+The `remnic_*` tools give the agent explicit control for cases where automatic recall is insufficient — for example, storing a specific fact the agent has derived mid-session, searching the LCM archive directly, inspecting why a recall result appeared, opening a continuity incident, curating stored memories, saving a checkpoint, or generating a profiling report.
 
 ---
 
@@ -389,7 +423,7 @@ which python && pip show remnic-hermes
 hermes --version
 ```
 
-Install into the correct environment: `<path-to-hermes-python> -m pip install remnic-hermes`.
+Install into the correct environment: `<path-to-hermes-python> -m pip install --upgrade remnic-hermes`.
 
 ### Memories not appearing in context
 
@@ -415,7 +449,7 @@ Or leave it blank to rely on the Remnic daemon's global search (the daemon index
 
 If you are upgrading from a configuration that used the `engram-hermes` package or an `engram:` config block:
 
-1. `pip install remnic-hermes` replaces `engram-hermes`. Uninstall the old package first: `pip uninstall engram-hermes`.
+1. `pip install --upgrade remnic-hermes` replaces `engram-hermes`. Uninstall the old package first: `pip uninstall engram-hermes`.
 2. Your `config.yaml` `engram:` block continues to work without changes. You can rename it to `remnic:` at any time — both are accepted.
 3. Tool calls to `engram_recall`, `engram_store`, and `engram_search` continue to work. No Hermes system prompt or tool-list changes are required.
 4. Python imports of `EngramMemoryProvider`, `EngramClient`, and `EngramHermesConfig` continue to resolve.
