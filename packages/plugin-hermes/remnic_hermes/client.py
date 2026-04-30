@@ -299,6 +299,20 @@ class RemnicClient:
     async def shared_context_curate_daily(self, **kwargs: Any) -> dict[str, Any]:
         return await self._mcp_tool("engram.shared_context_curate_daily", kwargs)
 
+    async def compounding_weekly_synthesize(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.compounding_weekly_synthesize", kwargs)
+
+    async def compounding_promote_candidate(
+        self,
+        week_id: str,
+        candidate_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._mcp_tool(
+            "engram.compounding_promote_candidate",
+            {"weekId": week_id, "candidateId": candidate_id, **kwargs},
+        )
+
     async def close(self) -> None:
         await self._http.aclose()
 

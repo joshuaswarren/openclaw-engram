@@ -42,6 +42,10 @@ _SHARED_CONTEXT_TOOL_SUFFIXES = [
     "shared_context_cross_signals_run",
     "shared_context_curate_daily",
 ]
+_COMPOUNDING_TOOL_SUFFIXES = [
+    "compounding_weekly_synthesize",
+    "compounding_promote_candidate",
+]
 
 
 def _populate_provider_mock(provider):  # type: ignore[no-untyped-def]
@@ -74,6 +78,10 @@ def _populate_provider_mock(provider):  # type: ignore[no-untyped-def]
         setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
         setattr(provider, suffix, object())
     for suffix in _SHARED_CONTEXT_TOOL_SUFFIXES:
+        setattr(provider, f"{suffix}_schema", {"name": f"remnic_{suffix}"})
+        setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
+        setattr(provider, suffix, object())
+    for suffix in _COMPOUNDING_TOOL_SUFFIXES:
         setattr(provider, f"{suffix}_schema", {"name": f"remnic_{suffix}"})
         setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
         setattr(provider, suffix, object())
@@ -118,6 +126,8 @@ def test_register_prefers_remnic_config_key():
     assert "engram_work_task" in registered_tools
     assert "remnic_shared_context_write_output" in registered_tools
     assert "engram_shared_context_write_output" in registered_tools
+    assert "remnic_compounding_weekly_synthesize" in registered_tools
+    assert "engram_compounding_weekly_synthesize" in registered_tools
 
 
 def test_register_falls_back_to_engram_config_key():

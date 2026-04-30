@@ -160,6 +160,8 @@ The plugin searches for a `connector: "hermes"` entry first, then falls back to 
 | `remnic_shared_priorities_append` | Append priorities notes for curator merge |
 | `remnic_shared_context_cross_signals_run` | Generate shared-context cross-signal artifacts |
 | `remnic_shared_context_curate_daily` | Generate the daily shared-context roundtable |
+| `remnic_compounding_weekly_synthesize` | Generate weekly compounding outputs |
+| `remnic_compounding_promote_candidate` | Promote a compounding candidate into durable memory |
 
 During the Engram to Remnic compat window, legacy `engram_*` aliases are also registered for each tool. These route to the same handlers. Their schema descriptions intentionally say "Engram" (not "Remnic") so that tool names and descriptions agree when a language model surfaces the legacy names. The `engram_*` aliases will be removed in a future major release. New integrations should use the `remnic_*` names.
 
