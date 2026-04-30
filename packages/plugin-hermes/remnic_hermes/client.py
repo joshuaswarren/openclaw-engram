@@ -319,6 +319,24 @@ class RemnicClient:
     async def compression_guidelines_activate(self, **kwargs: Any) -> dict[str, Any]:
         return await self._mcp_tool("engram.compression_guidelines_activate", kwargs)
 
+    async def memory_governance_run(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_governance_run", kwargs)
+
+    async def procedure_mining_run(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.procedure_mining_run", kwargs)
+
+    async def procedural_stats(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.procedural_stats", kwargs)
+
+    async def contradiction_scan_run(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.contradiction_scan_run", kwargs)
+
+    async def memory_summarize_hourly(self) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_summarize_hourly", {})
+
+    async def conversation_index_update(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.conversation_index_update", kwargs)
+
     async def close(self) -> None:
         await self._http.aclose()
 

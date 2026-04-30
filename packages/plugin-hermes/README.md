@@ -164,6 +164,12 @@ The plugin searches for a `connector: "hermes"` entry first, then falls back to 
 | `remnic_compounding_promote_candidate` | Promote a compounding candidate into durable memory |
 | `remnic_compression_guidelines_optimize` | Run compression-guideline policy optimization |
 | `remnic_compression_guidelines_activate` | Activate a staged compression-guideline draft |
+| `remnic_memory_governance_run` | Run memory governance in shadow or apply mode |
+| `remnic_procedure_mining_run` | Run procedural memory mining |
+| `remnic_procedural_stats` | Read procedural memory stats |
+| `remnic_contradiction_scan_run` | Run an on-demand contradiction scan |
+| `remnic_memory_summarize_hourly` | Generate hourly conversation summaries |
+| `remnic_conversation_index_update` | Update the conversation index |
 
 During the Engram to Remnic compat window, legacy `engram_*` aliases are also registered for each tool. These route to the same handlers. Their schema descriptions intentionally say "Engram" (not "Remnic") so that tool names and descriptions agree when a language model surfaces the legacy names. The `engram_*` aliases will be removed in a future major release. New integrations should use the `remnic_*` names.
 

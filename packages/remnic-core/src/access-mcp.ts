@@ -1142,6 +1142,28 @@ export class EngramMcpServer {
         },
       },
       {
+        name: "engram.memory_summarize_hourly",
+        description: "Generate hourly summaries for recent conversations.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.conversation_index_update",
+        description: "Chunk transcript history into conversation-index documents.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            sessionKey: { type: "string" },
+            hours: { type: "number", description: "How many hours of transcript history to include." },
+            embed: { type: "boolean", description: "If true, run QMD embed after update for this invocation." },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
         name: "engram.graph_edge_decay_run",
         description:
           "Run the graph-edge-confidence decay maintenance pass (issue #681 PR 2/3). Respects graphEdgeDecayEnabled; writes a structured telemetry record to state/graph-edge-decay-status.json.",
@@ -2325,6 +2347,21 @@ export class EngramMcpServer {
           localLlm: this.service.localLlmRef,
           fallbackLlm: this.service.fallbackLlmRef,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+        });
+      }
+      case "engram.memory_summarize_hourly":
+      case "remnic.memory_summarize_hourly":
+        return this.service.memorySummarizeHourly();
+      case "engram.conversation_index_update":
+      case "remnic.conversation_index_update": {
+        if ("sessionKey" in args && args.sessionKey !== undefined && typeof args.sessionKey !== "string") {
+          throw new Error("sessionKey must be a string when provided");
+        }
+        const sessionKey = typeof args.sessionKey === "string" ? args.sessionKey : undefined;
+        return this.service.conversationIndexUpdate({
+          sessionKey,
+          hours: typeof args.hours === "number" && Number.isFinite(args.hours) ? args.hours : undefined,
+          embed: typeof args.embed === "boolean" ? args.embed : undefined,
         });
       }
       case "engram.graph_edge_decay_run":

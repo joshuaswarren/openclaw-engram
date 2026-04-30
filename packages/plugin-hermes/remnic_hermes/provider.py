@@ -52,6 +52,7 @@ _WORK_PROJECT_STATUSES = ["active", "on_hold", "completed", "archived"]
 _WORK_BOARD_ACTIONS = ["export_markdown", "export_snapshot", "import_snapshot"]
 _SHARED_FEEDBACK_DECISIONS = ["approved", "approved_with_feedback", "rejected"]
 _SHARED_FEEDBACK_SEVERITIES = ["low", "medium", "high"]
+_GOVERNANCE_MODES = ["shadow", "apply"]
 
 
 def _schema(
@@ -975,6 +976,80 @@ class RemnicMemoryProvider:
         "Promote a staged Engram compression guideline draft to active.",
     )
 
+    # -- Issue #812 governance / hygiene tool schemas --
+
+    memory_governance_run_schema = _schema(
+        "remnic_memory_governance_run",
+        "Run Remnic memory governance in a bounded shadow/apply pass.",
+        {
+            "namespace": _NAMESPACE,
+            "mode": {"type": "string", "enum": _GOVERNANCE_MODES},
+            "recentDays": {"type": "number"},
+            "maxMemories": {"type": "number"},
+            "batchSize": {"type": "number"},
+        },
+    )
+    procedure_mining_run_schema = _schema(
+        "remnic_procedure_mining_run",
+        "Run procedural memory mining.",
+        {"namespace": _NAMESPACE},
+    )
+    procedural_stats_schema = _schema(
+        "remnic_procedural_stats",
+        "Read procedural memory stats.",
+        {"namespace": _NAMESPACE},
+    )
+    contradiction_scan_run_schema = _schema(
+        "remnic_contradiction_scan_run",
+        "Run an on-demand contradiction scan over the memory corpus.",
+        {"namespace": _NAMESPACE},
+    )
+    memory_summarize_hourly_schema = _schema(
+        "remnic_memory_summarize_hourly",
+        "Generate hourly summaries for recent conversations.",
+        {},
+    )
+    conversation_index_update_schema = _schema(
+        "remnic_conversation_index_update",
+        "Chunk transcript history into conversation-index documents.",
+        {
+            "sessionKey": {"type": "string"},
+            "hours": {"type": "number", "description": "How many hours of transcript history to include."},
+            "embed": {"type": "boolean", "description": "Run QMD embed after update for this invocation."},
+        },
+    )
+
+    legacy_memory_governance_run_schema = _legacy_schema(
+        memory_governance_run_schema,
+        "engram_memory_governance_run",
+        "Run Engram memory governance in a bounded shadow/apply pass.",
+    )
+    legacy_procedure_mining_run_schema = _legacy_schema(
+        procedure_mining_run_schema,
+        "engram_procedure_mining_run",
+        "Run Engram procedural memory mining.",
+    )
+    legacy_procedural_stats_schema = _legacy_schema(
+        procedural_stats_schema,
+        "engram_procedural_stats",
+        "Read Engram procedural memory stats.",
+    )
+    legacy_contradiction_scan_run_schema = _legacy_schema(
+        contradiction_scan_run_schema,
+        "engram_contradiction_scan_run",
+        "Run an on-demand Engram contradiction scan over the memory corpus.",
+    )
+    legacy_memory_summarize_hourly_schema = _legacy_schema(
+        memory_summarize_hourly_schema,
+        "engram_memory_summarize_hourly",
+        "Generate hourly summaries for recent Engram conversations.",
+    )
+    legacy_conversation_index_update_schema = _legacy_schema(
+        conversation_index_update_schema,
+        "engram_conversation_index_update",
+        "Chunk Engram transcript history into conversation-index documents.",
+    )
+
     async def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
         """Tool handler for remnic_recall / engram_recall."""
         if not self._client:
@@ -1292,6 +1367,36 @@ class RemnicMemoryProvider:
         if not self._client:
             return {"error": "Not connected to Remnic"}
         return await self._client.compression_guidelines_activate(**kwargs)
+
+    async def memory_governance_run(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.memory_governance_run(**kwargs)
+
+    async def procedure_mining_run(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.procedure_mining_run(**kwargs)
+
+    async def procedural_stats(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.procedural_stats(**kwargs)
+
+    async def contradiction_scan_run(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.contradiction_scan_run(**kwargs)
+
+    async def memory_summarize_hourly(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.memory_summarize_hourly()
+
+    async def conversation_index_update(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.conversation_index_update(**kwargs)
 
 
 # Legacy class alias — import path compat for pre-rename consumers.

@@ -43,6 +43,8 @@ function makeMockService(briefingFn?: () => Promise<unknown>): EngramAccessServi
     continuityLoopReview: () => Promise.resolve({ ok: true }),
     workTask: () => Promise.resolve({ ok: true }),
     workProject: () => Promise.resolve({ ok: true }),
+    memorySummarizeHourly: () => Promise.resolve({ ok: true }),
+    conversationIndexUpdate: () => Promise.resolve({ ok: true }),
   } as unknown as EngramAccessService;
 }
 
@@ -54,6 +56,18 @@ function makeRequest(format: unknown): Record<string, unknown> {
     params: {
       name: "engram.briefing",
       arguments: { format },
+    },
+  };
+}
+
+function makeToolRequest(name: string, args: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: {
+      name,
+      arguments: args,
     },
   };
 }
@@ -133,4 +147,93 @@ test("MCP briefing: arbitrary invalid format strings are rejected", async () => 
     const result = (response as Record<string, unknown> & { result?: { isError?: boolean } }).result;
     assert.equal(result?.isError, true, `format="${bad}" should produce isError=true`);
   }
+});
+
+test("MCP maintenance: hourly summarization dispatches to the access service", async () => {
+  let called = false;
+  const service = {
+    ...makeMockService(),
+    memorySummarizeHourly: async () => {
+      called = true;
+      return { ok: true };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(service);
+
+  const response = await server.handleRequest(makeToolRequest("engram.memory_summarize_hourly"));
+
+  assert.equal(called, true, "memorySummarizeHourly should be dispatched");
+  assert.equal((response as Record<string, unknown> & { result?: { isError?: boolean } }).result?.isError, false);
+});
+
+test("MCP maintenance: conversation index update sanitizes optional args", async () => {
+  let received: Record<string, unknown> | undefined;
+  const service = {
+    ...makeMockService(),
+    conversationIndexUpdate: async (args: Record<string, unknown>) => {
+      received = args;
+      return { ok: true };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(service);
+
+  const response = await server.handleRequest(
+    makeToolRequest("engram.conversation_index_update", {
+      sessionKey: "session-1",
+      hours: 12,
+      embed: true,
+    }),
+  );
+
+  assert.deepEqual(received, {
+    sessionKey: "session-1",
+    hours: 12,
+    embed: true,
+  });
+  assert.equal((response as Record<string, unknown> & { result?: { isError?: boolean } }).result?.isError, false);
+});
+
+test("MCP maintenance: conversation index update preserves omitted embed default", async () => {
+  let received: Record<string, unknown> | undefined;
+  const service = {
+    ...makeMockService(),
+    conversationIndexUpdate: async (args: Record<string, unknown>) => {
+      received = args;
+      return { ok: true };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(service);
+
+  await server.handleRequest(
+    makeToolRequest("engram.conversation_index_update", {
+      sessionKey: "session-1",
+    }),
+  );
+
+  assert.deepEqual(received, {
+    sessionKey: "session-1",
+    hours: undefined,
+    embed: undefined,
+  });
+});
+
+test("MCP maintenance: conversation index update rejects non-string sessionKey", async () => {
+  let called = false;
+  const service = {
+    ...makeMockService(),
+    conversationIndexUpdate: async () => {
+      called = true;
+      return { ok: true };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(service);
+
+  const response = await server.handleRequest(
+    makeToolRequest("engram.conversation_index_update", {
+      sessionKey: 123,
+    }),
+  );
+
+  assert.equal(called, false);
+  assert.equal((response as Record<string, unknown> & { result?: { isError?: boolean } }).result?.isError, true);
 });

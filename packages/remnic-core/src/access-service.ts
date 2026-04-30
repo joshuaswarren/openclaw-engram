@@ -2903,6 +2903,110 @@ export class EngramAccessService {
     return { namespace: resolvedNamespace, ...report };
   }
 
+  async memorySummarizeHourly(): Promise<{
+    ok: true;
+    message: string;
+  }> {
+    await this.orchestrator.summarizer.runHourly();
+    return {
+      ok: true,
+      message: "Hourly summarization completed. Check the summaries directory for results.",
+    };
+  }
+
+  async conversationIndexUpdate(
+    request: {
+      sessionKey?: string;
+      hours?: number;
+      embed?: boolean;
+    } = {},
+  ): Promise<{
+    enabled: boolean;
+    sessionKey?: string;
+    sessions: number;
+    chunks: number;
+    skipped: number;
+    skippedSessionKeys: string[];
+    embeddedRuns: number;
+    reason?: string;
+    retryAfterMs?: number;
+  }> {
+    if (!this.orchestrator.config.conversationIndexEnabled) {
+      return {
+        enabled: false,
+        sessions: 0,
+        chunks: 0,
+        skipped: 0,
+        skippedSessionKeys: [],
+        embeddedRuns: 0,
+        reason: "disabled",
+      };
+    }
+
+    const hours =
+      typeof request.hours === "number" && Number.isFinite(request.hours)
+        ? Math.max(1, Math.floor(request.hours))
+        : 24;
+
+    let sessionKey: string | undefined;
+    if (request.sessionKey !== undefined) {
+      if (typeof request.sessionKey !== "string" || request.sessionKey.trim().length === 0) {
+        throw new EngramAccessInputError("sessionKey must be a non-empty string when provided");
+      }
+      sessionKey = request.sessionKey.trim();
+    }
+
+    if (sessionKey) {
+      const result = await this.orchestrator.updateConversationIndex(
+        sessionKey,
+        hours,
+        { embed: request.embed },
+      );
+      return {
+        enabled: true,
+        sessionKey,
+        sessions: 1,
+        chunks: result.chunks,
+        skipped: result.skipped ? 1 : 0,
+        skippedSessionKeys: result.skipped ? [sessionKey] : [],
+        embeddedRuns: result.embedded ? 1 : 0,
+        reason: result.reason,
+        retryAfterMs: result.retryAfterMs,
+      };
+    }
+
+    const sessionKeys = await this.orchestrator.transcript.listSessionKeys();
+    let chunks = 0;
+    let skipped = 0;
+    const skippedSessionKeys: string[] = [];
+    let embeddedRuns = 0;
+
+    for (const sessionKey of sessionKeys) {
+      const result = await this.orchestrator.updateConversationIndex(
+        sessionKey,
+        hours,
+        { embed: request.embed },
+      );
+      chunks += result.chunks;
+      if (result.skipped) {
+        skipped += 1;
+        skippedSessionKeys.push(sessionKey);
+      }
+      if (result.embedded) {
+        embeddedRuns += 1;
+      }
+    }
+
+    return {
+      enabled: true,
+      sessions: sessionKeys.length,
+      chunks,
+      skipped,
+      skippedSessionKeys,
+      embeddedRuns,
+    };
+  }
+
   async trustZoneStatus(namespace?: string, principal?: string): Promise<EngramAccessTrustZoneStatusResponse> {
     const resolvedNamespace = this.resolveReadableNamespace(namespace, principal);
     const storage = await this.orchestrator.getStorage(resolvedNamespace);

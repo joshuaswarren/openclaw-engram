@@ -128,6 +128,30 @@ function createMemoryActionService(contextCompressionActionsEnabled: boolean) {
   return { service, capturedEvents };
 }
 
+test("conversationIndexUpdate rejects blank sessionKey instead of updating every session", async () => {
+  const service = new EngramAccessService({
+    config: {
+      memoryDir: "/tmp/engram",
+      conversationIndexEnabled: true,
+    },
+    transcript: {
+      listSessionKeys: async () => {
+        throw new Error("all-session update should not run");
+      },
+    },
+    updateConversationIndex: async () => {
+      throw new Error("single-session update should not run");
+    },
+  } as any);
+
+  await assert.rejects(
+    () => service.conversationIndexUpdate({ sessionKey: "   " }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /sessionKey must be a non-empty string/.test(err.message),
+  );
+});
+
 test("memoryActionApply is gated by context compression actions", async () => {
   const { service, capturedEvents } = createMemoryActionService(false);
 
