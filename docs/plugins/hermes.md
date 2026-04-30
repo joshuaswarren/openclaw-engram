@@ -265,7 +265,7 @@ No upstream Hermes feature request is needed from this audit: each OpenClaw life
 | `remnic_memory_feedback_last_recall` | `memoryId: string`, `vote: up|down`, `note?: string` | Record relevance feedback for a recalled memory |
 | `remnic_set_coding_context` | `sessionKey: string`, `codingContext?: object|null`, `projectTag?: string` | Attach coding project context to a session |
 | `remnic_memory_get` | `memoryId: string`, `namespace?: string` | Fetch one stored memory by id |
-| `remnic_memory_store` | `content: string`, plus memory metadata fields | Store a memory with the daemon's richer memory-store schema |
+| `remnic_memory_store` | `content: string`, `sessionKey?: string`, `category?: string`, `confidence?: number`, `namespace?: string`, `tags?: string[]`, `entityRef?: string`, `ttl?: string`, `sourceReason?: string` | Store a memory with the daemon's richer memory-store schema |
 | `remnic_memory_timeline` | `memoryId: string`, `namespace?: string`, `limit?: number` | Fetch the timeline for one stored memory |
 | `remnic_memory_profile` | `namespace?: string` | Read the user profile surface |
 | `remnic_memory_entities` | `namespace?: string` | List tracked entities |
@@ -274,42 +274,42 @@ No upstream Hermes feature request is needed from this audit: each OpenClaw life
 | `remnic_memory_promote` | `memoryId: string`, `namespace?: string`, `sessionKey?: string` | Promote a memory candidate or stored memory |
 | `remnic_memory_outcome` | `memoryId: string`, `outcome: success|failure`, `namespace?: string`, `sessionKey?: string`, `timestamp?: string` | Record or inspect a memory outcome |
 | `remnic_entity_get` | `name: string`, `namespace?: string` | Fetch one tracked entity by name |
-| `remnic_memory_capture` | `content: string`, plus memory metadata fields | Capture an explicit memory note |
-| `remnic_memory_action_apply` | `action: string`, plus action-specific fields | Apply a memory action |
-| `remnic_continuity_audit_generate` | `namespace?: string` and audit options | Generate a continuity audit report |
-| `remnic_continuity_incident_open` | `symptom: string`, plus incident metadata | Open a continuity incident |
-| `remnic_continuity_incident_close` | `id: string`, `fixApplied: string`, `verificationResult: string` | Close a continuity incident with verification |
-| `remnic_continuity_incident_list` | `state?: open|closed|all`, `namespace?: string` | List continuity incidents by state |
+| `remnic_memory_capture` | `content: string`, `namespace?: string`, `category?: string`, `tags?: string[]`, `entityRef?: string`, `confidence?: number`, `ttl?: string`, `sourceReason?: string` | Capture an explicit memory note |
+| `remnic_memory_action_apply` | `action: string`, `category?: string`, `content?: string`, `outcome?: applied|skipped|failed`, `reason?: string`, `memoryId?: string`, `sessionKey?: string`, `namespace?: string`, `dryRun?: boolean` | Apply a memory action |
+| `remnic_continuity_audit_generate` | `period?: weekly|monthly`, `key?: string` | Generate a continuity audit report |
+| `remnic_continuity_incident_open` | `symptom: string`, `namespace?: string`, `triggerWindow?: string`, `suspectedCause?: string` | Open a continuity incident |
+| `remnic_continuity_incident_close` | `id: string`, `fixApplied: string`, `verificationResult: string`, `namespace?: string`, `preventiveRule?: string` | Close a continuity incident with verification |
+| `remnic_continuity_incident_list` | `state?: open|closed|all`, `namespace?: string`, `limit?: number` | List continuity incidents by state |
 | `remnic_continuity_loop_add_or_update` | `id: string`, `cadence: string`, `purpose: string`, `status: string`, `killCondition: string` | Add or update a continuity improvement loop |
-| `remnic_continuity_loop_review` | `id: string` | Review an existing continuity improvement loop |
+| `remnic_continuity_loop_review` | `id: string`, `namespace?: string`, `status?: string`, `notes?: string`, `reviewedAt?: string` | Review an existing continuity improvement loop |
 | `remnic_identity_anchor_get` | `namespace?: string` | Read the identity continuity anchor |
-| `remnic_identity_anchor_update` | identity anchor fields | Conservatively merge identity anchor sections |
-| `remnic_review_queue_list` | review queue filters | Fetch the latest review queue artifact bundle |
-| `remnic_review_list` | contradiction review filters | List contradiction review items |
+| `remnic_identity_anchor_update` | `namespace?: string`, `identityTraits?: string`, `communicationPreferences?: string`, `operatingPrinciples?: string`, `continuityNotes?: string` | Conservatively merge identity anchor sections |
+| `remnic_review_queue_list` | `runId?: string`, `namespace?: string` | Fetch the latest review queue artifact bundle |
+| `remnic_review_list` | `filter?: string`, `namespace?: string`, `limit?: number` | List contradiction review items |
 | `remnic_review_resolve` | `pairId: string`, `verb: string` | Resolve a contradiction review pair |
-| `remnic_suggestion_submit` | `content: string`, plus suggestion metadata | Queue a suggested memory for review |
-| `remnic_work_task` | `action: string`, plus task fields | Manage work-layer tasks |
-| `remnic_work_project` | `action: string`, plus project fields | Manage work-layer projects |
-| `remnic_work_board` | `action: string`, plus board fields | Export or import work-layer board snapshots and markdown |
+| `remnic_suggestion_submit` | `content: string`, `schemaVersion?: number`, `idempotencyKey?: string`, `dryRun?: boolean`, `sessionKey?: string`, `category?: string`, `confidence?: number`, `namespace?: string`, `tags?: string[]`, `entityRef?: string`, `ttl?: string`, `sourceReason?: string` | Queue a suggested memory for review |
+| `remnic_work_task` | `action: string`, `id?: string`, `title?: string`, `description?: string`, `status?: string`, `priority?: string`, `owner?: string`, `assignee?: string`, `projectId?: string`, `tags?: string[]`, `dueAt?: string` | Manage work-layer tasks |
+| `remnic_work_project` | `action: string`, `id?: string`, `name?: string`, `description?: string`, `status?: string`, `owner?: string`, `tags?: string[]`, `taskId?: string`, `projectId?: string` | Manage work-layer projects |
+| `remnic_work_board` | `action: string`, `projectId?: string`, `snapshotJson?: string`, `linkToMemory?: boolean` | Export or import work-layer board snapshots and markdown |
 | `remnic_shared_context_write_output` | `agentId: string`, `title: string`, `content: string` | Write agent work product into shared context |
 | `remnic_shared_feedback_record` | `agent: string`, `decision: string`, `reason: string` | Record shared feedback for peer modeling |
 | `remnic_shared_priorities_append` | `agentId: string`, `text: string` | Append priorities notes for curator merge |
-| `remnic_shared_context_cross_signals_run` | shared-context options | Generate shared-context cross-signal artifacts |
-| `remnic_shared_context_curate_daily` | curation options | Generate the daily shared-context roundtable |
-| `remnic_compounding_weekly_synthesize` | compounding options | Generate weekly compounding outputs |
+| `remnic_shared_context_cross_signals_run` | `date?: string` | Generate shared-context cross-signal artifacts |
+| `remnic_shared_context_curate_daily` | `date?: string` | Generate the daily shared-context roundtable |
+| `remnic_compounding_weekly_synthesize` | `weekId?: string` | Generate weekly compounding outputs |
 | `remnic_compounding_promote_candidate` | `weekId: string`, `candidateId: string` | Promote a compounding candidate into durable memory |
-| `remnic_compression_guidelines_optimize` | optimization options | Run compression-guideline policy optimization |
-| `remnic_compression_guidelines_activate` | activation options | Activate a staged compression-guideline draft |
-| `remnic_memory_governance_run` | governance options | Run memory governance in shadow or apply mode |
-| `remnic_procedure_mining_run` | procedure mining options | Run procedural memory mining |
+| `remnic_compression_guidelines_optimize` | `dryRun?: boolean`, `eventLimit?: number` | Run compression-guideline policy optimization |
+| `remnic_compression_guidelines_activate` | `expectedContentHash?: string`, `expectedGuidelineVersion?: number` | Activate a staged compression-guideline draft |
+| `remnic_memory_governance_run` | `namespace?: string`, `mode?: shadow|apply`, `recentDays?: number`, `maxMemories?: number`, `batchSize?: number` | Run memory governance in shadow or apply mode |
+| `remnic_procedure_mining_run` | `namespace?: string` | Run procedural memory mining |
 | `remnic_procedural_stats` | `namespace?: string` | Read procedural memory stats |
-| `remnic_contradiction_scan_run` | scan options | Run an on-demand contradiction scan |
+| `remnic_contradiction_scan_run` | `namespace?: string` | Run an on-demand contradiction scan |
 | `remnic_memory_summarize_hourly` | none | Generate hourly conversation summaries |
-| `remnic_conversation_index_update` | indexing options | Update the conversation index |
-| `remnic_day_summary` | summary options | Generate a structured end-of-day summary |
-| `remnic_briefing` | briefing options | Generate a daily context briefing |
-| `remnic_context_checkpoint` | `sessionKey: string`, `context: string`, plus checkpoint metadata | Save a structured context checkpoint for a session |
-| `remnic_profiling_report` | profiling options | Generate a profiling report |
+| `remnic_conversation_index_update` | `sessionKey?: string`, `hours?: number`, `embed?: boolean` | Update the conversation index |
+| `remnic_day_summary` | `memories?: string`, `sessionKey?: string`, `namespace?: string` | Generate a structured end-of-day summary |
+| `remnic_briefing` | `since?: string`, `focus?: string`, `namespace?: string`, `format?: markdown|json`, `maxFollowups?: number` | Generate a daily context briefing |
+| `remnic_context_checkpoint` | `sessionKey: string`, `context: string`, `namespace?: string` | Save a structured context checkpoint for a session |
+| `remnic_profiling_report` | `format?: ascii|json`, `limit?: number` | Generate a profiling report |
 
 Each tool handler returns the raw JSON response from the daemon or `{"error": "Not connected to Remnic"}` when the client is not initialized. Direct memory tools use the daemon's REST endpoints where available; debug, explain, and MCP-native memory surfaces are forwarded through the daemon MCP endpoint.
 
