@@ -53,7 +53,8 @@
   "files": [
     "dist",
     "bin/engram-access.js",
-    "openclaw.plugin.json"
+    "openclaw.plugin.json",
+    "scripts/ensure-better-sqlite3.mjs"
   ],
   "dependencies": {
     "@remnic/core": "workspace:^",
@@ -65,6 +66,7 @@
     "apache-arrow": "^18.1.0",
     "better-sqlite3": "^12.6.2",
     "meilisearch": "^0.46.0",
+    "node-gyp": "^12.3.0",
     "openai": "^6.0.0",
     "zod": "^3.24.0"
   },
@@ -103,7 +105,7 @@
     "review:patterns": "bash scripts/check-review-patterns.sh",
     "hooks:install": "bash scripts/install-git-hooks.sh",
     "migrate": "tsx scripts/migrate.ts",
-    "postinstall": "pnpm rebuild better-sqlite3",
+    "postinstall": "node scripts/ensure-better-sqlite3.mjs",
     "prepack": "npm run build"
   },
   "devDependencies": {
