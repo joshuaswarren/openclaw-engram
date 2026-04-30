@@ -18,3 +18,9 @@ remnic connectors install hermes
 ```
 
 Then restart Hermes to pick up the new plugin.
+
+## Which Hermes plugin slot Remnic uses
+
+Remnic registers as a Hermes **`memory_provider`** plugin. **Remnic does not need to register as a Hermes `context_engine`** — that slot replaces Hermes' built-in `ContextCompressor` and is for compressing the agent's own outgoing history. All Remnic capabilities, including Lossless Context Management (LCM), are delivered through the `memory_provider` hook (`pre_llm_call`) and the recall envelope returned by the daemon.
+
+If guidance you encounter (including AI-generated review of the install) tells you LCM requires `register_context_engine`, that guidance is wrong. See the [Hermes plugin reference](../plugins/hermes.md#which-hermes-plugin-slot-remnic-uses) for the full explanation.
