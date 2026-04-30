@@ -3,6 +3,37 @@ from unittest.mock import patch
 
 from remnic_hermes import register
 
+_RECALL_DEBUG_TOOL_SUFFIXES = [
+    "recall_explain",
+    "recall_tier_explain",
+    "recall_xray",
+    "memory_last_recall",
+    "memory_intent_debug",
+    "memory_qmd_debug",
+    "memory_graph_explain",
+    "memory_feedback_last_recall",
+    "set_coding_context",
+]
+
+
+def _populate_provider_mock(provider):  # type: ignore[no-untyped-def]
+    provider.recall_schema = {"name": "remnic_recall"}
+    provider.legacy_recall_schema = {"name": "engram_recall"}
+    provider.recall = object()
+    provider.store_schema = {"name": "remnic_store"}
+    provider.legacy_store_schema = {"name": "engram_store"}
+    provider.store = object()
+    provider.search_schema = {"name": "remnic_search"}
+    provider.legacy_search_schema = {"name": "engram_search"}
+    provider.search = object()
+    provider.lcm_search_schema = {"name": "remnic_lcm_search"}
+    provider.legacy_lcm_search_schema = {"name": "engram_lcm_search"}
+    provider.lcm_search = object()
+    for suffix in _RECALL_DEBUG_TOOL_SUFFIXES:
+        setattr(provider, f"{suffix}_schema", {"name": f"remnic_{suffix}"})
+        setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
+        setattr(provider, suffix, object())
+
 
 def test_register_prefers_remnic_config_key():
     """Hermes registration should pass remnic-keyed config to the provider."""
@@ -17,19 +48,7 @@ def test_register_prefers_remnic_config_key():
     )
 
     with patch("remnic_hermes.RemnicMemoryProvider") as mock_provider:
-        provider = mock_provider.return_value
-        provider.recall_schema = {"name": "remnic_recall"}
-        provider.legacy_recall_schema = {"name": "engram_recall"}
-        provider.recall = object()
-        provider.store_schema = {"name": "remnic_store"}
-        provider.legacy_store_schema = {"name": "engram_store"}
-        provider.store = object()
-        provider.search_schema = {"name": "remnic_search"}
-        provider.legacy_search_schema = {"name": "engram_search"}
-        provider.search = object()
-        provider.lcm_search_schema = {"name": "remnic_lcm_search"}
-        provider.legacy_lcm_search_schema = {"name": "engram_lcm_search"}
-        provider.lcm_search = object()
+        _populate_provider_mock(mock_provider.return_value)
 
         register(ctx)
 
@@ -45,6 +64,8 @@ def test_register_prefers_remnic_config_key():
     assert "engram_store" in registered_tools
     assert "engram_search" in registered_tools
     assert "engram_lcm_search" in registered_tools
+    assert "remnic_recall_explain" in registered_tools
+    assert "engram_recall_explain" in registered_tools
 
 
 def test_register_falls_back_to_engram_config_key():
@@ -56,19 +77,7 @@ def test_register_falls_back_to_engram_config_key():
     )
 
     with patch("remnic_hermes.RemnicMemoryProvider") as mock_provider:
-        provider = mock_provider.return_value
-        provider.recall_schema = {}
-        provider.legacy_recall_schema = {}
-        provider.recall = object()
-        provider.store_schema = {}
-        provider.legacy_store_schema = {}
-        provider.store = object()
-        provider.search_schema = {}
-        provider.legacy_search_schema = {}
-        provider.search = object()
-        provider.lcm_search_schema = {}
-        provider.legacy_lcm_search_schema = {}
-        provider.lcm_search = object()
+        _populate_provider_mock(mock_provider.return_value)
 
         register(ctx)
 

@@ -119,8 +119,17 @@ The plugin searches for a `connector: "hermes"` entry first, then falls back to 
 | `remnic_store` | Store a memory explicitly |
 | `remnic_search` | Full-text search across all stored memories |
 | `remnic_lcm_search` | Search the daemon-side LCM conversation archive |
+| `remnic_recall_explain` | Inspect the last recall snapshot |
+| `remnic_recall_tier_explain` | Inspect tier attribution for the last direct-answer recall |
+| `remnic_recall_xray` | Run recall with X-ray attribution capture |
+| `remnic_memory_last_recall` | Fetch the memory IDs injected in the last recall |
+| `remnic_memory_intent_debug` | Inspect the latest intent/planner snapshot |
+| `remnic_memory_qmd_debug` | Inspect the latest QMD recall snapshot |
+| `remnic_memory_graph_explain` | Inspect graph recall expansion from the last recall |
+| `remnic_memory_feedback_last_recall` | Record relevance feedback for a recalled memory |
+| `remnic_set_coding_context` | Attach coding project context to a session |
 
-During the Engram to Remnic compat window, three legacy aliases are also registered: `engram_recall`, `engram_store`, `engram_search`. These route to the same handlers. Their schema descriptions intentionally say "Engram" (not "Remnic") so that tool names and descriptions agree when a language model surfaces the legacy names. The `engram_*` aliases will be removed in a future major release. New integrations should use the `remnic_*` names.
+During the Engram to Remnic compat window, legacy `engram_*` aliases are also registered for each tool. These route to the same handlers. Their schema descriptions intentionally say "Engram" (not "Remnic") so that tool names and descriptions agree when a language model surfaces the legacy names. The `engram_*` aliases will be removed in a future major release. New integrations should use the `remnic_*` names.
 
 ## Profiles and namespaces
 

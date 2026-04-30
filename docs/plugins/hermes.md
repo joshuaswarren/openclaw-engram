@@ -230,11 +230,20 @@ Closes the `httpx.AsyncClient`. Safe to call when the client was never initializ
 | `remnic_recall` | `query: string` | Recall memories from Remnic matching a natural language query |
 | `remnic_store` | `content: string` | Store a memory in Remnic for future recall |
 | `remnic_search` | `query: string` | Full-text search across all Remnic memories |
-| `remnic_lcm_search` | `query: string`, `sessionKey?: string`, `namespace?: string`, `limit?: number` | Search the daemon-side LCM conversation archive |
+| `remnic_lcm_search` | `query: string`, `sessionKey?: string`, `namespace?: string`, `limit?: integer` | Search the daemon-side LCM conversation archive |
+| `remnic_recall_explain` | `sessionKey?: string`, `namespace?: string` | Return the last recall snapshot |
+| `remnic_recall_tier_explain` | `sessionKey?: string`, `namespace?: string` | Return tier attribution for the last direct-answer recall |
+| `remnic_recall_xray` | `query: string`, `sessionKey?: string`, `namespace?: string`, `budget?: integer`, `disclosure?: chunk|section|raw` | Run recall with X-ray attribution capture |
+| `remnic_memory_last_recall` | `sessionKey?: string` | Fetch the memory IDs injected in the last recall |
+| `remnic_memory_intent_debug` | `namespace?: string` | Inspect the latest intent/planner snapshot |
+| `remnic_memory_qmd_debug` | `namespace?: string` | Inspect the latest QMD recall snapshot |
+| `remnic_memory_graph_explain` | `namespace?: string` | Inspect graph recall expansion from the last recall |
+| `remnic_memory_feedback_last_recall` | `memoryId: string`, `vote: up|down`, `note?: string` | Record relevance feedback for a recalled memory |
+| `remnic_set_coding_context` | `sessionKey: string`, `codingContext?: object|null`, `projectTag?: string` | Attach coding project context to a session |
 
-Each tool handler returns the raw JSON response from the daemon or `{"error": "Not connected to Remnic"}` when the client is not initialized.
+Each tool handler returns the raw JSON response from the daemon or `{"error": "Not connected to Remnic"}` when the client is not initialized. Debug and explain tools are forwarded through the daemon's MCP endpoint because those surfaces are MCP-native.
 
-The `remnic_*` tools give the agent explicit control for cases where automatic recall is insufficient — for example, storing a specific fact the agent has derived mid-session, or searching the LCM archive directly.
+The `remnic_*` tools give the agent explicit control for cases where automatic recall is insufficient — for example, storing a specific fact the agent has derived mid-session, searching the LCM archive directly, or inspecting why a recall result appeared.
 
 ---
 
@@ -290,13 +299,14 @@ curl -s http://127.0.0.1:4318/engram/v1/health
 
 ## Engram compat window
 
-During the Engram to Remnic rebrand, the plugin registers six tools instead of three:
+During the Engram to Remnic rebrand, the plugin registers legacy aliases for every Remnic tool:
 
 | Tool name | Status | Notes |
 |-----------|--------|-------|
 | `remnic_recall` | Current | Use for new integrations |
 | `remnic_store` | Current | Use for new integrations |
 | `remnic_search` | Current | Use for new integrations |
+| `remnic_lcm_search` | Current | Use for new integrations |
 | `engram_recall` | Legacy alias | Routes to the same handler as `remnic_recall` |
 | `engram_store` | Legacy alias | Routes to the same handler as `remnic_store` |
 | `engram_search` | Legacy alias | Routes to the same handler as `remnic_search` |

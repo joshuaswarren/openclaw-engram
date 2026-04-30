@@ -26,8 +26,10 @@ class RemnicClient:
         timeout: float = 30.0,
     ) -> None:
         self.base_url = f"http://{host}:{port}/engram/v1"
+        self.mcp_url = f"http://{host}:{port}/mcp"
         self.token = token
         self.client_id = client_id
+        self._mcp_request_id = 0
         self._http = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=timeout,
@@ -37,6 +39,23 @@ class RemnicClient:
                 "X-Engram-Client-Id": client_id,
             },
         )
+
+    async def _mcp_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        self._mcp_request_id += 1
+        resp = await self._http.post(
+            self.mcp_url,
+            json={
+                "jsonrpc": "2.0",
+                "id": self._mcp_request_id,
+                "method": "tools/call",
+                "params": {
+                    "name": name,
+                    "arguments": arguments,
+                },
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
 
     async def recall(
         self,
@@ -100,6 +119,36 @@ class RemnicClient:
         resp = await self._http.post("/lcm/search", json=body)
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
+
+    async def recall_explain(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.recall_explain", kwargs)
+
+    async def recall_tier_explain(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.recall_tier_explain", kwargs)
+
+    async def recall_xray(self, query: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.recall_xray", {"query": query, **kwargs})
+
+    async def memory_last_recall(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_last_recall", kwargs)
+
+    async def memory_intent_debug(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_intent_debug", kwargs)
+
+    async def memory_qmd_debug(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_qmd_debug", kwargs)
+
+    async def memory_graph_explain(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_graph_explain", kwargs)
+
+    async def memory_feedback_last_recall(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.memory_feedback", kwargs)
+
+    async def set_coding_context(self, session_key: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool(
+            "engram.set_coding_context",
+            {"sessionKey": session_key, **kwargs},
+        )
 
     async def health(self) -> dict[str, Any]:
         resp = await self._http.get("/health")
