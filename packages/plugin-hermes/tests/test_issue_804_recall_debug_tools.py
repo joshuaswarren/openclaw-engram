@@ -99,6 +99,7 @@ def test_issue_804_tools_are_registered_with_primary_and_legacy_names() -> None:
     assert expected_primary.issubset(ctx.tools)
     assert expected_legacy.issubset(ctx.tools)
     assert ctx.tools["remnic_recall_xray"]["schema"]["parameters"]["required"] == ["query"]
+    assert ctx.tools["remnic_store"]["schema"]["parameters"]["additionalProperties"] is True
     assert ctx.tools["remnic_set_coding_context"]["schema"]["parameters"]["required"] == ["sessionKey"]
     assert ctx.tools["remnic_set_coding_context"]["schema"]["parameters"]["anyOf"] == [
         {"required": ["codingContext"]},
