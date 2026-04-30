@@ -337,6 +337,18 @@ class RemnicClient:
     async def conversation_index_update(self, **kwargs: Any) -> dict[str, Any]:
         return await self._mcp_tool("engram.conversation_index_update", kwargs)
 
+    async def day_summary(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.day_summary", kwargs)
+
+    async def briefing(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.briefing", kwargs)
+
+    async def context_checkpoint(self, session_key: str, context: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool(
+            "engram.context_checkpoint",
+            {"sessionKey": session_key, "context": context, **kwargs},
+        )
+
     async def close(self) -> None:
         await self._http.aclose()
 
