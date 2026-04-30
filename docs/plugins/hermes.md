@@ -11,6 +11,7 @@ Canonical upstream references:
 
 ## Contents
 
+- [Which Hermes plugin slot Remnic uses](#which-hermes-plugin-slot-remnic-uses)
 - [Why MemoryProvider](#why-memoryprovider)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
@@ -25,6 +26,22 @@ Canonical upstream references:
 - [Troubleshooting](#troubleshooting)
 - [Migration notes (Engram era)](#migration-notes-engram-era)
 - [Uninstall](#uninstall)
+
+---
+
+## Which Hermes plugin slot Remnic uses
+
+Remnic registers as a Hermes **`memory_provider`** plugin (`plugin.yaml` declares `type: memory_provider`). This is the only slot Remnic occupies and the only slot it needs.
+
+**Remnic does not, and should not, register as a Hermes `context_engine`.** Hermes' `context_engine` slot replaces the built-in `ContextCompressor` — it controls how Hermes compresses *its own outgoing conversation history* before sending to the LLM. That is a different concern from external memory recall. Remnic delivers all of the following through the `memory_provider` hook chain (`pre_llm_call` → recall envelope), with no `context_engine` registration involved:
+
+- Recalled memories from the Remnic store
+- Lossless Context Management (LCM) compressed-history sections, when the Remnic daemon has `lcmEnabled: true`
+- Entity context, identity anchors, continuity loops, and any other recall-side enrichment served by the daemon
+
+If a static analysis tool, AI reviewer, or third-party guide tells you "Remnic needs `register_context_engine` in Hermes to enable LCM," that guidance is incorrect. LCM lives on the Remnic daemon. It is delivered to Hermes via the recall response. The `memory_provider` hook is the correct and sufficient integration point.
+
+A Remnic-backed `ContextEngine` (one that uses Remnic's LCM to compress Hermes' *local* history) is a possible future additive feature. It is not required for any of the capabilities Remnic exposes today.
 
 ---
 
