@@ -32,7 +32,9 @@ Canonical upstream references:
 
 ## Which Hermes plugin slot Remnic uses
 
-Remnic registers as a Hermes **`memory_provider`** plugin (`plugin.yaml` declares `type: memory_provider`). This is the only slot Remnic occupies and the only slot it needs.
+Remnic registers as a Hermes **memory provider** (`plugin.yaml` declares `kind: exclusive`, the Hermes manifest kind used for provider plugins selected through `memory.provider`). This is the only slot Remnic occupies and the only slot it needs.
+
+The manifest declares Hermes-supported capability metadata with `provides_tools` and `provides_hooks`. It does not declare or register a context engine.
 
 **Remnic does not, and should not, register as a Hermes `context_engine`.** Hermes' `context_engine` slot replaces the built-in `ContextCompressor` — it controls how Hermes compresses *its own outgoing conversation history* before sending to the LLM. That is a different concern from external memory recall. Remnic delivers all of the following through the `memory_provider` hook chain (`pre_llm_call` → recall envelope), with no `context_engine` registration involved:
 
@@ -232,7 +234,7 @@ Closes the `httpx.AsyncClient`. Safe to call when the client was never initializ
 
 Audit date: 2026-04-30. Upstream Hermes reference used: `NousResearch/hermes-agent` commit `1d8068d` (`2026-04-30T12:57:02-07:00`).
 
-Remnic remains a `memory_provider` plugin. The Hermes `context_engine` slot is still intentionally unused because it replaces Hermes' local `ContextCompressor`; it is not the right slot for recall, observation, heartbeat, dreams, or reset handling.
+Remnic remains a Hermes memory provider plugin. In `plugin.yaml`, `kind: exclusive` marks the package as an exclusive provider selected by `memory.provider`, `provides_tools` enumerates the Remnic and legacy Engram tool surfaces, and `provides_hooks` declares the wired `on_session_reset` hook. The Hermes `context_engine` slot is still intentionally unused because it replaces Hermes' local `ContextCompressor`; it is not the right slot for recall, observation, heartbeat, dreams, or reset handling.
 
 | OpenClaw surface | Hermes surface | Status | Remnic behavior |
 |------------------|----------------|--------|-----------------|
