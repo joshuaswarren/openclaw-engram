@@ -12,7 +12,7 @@ function tmpDir(prefix: string): string {
   return path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
 }
 
-function minimalConfig(memoryDir: string, sharedContextDir: string): PluginConfig {
+function minimalConfig(memoryDir: string, sharedContextDir?: string): PluginConfig {
   return {
     openaiApiKey: undefined,
     model: "gpt-5.2",
@@ -202,6 +202,40 @@ test("v5 compounding extracts patterns from feedback learning/rejections", async
   assert.ok(mistakes!.patterns.some((p) => p.includes("seo-digest: Always include confidence score")));
   assert.ok(mistakes!.patterns.some((p) => p.includes("client-health: WRONG DATA")));
   assert.ok(mistakes!.registry?.some((entry) => entry.agent === "seo-digest"));
+});
+
+test("v5 compounding defaults shared feedback under configured workspace", async () => {
+  const memoryDir = tmpDir("remnic-compound-workspace-mem");
+  await mkdir(memoryDir, { recursive: true });
+
+  const cfg = minimalConfig(memoryDir);
+  const feedbackDir = path.join(cfg.workspaceDir, "shared-context", "feedback");
+  await mkdir(feedbackDir, { recursive: true });
+  await writeFile(
+    path.join(feedbackDir, "inbox.jsonl"),
+    [
+      JSON.stringify({
+        agent: "bench-agent",
+        decision: "approved_with_feedback",
+        reason: "Make benchmark isolation explicit",
+        date: new Date().toISOString(),
+        learning: "Always keep benchmark shared context inside the run workspace",
+      }),
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const eng = new CompoundingEngine(cfg);
+  await eng.synthesizeWeekly();
+  const mistakes = await eng.readMistakes();
+
+  assert.ok(mistakes);
+  assert.ok(
+    mistakes!.patterns.some((pattern) =>
+      pattern.includes("bench-agent: Always keep benchmark shared context inside the run workspace"),
+    ),
+  );
 });
 
 test("v5 compounding ingests failing memory-action patterns", async () => {

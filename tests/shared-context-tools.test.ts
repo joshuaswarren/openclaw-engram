@@ -122,3 +122,74 @@ test("shared_context_cross_signals_run generates markdown and json artifacts on 
     await rm(sharedDir, { recursive: true, force: true });
   }
 });
+
+test("shared context defaults under configured workspace directory", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-shared-workspace-memory-"));
+  try {
+    const workspaceDir = path.join(memoryDir, "workspace");
+    const config = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: true,
+    });
+    const manager = new SharedContextManager(config);
+
+    assert.equal(manager.dir, path.join(workspaceDir, "shared-context"));
+    await manager.ensureStructure();
+
+    const priorities = await readFile(path.join(workspaceDir, "shared-context", "priorities.md"), "utf-8");
+    assert.match(priorities, /# Priorities/);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("shared context workspace fallback expands leading tilde", async () => {
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "remnic-shared-home-"));
+  const originalHome = process.env.HOME;
+  process.env.HOME = homeDir;
+  try {
+    const memoryDir = path.join(homeDir, "memory");
+    const config = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir: "~/bench-workspace",
+      qmdEnabled: false,
+      sharedContextEnabled: true,
+    });
+    const manager = new SharedContextManager(config);
+
+    assert.equal(manager.dir, path.join(homeDir, "bench-workspace", "shared-context"));
+  } finally {
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("explicit shared context directory overrides workspace fallback", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-shared-explicit-memory-"));
+  const sharedDir = await mkdtemp(path.join(os.tmpdir(), "remnic-shared-explicit-dir-"));
+  try {
+    const config = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir: path.join(memoryDir, "workspace"),
+      qmdEnabled: false,
+      sharedContextEnabled: true,
+      sharedContextDir: sharedDir,
+    });
+    const manager = new SharedContextManager(config);
+
+    assert.equal(manager.dir, sharedDir);
+    await manager.ensureStructure();
+
+    const priorities = await readFile(path.join(sharedDir, "priorities.md"), "utf-8");
+    assert.match(priorities, /# Priorities/);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(sharedDir, { recursive: true, force: true });
+  }
+});
