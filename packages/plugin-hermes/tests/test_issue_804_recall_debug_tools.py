@@ -32,12 +32,7 @@ async def test_issue_804_client_methods_call_daemon_mcp_tools(client: RemnicClie
     await client.memory_feedback_last_recall(memoryId="fact-1", vote="down", note="stale")
     await client.set_coding_context(
         "hermes-session",
-        codingContext={
-            "projectId": "root:abc",
-            "branch": "main",
-            "rootPath": "/repo",
-            "defaultBranch": "main",
-        },
+        codingContext=None,
     )
 
     calls = client._http.post.await_args_list
@@ -63,6 +58,10 @@ async def test_issue_804_client_methods_call_daemon_mcp_tools(client: RemnicClie
         "memoryId": "fact-1",
         "vote": "down",
         "note": "stale",
+    }
+    assert calls[8].kwargs["json"]["params"]["arguments"] == {
+        "sessionKey": "hermes-session",
+        "codingContext": None,
     }
 
 
@@ -101,6 +100,10 @@ def test_issue_804_tools_are_registered_with_primary_and_legacy_names() -> None:
     assert expected_legacy.issubset(ctx.tools)
     assert ctx.tools["remnic_recall_xray"]["schema"]["parameters"]["required"] == ["query"]
     assert ctx.tools["remnic_set_coding_context"]["schema"]["parameters"]["required"] == ["sessionKey"]
+    assert ctx.tools["remnic_set_coding_context"]["schema"]["parameters"]["anyOf"] == [
+        {"required": ["codingContext"]},
+        {"required": ["projectTag"]},
+    ]
     assert ctx.tools["engram_memory_feedback_last_recall"]["schema"]["name"] == "engram_memory_feedback_last_recall"
 
 
