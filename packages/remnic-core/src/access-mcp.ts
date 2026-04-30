@@ -2353,12 +2353,17 @@ export class EngramMcpServer {
       case "remnic.memory_summarize_hourly":
         return this.service.memorySummarizeHourly();
       case "engram.conversation_index_update":
-      case "remnic.conversation_index_update":
+      case "remnic.conversation_index_update": {
+        if ("sessionKey" in args && args.sessionKey !== undefined && typeof args.sessionKey !== "string") {
+          throw new Error("sessionKey must be a string when provided");
+        }
+        const sessionKey = typeof args.sessionKey === "string" ? args.sessionKey : undefined;
         return this.service.conversationIndexUpdate({
-          sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
+          sessionKey,
           hours: typeof args.hours === "number" && Number.isFinite(args.hours) ? args.hours : undefined,
           embed: typeof args.embed === "boolean" ? args.embed : undefined,
         });
+      }
       case "engram.graph_edge_decay_run":
       case "remnic.graph_edge_decay_run": {
         // Issue #681 PR 2/3 — gated by config; tool always callable, but

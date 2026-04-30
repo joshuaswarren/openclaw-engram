@@ -216,3 +216,24 @@ test("MCP maintenance: conversation index update preserves omitted embed default
     embed: undefined,
   });
 });
+
+test("MCP maintenance: conversation index update rejects non-string sessionKey", async () => {
+  let called = false;
+  const service = {
+    ...makeMockService(),
+    conversationIndexUpdate: async () => {
+      called = true;
+      return { ok: true };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(service);
+
+  const response = await server.handleRequest(
+    makeToolRequest("engram.conversation_index_update", {
+      sessionKey: 123,
+    }),
+  );
+
+  assert.equal(called, false);
+  assert.equal((response as Record<string, unknown> & { result?: { isError?: boolean } }).result?.isError, true);
+});
