@@ -157,7 +157,12 @@ class RemnicMemoryProvider:
                 "query": {"type": "string", "description": "Search query"},
                 "sessionKey": {"type": "string", "description": "Optional session filter"},
                 "namespace": {"type": "string"},
-                "limit": {"type": "number", "description": "Max results to return"},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Max results to return",
+                },
             },
             "required": ["query"],
             "additionalProperties": False,
@@ -221,7 +226,7 @@ class RemnicMemoryProvider:
             return {"error": "Not connected to Remnic"}
         return await self._client.lcm_search(
             query=query,
-            session_key=sessionKey or self._session_key,
+            session_key=sessionKey,
             namespace=namespace,
             limit=limit,
         )

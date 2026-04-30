@@ -147,6 +147,9 @@ class TestLcmSearchTool:
         assert schema["required"] == ["query"]
         assert schema["additionalProperties"] is False
         assert set(schema["properties"]) == {"query", "sessionKey", "namespace", "limit"}
+        assert schema["properties"]["limit"]["type"] == "integer"
+        assert schema["properties"]["limit"]["minimum"] == 1
+        assert schema["properties"]["limit"]["maximum"] == 100
 
     @pytest.mark.asyncio
     async def test_lcm_search_handler_uses_client(self, provider):
@@ -167,6 +170,21 @@ class TestLcmSearchTool:
             session_key="explicit-session",
             namespace="research",
             limit=3,
+        )
+
+    @pytest.mark.asyncio
+    async def test_lcm_search_handler_preserves_unscoped_calls(self, provider):
+        client = AsyncMock()
+        client.lcm_search = AsyncMock(return_value={"count": 2, "results": []})
+        provider._client = client
+
+        await provider.lcm_search("archive")
+
+        client.lcm_search.assert_awaited_once_with(
+            query="archive",
+            session_key="",
+            namespace=None,
+            limit=None,
         )
 
 
