@@ -221,6 +221,27 @@ def _register_issue_810_tools(  # type: ignore[no-untyped-def]
         )
 
 
+_COMPRESSION_GUIDELINE_TOOLS = [
+    ("compression_guidelines_optimize", "compression_guidelines_optimize"),
+    ("compression_guidelines_activate", "compression_guidelines_activate"),
+]
+
+
+def _register_issue_811_tools(  # type: ignore[no-untyped-def]
+    ctx,
+    provider: RemnicMemoryProvider,
+    prefix: str,
+    legacy: bool = False,
+):
+    schema_prefix = "legacy_" if legacy else ""
+    for tool_suffix, handler_name in _COMPRESSION_GUIDELINE_TOOLS:
+        ctx.register_tool(
+            f"{prefix}_{tool_suffix}",
+            getattr(provider, f"{schema_prefix}{tool_suffix}_schema"),
+            getattr(provider, handler_name),
+        )
+
+
 def register(ctx):  # type: ignore[no-untyped-def]
     """Hermes plugin entry point. Registers the MemoryProvider and explicit tools."""
     config = ctx.config.get("remnic")
@@ -244,6 +265,7 @@ def register(ctx):  # type: ignore[no-untyped-def]
     _register_issue_808_tools(ctx, provider, "remnic")
     _register_issue_809_tools(ctx, provider, "remnic")
     _register_issue_810_tools(ctx, provider, "remnic")
+    _register_issue_811_tools(ctx, provider, "remnic")
 
     # Legacy tool aliases — existing Hermes configs may reference the engram_*
     # names. Keep them wired until the compat window closes.
@@ -260,3 +282,4 @@ def register(ctx):  # type: ignore[no-untyped-def]
     _register_issue_808_tools(ctx, provider, "engram", legacy=True)
     _register_issue_809_tools(ctx, provider, "engram", legacy=True)
     _register_issue_810_tools(ctx, provider, "engram", legacy=True)
+    _register_issue_811_tools(ctx, provider, "engram", legacy=True)

@@ -313,6 +313,12 @@ class RemnicClient:
             {"weekId": week_id, "candidateId": candidate_id, **kwargs},
         )
 
+    async def compression_guidelines_optimize(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.compression_guidelines_optimize", kwargs)
+
+    async def compression_guidelines_activate(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._mcp_tool("engram.compression_guidelines_activate", kwargs)
+
     async def close(self) -> None:
         await self._http.aclose()
 
