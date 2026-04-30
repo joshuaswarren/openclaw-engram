@@ -9,6 +9,33 @@ from remnic_hermes.client import RemnicClient
 from remnic_hermes.config import RemnicHermesConfig
 
 
+_NAMESPACE = {"type": "string"}
+_STRING_ARRAY = {"type": "array", "items": {"type": "string"}}
+_DISCLOSURE = {"type": "string", "enum": ["chunk", "section", "raw"]}
+
+
+def _schema(
+    name: str,
+    description: str,
+    properties: dict[str, Any],
+    required: list[str] | None = None,
+    *,
+    additional_properties: bool = False,
+) -> dict[str, Any]:
+    parameters: dict[str, Any] = {
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": additional_properties,
+    }
+    if required:
+        parameters["required"] = required
+    return {"name": name, "description": description, "parameters": parameters}
+
+
+def _legacy_schema(schema: dict[str, Any], name: str, description: str) -> dict[str, Any]:
+    return {**schema, "name": name, "description": description}
+
+
 class RemnicMemoryProvider:
     """MemoryProvider that delegates to the Remnic daemon via HTTP.
 
@@ -111,89 +138,199 @@ class RemnicMemoryProvider:
             await self._client.close()
             self._client = None
 
-    # -- Explicit tool schemas for Hermes tool registration --
+    # -- Existing explicit tool schemas for Hermes tool registration --
 
-    recall_schema = {
-        "name": "remnic_recall",
-        "description": "Recall memories from Remnic matching a natural language query",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Natural language recall query"},
-            },
-            "required": ["query"],
-        },
-    }
+    recall_schema = _schema(
+        "remnic_recall",
+        "Recall memories from Remnic matching a natural language query",
+        {"query": {"type": "string", "description": "Natural language recall query"}},
+        ["query"],
+    )
+    store_schema = _schema(
+        "remnic_store",
+        "Store a memory in Remnic for future recall",
+        {"content": {"type": "string", "description": "Memory content to store"}},
+        ["content"],
+        additional_properties=True,
+    )
+    search_schema = _schema(
+        "remnic_search",
+        "Full-text search across all Remnic memories",
+        {"query": {"type": "string", "description": "Search query"}},
+        ["query"],
+    )
 
-    store_schema = {
-        "name": "remnic_store",
-        "description": "Store a memory in Remnic for future recall",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "content": {"type": "string", "description": "Memory content to store"},
-            },
-            "required": ["content"],
-        },
-    }
+    legacy_recall_schema = _legacy_schema(
+        recall_schema,
+        "engram_recall",
+        "Recall memories from Engram matching a natural language query",
+    )
+    legacy_store_schema = _legacy_schema(
+        store_schema,
+        "engram_store",
+        "Store a memory in Engram for future recall",
+    )
+    legacy_search_schema = _legacy_schema(
+        search_schema,
+        "engram_search",
+        "Full-text search across all Engram memories",
+    )
 
-    search_schema = {
-        "name": "remnic_search",
-        "description": "Full-text search across all Remnic memories",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query"},
-            },
-            "required": ["query"],
-        },
-    }
-    lcm_search_schema = {
-        "name": "remnic_lcm_search",
-        "description": "Search the daemon-side Lossless Context Management conversation archive",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query"},
-                "sessionKey": {"type": "string", "description": "Optional session filter"},
-                "namespace": {"type": "string"},
-                "limit": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 100,
-                    "description": "Max results to return",
-                },
-            },
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-    }
+    # -- Issue #804 recall debug / explain tool schemas --
 
-    # Legacy schemas — same handlers, engram_* tool names. Kept so existing
-    # Hermes configs that reference engram_recall / engram_store / engram_search
-    # continue to resolve. Descriptions keep the Engram brand so the tool name
-    # and description agree when LLMs surface the legacy names. Remove once
-    # the compat window closes.
-    legacy_recall_schema = {
-        **recall_schema,
-        "name": "engram_recall",
-        "description": "Recall memories from Engram matching a natural language query",
-    }
-    legacy_store_schema = {
-        **store_schema,
-        "name": "engram_store",
-        "description": "Store a memory in Engram for future recall",
-    }
-    legacy_search_schema = {
-        **search_schema,
-        "name": "engram_search",
-        "description": "Full-text search across all Engram memories",
-    }
-    legacy_lcm_search_schema = {
-        **lcm_search_schema,
-        "name": "engram_lcm_search",
-        "description": "Search the daemon-side Engram Lossless Context Management conversation archive",
-    }
+    recall_explain_schema = _schema(
+        "remnic_recall_explain",
+        "Return the last recall snapshot for a Hermes session or the most recent one.",
+        {"sessionKey": {"type": "string"}, "namespace": _NAMESPACE},
+    )
+    recall_tier_explain_schema = _schema(
+        "remnic_recall_tier_explain",
+        "Return structured tier attribution for the last direct-answer-eligible recall.",
+        {"sessionKey": {"type": "string"}, "namespace": _NAMESPACE},
+    )
+    recall_xray_schema = _schema(
+        "remnic_recall_xray",
+        "Run recall with X-ray attribution capture enabled.",
+        {
+            "query": {"type": "string", "description": "Query to recall against."},
+            "sessionKey": {"type": "string"},
+            "namespace": _NAMESPACE,
+            "budget": {"type": "integer", "minimum": 1},
+            "disclosure": _DISCLOSURE,
+        },
+        ["query"],
+    )
+    memory_last_recall_schema = _schema(
+        "remnic_memory_last_recall",
+        "Fetch the last set of memory IDs injected into context for a session.",
+        {"sessionKey": {"type": "string"}},
+    )
+    memory_intent_debug_schema = _schema(
+        "remnic_memory_intent_debug",
+        "Inspect the last persisted planner/intent snapshot.",
+        {"namespace": _NAMESPACE},
+    )
+    memory_qmd_debug_schema = _schema(
+        "remnic_memory_qmd_debug",
+        "Inspect the last persisted QMD recall snapshot.",
+        {"namespace": _NAMESPACE},
+    )
+    memory_graph_explain_schema = _schema(
+        "remnic_memory_graph_explain",
+        "Inspect the last graph-mode recall expansion snapshot.",
+        {"namespace": _NAMESPACE},
+    )
+    memory_feedback_last_recall_schema = _schema(
+        "remnic_memory_feedback_last_recall",
+        "Record relevance feedback for a memory returned by recall.",
+        {
+            "memoryId": {"type": "string"},
+            "vote": {"type": "string", "enum": ["up", "down"]},
+            "note": {"type": "string"},
+        },
+        ["memoryId", "vote"],
+    )
+    set_coding_context_schema = _schema(
+        "remnic_set_coding_context",
+        "Attach or clear coding context for a Hermes session.",
+        {
+            "sessionKey": {"type": "string"},
+            "codingContext": {
+                "anyOf": [
+                    {"type": "null"},
+                    {
+                        "type": "object",
+                        "properties": {
+                            "projectId": {"type": "string"},
+                            "branch": {"type": ["string", "null"]},
+                            "rootPath": {"type": "string"},
+                            "defaultBranch": {"type": ["string", "null"]},
+                        },
+                        "required": [
+                            "projectId",
+                            "branch",
+                            "rootPath",
+                            "defaultBranch",
+                        ],
+                        "additionalProperties": False,
+                    },
+                ]
+            },
+            "projectTag": {"type": "string"},
+        },
+        ["sessionKey"],
+    )
+    set_coding_context_schema["parameters"]["anyOf"] = [
+        {"required": ["codingContext"]},
+        {"required": ["projectTag"]},
+    ]
+    lcm_search_schema = _schema(
+        "remnic_lcm_search",
+        "Search the daemon-side Lossless Context Management conversation archive",
+        {
+            "query": {"type": "string", "description": "Search query"},
+            "sessionKey": {"type": "string", "description": "Optional session filter"},
+            "namespace": {"type": "string"},
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Max results to return",
+            },
+        },
+        ["query"],
+    )
+
+    legacy_recall_explain_schema = _legacy_schema(
+        recall_explain_schema,
+        "engram_recall_explain",
+        "Return the last Engram recall snapshot for a session or the most recent one.",
+    )
+    legacy_recall_tier_explain_schema = _legacy_schema(
+        recall_tier_explain_schema,
+        "engram_recall_tier_explain",
+        "Return structured Engram tier attribution for the last recall.",
+    )
+    legacy_recall_xray_schema = _legacy_schema(
+        recall_xray_schema,
+        "engram_recall_xray",
+        "Run Engram recall with X-ray attribution capture enabled.",
+    )
+    legacy_memory_last_recall_schema = _legacy_schema(
+        memory_last_recall_schema,
+        "engram_memory_last_recall",
+        "Fetch the last set of Engram memory IDs injected into context.",
+    )
+    legacy_memory_intent_debug_schema = _legacy_schema(
+        memory_intent_debug_schema,
+        "engram_memory_intent_debug",
+        "Inspect the last persisted Engram planner/intent snapshot.",
+    )
+    legacy_memory_qmd_debug_schema = _legacy_schema(
+        memory_qmd_debug_schema,
+        "engram_memory_qmd_debug",
+        "Inspect the last persisted Engram QMD recall snapshot.",
+    )
+    legacy_memory_graph_explain_schema = _legacy_schema(
+        memory_graph_explain_schema,
+        "engram_memory_graph_explain",
+        "Inspect the last Engram graph-mode recall expansion snapshot.",
+    )
+    legacy_memory_feedback_last_recall_schema = _legacy_schema(
+        memory_feedback_last_recall_schema,
+        "engram_memory_feedback_last_recall",
+        "Record Engram relevance feedback for a memory returned by recall.",
+    )
+    legacy_set_coding_context_schema = _legacy_schema(
+        set_coding_context_schema,
+        "engram_set_coding_context",
+        "Attach or clear coding context for an Engram session.",
+    )
+    legacy_lcm_search_schema = _legacy_schema(
+        lcm_search_schema,
+        "engram_lcm_search",
+        "Search the daemon-side Engram Lossless Context Management conversation archive",
+    )
 
     async def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
         """Tool handler for remnic_recall / engram_recall."""
@@ -230,6 +367,51 @@ class RemnicMemoryProvider:
             namespace=namespace,
             limit=limit,
         )
+
+    async def recall_explain(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.recall_explain(**kwargs)
+
+    async def recall_tier_explain(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.recall_tier_explain(**kwargs)
+
+    async def recall_xray(self, query: str, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.recall_xray(query=query, **kwargs)
+
+    async def memory_last_recall(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.memory_last_recall(**kwargs)
+
+    async def memory_intent_debug(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.memory_intent_debug(**kwargs)
+
+    async def memory_qmd_debug(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.memory_qmd_debug(**kwargs)
+
+    async def memory_graph_explain(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.memory_graph_explain(**kwargs)
+
+    async def memory_feedback_last_recall(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.memory_feedback_last_recall(**kwargs)
+
+    async def set_coding_context(self, sessionKey: str, **kwargs: Any) -> dict[str, Any]:  # noqa: N803
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.set_coding_context(sessionKey, **kwargs)
 
 
 # Legacy class alias — import path compat for pre-rename consumers.
