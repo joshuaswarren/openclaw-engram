@@ -5,3 +5,12 @@ author: Joshua Warren
 homepage: https://github.com/joshuaswarren/remnic
 entry: remnic_hermes
 type: memory_provider
+tools:
+  - remnic_recall
+  - remnic_store
+  - remnic_search
+  - remnic_lcm_search
+  - engram_recall
+  - engram_store
+  - engram_search
+  - engram_lcm_search

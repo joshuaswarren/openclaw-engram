@@ -27,6 +27,9 @@ def test_register_prefers_remnic_config_key():
         provider.search_schema = {"name": "remnic_search"}
         provider.legacy_search_schema = {"name": "engram_search"}
         provider.search = object()
+        provider.lcm_search_schema = {"name": "remnic_lcm_search"}
+        provider.legacy_lcm_search_schema = {"name": "engram_lcm_search"}
+        provider.lcm_search = object()
 
         register(ctx)
 
@@ -37,9 +40,11 @@ def test_register_prefers_remnic_config_key():
     assert "remnic_recall" in registered_tools
     assert "remnic_store" in registered_tools
     assert "remnic_search" in registered_tools
+    assert "remnic_lcm_search" in registered_tools
     assert "engram_recall" in registered_tools
     assert "engram_store" in registered_tools
     assert "engram_search" in registered_tools
+    assert "engram_lcm_search" in registered_tools
 
 
 def test_register_falls_back_to_engram_config_key():
@@ -61,6 +66,9 @@ def test_register_falls_back_to_engram_config_key():
         provider.search_schema = {}
         provider.legacy_search_schema = {}
         provider.search = object()
+        provider.lcm_search_schema = {}
+        provider.legacy_lcm_search_schema = {}
+        provider.lcm_search = object()
 
         register(ctx)
 

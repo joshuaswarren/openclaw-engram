@@ -34,6 +34,52 @@ class TestClientClose:
         client._http.aclose.assert_awaited_once()
 
 
+class TestClientRecall:
+    @pytest.mark.asyncio
+    async def test_recall_omits_mode_by_default(self, client):
+        response = MagicMock()
+        response.json.return_value = {"context": "memory", "count": 1}
+        client._http = MagicMock()
+        client._http.post = AsyncMock(return_value=response)
+
+        await client.recall("what did we decide", session_key="hermes-session")
+
+        client._http.post.assert_awaited_once_with(
+            "/recall",
+            json={
+                "query": "what did we decide",
+                "sessionKey": "hermes-session",
+                "topK": 8,
+            },
+        )
+
+
+class TestClientLcmSearch:
+    @pytest.mark.asyncio
+    async def test_lcm_search_posts_to_lcm_endpoint(self, client):
+        response = MagicMock()
+        response.json.return_value = {"query": "archive", "results": [], "count": 0}
+        client._http = MagicMock()
+        client._http.post = AsyncMock(return_value=response)
+
+        await client.lcm_search(
+            "archive",
+            session_key="hermes-session",
+            namespace="research",
+            limit=5,
+        )
+
+        client._http.post.assert_awaited_once_with(
+            "/lcm/search",
+            json={
+                "query": "archive",
+                "sessionKey": "hermes-session",
+                "namespace": "research",
+                "limit": 5,
+            },
+        )
+
+
 class TestLegacyAlias:
     def test_engram_client_is_alias(self):
         """The legacy EngramClient name resolves to RemnicClient."""

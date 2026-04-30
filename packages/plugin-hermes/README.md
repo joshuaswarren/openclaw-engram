@@ -45,7 +45,7 @@ If you have read documentation or third-party reviews suggesting Remnic must reg
    ```bash
    hermes --version && pip show remnic-hermes
    ```
-   Your agent should now have access to `remnic_recall`, `remnic_store`, and `remnic_search` tools. Call `remnic_recall` with any query to confirm memories are returned.
+Your agent should now have access to `remnic_recall`, `remnic_store`, `remnic_search`, and `remnic_lcm_search` tools. Call `remnic_recall` with any query to confirm memories are returned.
 
 ## Manual configuration
 
@@ -118,6 +118,7 @@ The plugin searches for a `connector: "hermes"` entry first, then falls back to 
 | `remnic_recall` | Recall memories matching a natural language query |
 | `remnic_store` | Store a memory explicitly |
 | `remnic_search` | Full-text search across all stored memories |
+| `remnic_lcm_search` | Search the daemon-side LCM conversation archive |
 
 During the Engram to Remnic compat window, three legacy aliases are also registered: `engram_recall`, `engram_store`, `engram_search`. These route to the same handlers. Their schema descriptions intentionally say "Engram" (not "Remnic") so that tool names and descriptions agree when a language model surfaces the legacy names. The `engram_*` aliases will be removed in a future major release. New integrations should use the `remnic_*` names.
 
@@ -177,6 +178,12 @@ remnic connectors remove hermes
 ```
 
 `remnic connectors remove hermes` revokes the token and removes the config entry from Hermes `config.yaml`.
+
+## LCM in Hermes
+
+`remnic_lcm_search` searches the Remnic daemon's Lossless Context Management archive on demand. The legacy `engram_lcm_search` alias is registered for existing Engram-era Hermes configurations.
+
+LCM runs daemon-side and reaches Hermes through the `memory_provider` recall path. Remnic does not register, and does not need, a Hermes `context_engine` slot for this feature.
 
 ## Further reading
 
