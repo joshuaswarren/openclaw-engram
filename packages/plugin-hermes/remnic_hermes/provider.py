@@ -945,6 +945,36 @@ class RemnicMemoryProvider:
         "Promote an Engram compounding candidate into durable memory.",
     )
 
+    # -- Issue #811 compression guideline policy tool schemas --
+
+    compression_guidelines_optimize_schema = _schema(
+        "remnic_compression_guidelines_optimize",
+        "Run the compression guideline optimizer.",
+        {
+            "dryRun": {"type": "boolean"},
+            "eventLimit": {"type": "number"},
+        },
+    )
+    compression_guidelines_activate_schema = _schema(
+        "remnic_compression_guidelines_activate",
+        "Promote a staged compression guideline draft to active.",
+        {
+            "expectedContentHash": {"type": "string"},
+            "expectedGuidelineVersion": {"type": "number"},
+        },
+    )
+
+    legacy_compression_guidelines_optimize_schema = _legacy_schema(
+        compression_guidelines_optimize_schema,
+        "engram_compression_guidelines_optimize",
+        "Run the Engram compression guideline optimizer.",
+    )
+    legacy_compression_guidelines_activate_schema = _legacy_schema(
+        compression_guidelines_activate_schema,
+        "engram_compression_guidelines_activate",
+        "Promote a staged Engram compression guideline draft to active.",
+    )
+
     async def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
         """Tool handler for remnic_recall / engram_recall."""
         if not self._client:
@@ -1252,6 +1282,16 @@ class RemnicMemoryProvider:
             candidate_id=candidateId,
             **kwargs,
         )
+
+    async def compression_guidelines_optimize(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.compression_guidelines_optimize(**kwargs)
+
+    async def compression_guidelines_activate(self, **kwargs: Any) -> dict[str, Any]:
+        if not self._client:
+            return {"error": "Not connected to Remnic"}
+        return await self._client.compression_guidelines_activate(**kwargs)
 
 
 # Legacy class alias — import path compat for pre-rename consumers.
