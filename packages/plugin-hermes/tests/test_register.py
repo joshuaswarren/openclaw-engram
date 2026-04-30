@@ -50,6 +50,14 @@ _COMPRESSION_GUIDELINE_TOOL_SUFFIXES = [
     "compression_guidelines_optimize",
     "compression_guidelines_activate",
 ]
+_GOVERNANCE_HYGIENE_TOOL_SUFFIXES = [
+    "memory_governance_run",
+    "procedure_mining_run",
+    "procedural_stats",
+    "contradiction_scan_run",
+    "memory_summarize_hourly",
+    "conversation_index_update",
+]
 
 
 def _populate_provider_mock(provider):  # type: ignore[no-untyped-def]
@@ -90,6 +98,10 @@ def _populate_provider_mock(provider):  # type: ignore[no-untyped-def]
         setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
         setattr(provider, suffix, object())
     for suffix in _COMPRESSION_GUIDELINE_TOOL_SUFFIXES:
+        setattr(provider, f"{suffix}_schema", {"name": f"remnic_{suffix}"})
+        setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
+        setattr(provider, suffix, object())
+    for suffix in _GOVERNANCE_HYGIENE_TOOL_SUFFIXES:
         setattr(provider, f"{suffix}_schema", {"name": f"remnic_{suffix}"})
         setattr(provider, f"legacy_{suffix}_schema", {"name": f"engram_{suffix}"})
         setattr(provider, suffix, object())
@@ -138,6 +150,8 @@ def test_register_prefers_remnic_config_key():
     assert "engram_compounding_weekly_synthesize" in registered_tools
     assert "remnic_compression_guidelines_optimize" in registered_tools
     assert "engram_compression_guidelines_optimize" in registered_tools
+    assert "remnic_memory_governance_run" in registered_tools
+    assert "engram_memory_governance_run" in registered_tools
 
 
 def test_register_falls_back_to_engram_config_key():
