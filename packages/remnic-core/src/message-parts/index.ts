@@ -269,10 +269,35 @@ function inferSourceFormat(input: unknown): MessagePartSourceFormat | undefined 
       return explicit;
     }
     if (Array.isArray(obj.output)) return "openai";
+    if (isOpenAiResponseItem(obj)) return "openai";
+    if (Array.isArray(obj.content) && obj.content.some(isOpenAiContentBlock)) return "openai";
     if (Array.isArray(obj.content)) return "anthropic";
   }
   if (Array.isArray(input)) return "anthropic";
   return undefined;
+}
+
+function isOpenAiResponseItem(obj: Record<string, unknown>): boolean {
+  const type = asNonEmptyString(obj.type ?? obj.kind);
+  return (
+    type === "message" ||
+    type === "function_call" ||
+    type === "function_call_output" ||
+    type === "reasoning" ||
+    type === "retry"
+  );
+}
+
+function isOpenAiContentBlock(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const type = asNonEmptyString(value.type);
+  return (
+    type === "input_text" ||
+    type === "output_text" ||
+    type === "input_image" ||
+    type === "input_file" ||
+    type === "refusal"
+  );
 }
 
 function gatherOpenAiItems(input: unknown): Record<string, unknown>[] {

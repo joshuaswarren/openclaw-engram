@@ -33,6 +33,17 @@ describe("message-parts parsers", () => {
     assert.equal(parts[1]!.filePath, "src/auth.ts");
   });
 
+  it("infers OpenAI single message objects before generic content arrays", () => {
+    const parts = parseMessageParts({
+      type: "message",
+      content: [{ type: "output_text", text: "Read src/config.ts" }],
+    });
+
+    assert.equal(parts.length, 1);
+    assert.equal(parts[0]!.kind, "text");
+    assert.equal(parts[0]!.filePath, "src/config.ts");
+  });
+
   it("extracts Anthropic tool_use blocks as structured file writes", () => {
     const parts = parseAnthropicMessageParts({
       content: [

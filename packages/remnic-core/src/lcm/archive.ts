@@ -469,11 +469,11 @@ const STOPWORDS = new Set([
 
 function extractStructuredFileTerms(query: string): string[] {
   const terms = new Set<string>();
-  for (const raw of query.split(/\s+/)) {
-    const cleaned = raw.replace(/^[`'"]+|[`'",?:;)]+$/g, "");
+  for (const raw of splitQueryTerms(query)) {
+    const cleaned = trimStructuredQueryTerm(raw);
     if (
       cleaned.includes("/") ||
-      /\.[A-Za-z0-9_+-]{1,12}$/.test(cleaned)
+      hasStructuredFileExtension(cleaned)
     ) {
       terms.add(cleaned);
       const basename = cleaned.split("/").pop();
@@ -481,6 +481,56 @@ function extractStructuredFileTerms(query: string): string[] {
     }
   }
   return [...terms].filter((term) => term.length > 1).slice(0, 12);
+}
+
+function splitQueryTerms(query: string): string[] {
+  const terms: string[] = [];
+  let term = "";
+  for (const char of query.slice(0, 20_000)) {
+    if (char === " " || char === "\n" || char === "\r" || char === "\t") {
+      if (term.length > 0) terms.push(term);
+      term = "";
+      continue;
+    }
+    term += char;
+    if (term.length > 512) {
+      terms.push(term);
+      term = "";
+    }
+  }
+  if (term.length > 0) terms.push(term);
+  return terms;
+}
+
+function trimStructuredQueryTerm(raw: string): string {
+  const leading = new Set(["`", "'", "\""]);
+  const trailing = new Set(["`", "'", "\"", ",", "?", ":", ";", ")"]);
+  let start = 0;
+  let end = raw.length;
+  while (start < end && leading.has(raw[start]!)) start += 1;
+  while (end > start && trailing.has(raw[end - 1]!)) end -= 1;
+  return raw.slice(start, end);
+}
+
+function hasStructuredFileExtension(value: string): boolean {
+  const slash = value.lastIndexOf("/");
+  const basename = value.slice(slash + 1);
+  const dot = basename.lastIndexOf(".");
+  if (dot <= 0 || dot === basename.length - 1) return false;
+  const ext = basename.slice(dot + 1);
+  if (ext.length < 1 || ext.length > 12) return false;
+  for (const char of ext) {
+    const code = char.charCodeAt(0);
+    const valid =
+      (code >= 48 && code <= 57) ||
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      char === "_" ||
+      char === "+" ||
+      char === "-";
+    if (!valid) return false;
+  }
+  return true;
 }
 
 function extractStructuredToolTerms(query: string): string[] {
