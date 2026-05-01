@@ -29,6 +29,7 @@ export interface ExplicitCueRecallOptions {
   maxChars: number;
   maxItemChars?: number;
   maxReferences?: number;
+  includeBenchmarkAnchorCues?: boolean;
   includeStructuredPlanCues?: boolean;
 }
 
@@ -255,6 +256,7 @@ export async function buildExplicitCueRecallSection(
     sessionId: options.sessionId,
     query,
     maxReferences,
+    includeBenchmarkAnchorCues: options.includeBenchmarkAnchorCues,
     includeStructuredPlanCues: options.includeStructuredPlanCues,
     evidenceItems,
     seenTurns,
@@ -332,6 +334,7 @@ async function collectLexicalCueEvidence(options: {
   sessionId?: string;
   query: string;
   maxReferences: number;
+  includeBenchmarkAnchorCues?: boolean;
   includeStructuredPlanCues?: boolean;
   evidenceItems: Array<{
     id: string;
@@ -344,6 +347,7 @@ async function collectLexicalCueEvidence(options: {
   seenTurns: Set<string>;
 }): Promise<void> {
   const cues = collectLexicalCues(options.query, {
+    includeBenchmarkAnchorCues: options.includeBenchmarkAnchorCues,
     includeStructuredPlanCues: options.includeStructuredPlanCues,
   }).slice(0, options.maxReferences);
   const preferLatest = hasLatestStateIntent(options.query);
@@ -454,7 +458,10 @@ export function collectExplicitTurnReferences(
 
 export function collectLexicalCues(
   query: string,
-  options: { includeStructuredPlanCues?: boolean } = {},
+  options: {
+    includeBenchmarkAnchorCues?: boolean;
+    includeStructuredPlanCues?: boolean;
+  } = {},
 ): string[] {
   const cues = new Set<string>();
 
@@ -470,8 +477,10 @@ export function collectLexicalCues(
   for (const cue of collectQuestionSlotCues(query)) {
     cues.add(cue);
   }
-  for (const cue of collectBenchmarkAnchorCues(query)) {
-    cues.add(cue);
+  if (options.includeBenchmarkAnchorCues) {
+    for (const cue of collectBenchmarkAnchorCues(query)) {
+      cues.add(cue);
+    }
   }
   if (options.includeStructuredPlanCues) {
     for (const cue of collectStructuredPlanCues(query)) {

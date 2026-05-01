@@ -194,6 +194,7 @@ test("buildExplicitCueRecallSection searches benchmark anchor cues", async () =>
     sessionId: "beam",
     query: "For information extraction, use plan plan-1 and chat id 7.",
     maxChars: 2000,
+    includeBenchmarkAnchorCues: true,
   });
 
   assert.match(section, /plan-specific deployment owner is Nia/);
