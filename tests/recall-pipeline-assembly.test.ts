@@ -73,3 +73,46 @@ test("custom recallPipeline reorders sections and can disable transcript injecti
   assert.equal(pIndex < sIndex, true);
   assert.equal(context.includes("TRANSCRIPT_SHOULD_NOT_APPEAR"), false);
 });
+
+test("disabled explicit-cue pipeline section skips LCM cue retrieval work", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-recall-pipeline-"));
+  const cfg = parseConfig({
+    openaiApiKey: "sk-test",
+    memoryDir,
+    workspaceDir: path.join(memoryDir, "workspace"),
+    qmdEnabled: false,
+    sharedContextEnabled: false,
+    knowledgeIndexEnabled: false,
+    identityContinuityEnabled: false,
+    transcriptEnabled: false,
+    hourlySummariesEnabled: false,
+    injectQuestions: false,
+    explicitCueRecallEnabled: true,
+    lcmEnabled: true,
+    recallPipeline: [
+      { id: "explicit-cue", enabled: false },
+      { id: "memories", enabled: false },
+    ],
+  });
+  const orchestrator = new Orchestrator(cfg);
+
+  (orchestrator as any).lcmEngine = {
+    enabled: true,
+    searchContextFull: async () => {
+      throw new Error("explicit cue search should not run");
+    },
+    expandContext: async () => {
+      throw new Error("explicit cue expansion should not run");
+    },
+    searchStructuredParts: async () => [],
+    formatStructuredRecall: () => "",
+    assembleRecall: async () => "",
+  };
+
+  const context = await (orchestrator as any).recallInternal(
+    "What happened at Turn 450?",
+    "user:test:recall-pipeline",
+  );
+
+  assert.equal(context, "");
+});

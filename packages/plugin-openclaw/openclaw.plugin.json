@@ -2192,6 +2192,23 @@
         "default": 300,
         "description": "Max tokens for each TMT summary node. Default: 300."
       },
+      "explicitCueRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Front-load exact LCM evidence for query-visible cues such as turns, dates, ids, files, and tools."
+      },
+      "explicitCueRecallMaxChars": {
+        "type": "number",
+        "default": 2400,
+        "minimum": 0,
+        "description": "Character budget for the explicit cue evidence recall section."
+      },
+      "explicitCueRecallMaxReferences": {
+        "type": "number",
+        "default": 24,
+        "minimum": 0,
+        "description": "Maximum query-visible cues expanded by explicit cue recall."
+      },
       "queryExpansionEnabled": {
         "type": "boolean",
         "default": false,
