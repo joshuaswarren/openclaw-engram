@@ -541,8 +541,21 @@ export class EngramMcpServer {
                 properties: {
                   role: { type: "string", enum: ["user", "assistant"] },
                   content: { type: "string" },
+                  sourceFormat: {
+                    type: "string",
+                    enum: ["openai", "anthropic", "openclaw", "lossless-claw", "remnic"],
+                  },
+                  rawContent: {
+                    description: "Optional native provider content blocks for structured message-part capture.",
+                  },
+                  parts: {
+                    type: "array",
+                    description: "Optional normalized Remnic LCM message parts.",
+                    items: { type: "object" },
+                  },
                 },
                 required: ["role", "content"],
+                additionalProperties: false,
               },
               description: "Conversation messages to observe",
             },
@@ -1995,7 +2008,21 @@ export class EngramMcpServer {
         }
         return this.service.observe({
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : "",
-          messages: Array.isArray(args.messages) ? args.messages : [],
+          messages: (Array.isArray(args.messages)
+            ? args.messages.map((message) => {
+                if (!message || typeof message !== "object" || Array.isArray(message)) {
+                  return message;
+                }
+                const raw = message as Record<string, unknown>;
+                return {
+                  role: raw.role,
+                  content: raw.content,
+                  parts: Array.isArray(raw.parts) ? raw.parts : undefined,
+                  rawContent: raw.rawContent,
+                  sourceFormat: typeof raw.sourceFormat === "string" ? raw.sourceFormat : undefined,
+                };
+              })
+            : []) as any,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
           authenticatedPrincipal: effectivePrincipal,
           skipExtraction: args.skipExtraction === true,

@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { openLcmDatabase, ensureLcmStateDir } from "./schema.js";
-import { LcmArchive } from "./archive.js";
+import { LcmArchive, type LcmStructuredRecallMatch } from "./archive.js";
 import { LcmDag } from "./dag.js";
 import { LcmSummarizer, type SummarizeFn } from "./summarizer.js";
 import { assembleCompressedHistory, type LcmRecallConfig } from "./recall.js";
@@ -17,6 +17,8 @@ export interface LcmEngineConfig {
   deterministicMaxTokens: number;
   archiveRetentionDays: number;
   recallBudgetShare: number;
+  messagePartsEnabled: boolean;
+  messagePartsRecallMaxResults: number;
 }
 
 export function extractLcmConfig(cfg: PluginConfig): LcmEngineConfig {
@@ -29,6 +31,11 @@ export function extractLcmConfig(cfg: PluginConfig): LcmEngineConfig {
     deterministicMaxTokens: (cfg as any).lcmDeterministicMaxTokens ?? 512,
     archiveRetentionDays: (cfg as any).lcmArchiveRetentionDays ?? 90,
     recallBudgetShare: (cfg as any).lcmRecallBudgetShare ?? 0.15,
+    messagePartsEnabled: (cfg as any).messagePartsEnabled === true,
+    messagePartsRecallMaxResults:
+      typeof (cfg as any).messagePartsRecallMaxResults === "number"
+        ? Math.max(0, Math.floor((cfg as any).messagePartsRecallMaxResults))
+        : 6,
   };
 }
 
@@ -143,7 +150,7 @@ export class LcmEngine {
    */
   async observeMessages(
     sessionId: string,
-    messages: Array<{ role: string; content: string }>,
+    messages: LcmObserveMessage[],
   ): Promise<void> {
     this.enqueueObserveMessages(sessionId, messages);
   }
@@ -151,7 +158,7 @@ export class LcmEngine {
   /** Enqueue an observe job without waiting for worker completion. */
   enqueueObserveMessages(
     sessionId: string,
-    messages: Array<{ role: string; content: string }>,
+    messages: LcmObserveMessage[],
   ): void {
     if (!this.config.enabled || this.closed) return;
     if (messages.length === 0) return;
@@ -190,6 +197,9 @@ export class LcmEngine {
       turnIndex: currentMax + 1 + i,
       role: m.role,
       content: m.content,
+      parts: this.config.messagePartsEnabled ? m.parts : undefined,
+      rawContent: this.config.messagePartsEnabled ? m.rawContent : undefined,
+      sourceFormat: this.config.messagePartsEnabled ? m.sourceFormat : undefined,
     }));
 
     this.archive.appendMessages(sessionId, newMessages);
@@ -287,6 +297,39 @@ export class LcmEngine {
       freshTailTurns: this.config.freshTailTurns,
       budgetChars: effectiveBudget,
     });
+  }
+
+  async searchStructuredParts(
+    sessionId: string,
+    query: string,
+    limit = this.config.messagePartsRecallMaxResults,
+  ): Promise<LcmStructuredRecallMatch[]> {
+    if (!this.config.enabled || !this.config.messagePartsEnabled) return [];
+    await this.ensureInitialized();
+    if (!this.archive) return [];
+    return this.archive.searchStructuredParts(query, limit, sessionId);
+  }
+
+  formatStructuredRecall(
+    matches: LcmStructuredRecallMatch[],
+    budgetChars: number,
+  ): string {
+    if (matches.length === 0 || budgetChars <= 0) return "";
+    const lines: string[] = [];
+    let used = "## Structured Session Matches\n\n".length;
+    for (const match of matches) {
+      const label = match.file_path
+        ? `${match.kind} ${match.file_path}`
+        : match.tool_name
+          ? `${match.kind} ${match.tool_name}`
+          : match.kind;
+      const excerpt = match.content.replace(/\s+/g, " ").slice(0, 220);
+      const line = `- turn ${match.turn_index} (${match.role}): ${label} — ${excerpt}`;
+      if (used + line.length + 1 > budgetChars) break;
+      lines.push(line);
+      used += line.length + 1;
+    }
+    return lines.length > 0 ? `## Structured Session Matches\n\n${lines.join("\n")}` : "";
   }
 
   /** Flush pending summaries before compaction (called from before_compaction hook). */

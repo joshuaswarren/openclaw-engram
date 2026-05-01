@@ -11,6 +11,9 @@ export interface ReplayTurn {
   timestamp: string;
   externalId?: string;
   metadata?: Record<string, unknown>;
+  parts?: import("../message-parts/index.js").LcmMessagePartInput[];
+  rawContent?: unknown;
+  sourceFormat?: import("../message-parts/index.js").MessagePartSourceFormat;
 }
 
 export interface ReplayWarning {

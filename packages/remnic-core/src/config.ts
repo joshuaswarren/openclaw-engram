@@ -2723,6 +2723,11 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.lcmArchiveRetentionDays === "number"
         ? Math.max(1, Math.floor(cfg.lcmArchiveRetentionDays))
         : 90,
+    messagePartsEnabled: coerceBooleanLike(cfg.messagePartsEnabled) === true,
+    messagePartsRecallMaxResults:
+      typeof cfg.messagePartsRecallMaxResults === "number"
+        ? Math.max(0, Math.floor(cfg.messagePartsRecallMaxResults))
+        : 6,
 
     // v9.1 Parallel Specialized Retrieval
     parallelRetrievalEnabled: cfg.parallelRetrievalEnabled === true,

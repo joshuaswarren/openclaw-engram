@@ -948,6 +948,8 @@ OpenClaw plugin settings live in `openclaw.json` under `plugins.entries.openclaw
 | `memoryDir` | `~/.openclaw/workspace/memory/local` | Memory storage root |
 | `memoryOsPreset` | unset | Quick config: `conservative`, `balanced`, `research-max`, `local-llm-heavy` |
 | `lcmEnabled` | `false` | Enable Lossless Context Management (proactive session archive + summary DAG) |
+| `messagePartsEnabled` | `false` | Opt in to structured LCM message-part capture for tool calls, file paths, patches, and reasoning markers |
+| `messagePartsRecallMaxResults` | `6` | Max structured file/tool matches injected into recall when `messagePartsEnabled` is on |
 | `semanticConsolidationEnabled` | `false` | Enable periodic semantic dedup of similar memories |
 | `semanticConsolidationThreshold` | `0.8` | Token overlap threshold (0.8=conservative, 0.6=aggressive) |
 | `semanticConsolidationModel` | `"auto"` | LLM for synthesis: `"auto"`, `"fast"`, or specific model |

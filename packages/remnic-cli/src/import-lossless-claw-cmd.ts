@@ -140,6 +140,8 @@ export async function cmdImportLosslessClaw(
         `Sessions touched:      ${result.sessionsTouched.length}`,
         `Messages inserted:     ${result.messagesInserted}`,
         `Messages skipped:      ${result.messagesSkipped} (already present)`,
+        `Message parts inserted: ${result.messagePartsInserted}`,
+        `Message parts skipped:  ${result.messagePartsSkipped} (already present/unmapped)`,
         `Summaries inserted:    ${result.summariesInserted}`,
         `Summaries skipped:     ${result.summariesSkipped} (already present)`,
         `  multi-parent collapsed: ${result.summariesMultiParentCollapsed}`,

@@ -2998,7 +2998,12 @@ const pluginDefinition = {
                 .map((msg) => {
                   const rawRole = typeof msg.role === "string" ? msg.role : "";
                   const content = extractTextContent(msg);
-                  return { role: rawRole, content };
+                  return {
+                    role: rawRole,
+                    content,
+                    rawContent: msg,
+                    sourceFormat: "openclaw" as const,
+                  };
                 })
                 .filter((m) => m.content.length > 0);
               if (lcmMessages.length > 0) {

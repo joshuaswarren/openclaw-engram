@@ -134,7 +134,7 @@ class RemnicMemoryProvider:
 
         return ""
 
-    async def sync_turn(self, transcript: list[dict[str, str]]) -> None:
+    async def sync_turn(self, transcript: list[dict[str, Any]]) -> None:
         """Observe the latest conversation turn."""
         if not self._client or not transcript:
             return

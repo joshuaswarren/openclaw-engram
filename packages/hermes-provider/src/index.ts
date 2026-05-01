@@ -116,6 +116,42 @@ export interface ObserveOptions {
   skipExtraction?: boolean;
 }
 
+export type MessagePartSourceFormat =
+  | "openai"
+  | "anthropic"
+  | "openclaw"
+  | "lossless-claw"
+  | "remnic";
+
+export type LcmMessagePartKind =
+  | "text"
+  | "tool_call"
+  | "tool_result"
+  | "patch"
+  | "file_read"
+  | "file_write"
+  | "step_start"
+  | "step_finish"
+  | "snapshot"
+  | "retry";
+
+export interface ObserveMessagePart {
+  ordinal?: number;
+  kind: LcmMessagePartKind;
+  payload: Record<string, unknown>;
+  toolName?: string | null;
+  filePath?: string | null;
+  createdAt?: string | null;
+}
+
+export interface ObserveMessage {
+  role: "user" | "assistant";
+  content: string;
+  sourceFormat?: MessagePartSourceFormat;
+  rawContent?: unknown;
+  parts?: ObserveMessagePart[];
+}
+
 export interface MemoryStoreRequest {
   content: string;
   category?: string;
@@ -193,7 +229,7 @@ export class HermesClient {
 
   async observe(
     sessionKey: string,
-    messages: Array<{ role: "user" | "assistant"; content: string }>,
+    messages: ObserveMessage[],
     options?: ObserveOptions,
   ): Promise<EngramAccessObserveResponse> {
     const body: Record<string, unknown> = {

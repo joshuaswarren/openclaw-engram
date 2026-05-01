@@ -30,6 +30,7 @@ test("openLcmDatabase creates all required tables", () => {
 
     assert.ok(names.includes("lcm_messages"), "should have lcm_messages");
     assert.ok(names.includes("lcm_summary_nodes"), "should have lcm_summary_nodes");
+    assert.ok(names.includes("lcm_message_parts"), "should have lcm_message_parts");
     assert.ok(names.includes("lcm_compaction_events"), "should have lcm_compaction_events");
     assert.ok(names.includes("lcm_messages_fts"), "should have lcm_messages_fts");
     assert.ok(names.includes("lcm_summaries_fts"), "should have lcm_summaries_fts");
@@ -39,7 +40,7 @@ test("openLcmDatabase creates all required tables", () => {
     const meta = db
       .prepare("SELECT value FROM lcm_meta WHERE key = 'schema_version'")
       .get() as { value: string };
-    assert.equal(meta.value, "1");
+    assert.equal(meta.value, "2");
 
     db.close();
   } finally {
@@ -58,7 +59,7 @@ test("openLcmDatabase is idempotent", () => {
     const meta = db2
       .prepare("SELECT value FROM lcm_meta WHERE key = 'schema_version'")
       .get() as { value: string };
-    assert.equal(meta.value, "1");
+    assert.equal(meta.value, "2");
     db2.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -608,6 +609,8 @@ test("LCM config fields parse correctly", async () => {
   assert.equal(config.lcmRecallBudgetShare, 0.15);
   assert.equal(config.lcmDeterministicMaxTokens, 512);
   assert.equal(config.lcmArchiveRetentionDays, 90);
+  assert.equal(config.messagePartsEnabled, false);
+  assert.equal(config.messagePartsRecallMaxResults, 6);
 });
 
 test("LCM config fields accept custom values", async () => {
@@ -624,6 +627,8 @@ test("LCM config fields accept custom values", async () => {
     lcmRecallBudgetShare: 0.25,
     lcmDeterministicMaxTokens: 256,
     lcmArchiveRetentionDays: 30,
+    messagePartsEnabled: true,
+    messagePartsRecallMaxResults: 4,
   });
 
   assert.equal(config.lcmEnabled, true);
@@ -634,6 +639,8 @@ test("LCM config fields accept custom values", async () => {
   assert.equal(config.lcmRecallBudgetShare, 0.25);
   assert.equal(config.lcmDeterministicMaxTokens, 256);
   assert.equal(config.lcmArchiveRetentionDays, 30);
+  assert.equal(config.messagePartsEnabled, true);
+  assert.equal(config.messagePartsRecallMaxResults, 4);
 });
 
 test("LCM config clamps values to valid ranges", async () => {

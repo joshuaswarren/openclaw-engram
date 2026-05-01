@@ -4260,6 +4260,16 @@
         "default": 90,
         "description": "Days to retain archived LCM summaries"
       },
+      "messagePartsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Opt in to structured LCM message-part capture for tool calls, file references, patches, and reasoning markers."
+      },
+      "messagePartsRecallMaxResults": {
+        "type": "number",
+        "default": 6,
+        "description": "Maximum structured message-part matches to inject into recall when messagePartsEnabled is true."
+      },
       "ircEnabled": {
         "type": "boolean",
         "default": true,

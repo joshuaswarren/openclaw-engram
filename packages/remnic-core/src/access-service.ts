@@ -99,6 +99,10 @@ import type {
 } from "./types.js";
 import { DEFAULT_RECALL_DISCLOSURE, isRecallDisclosure } from "./types.js";
 import { estimateRecallTokens } from "./recall-xray.js";
+import type {
+  LcmMessagePartInput,
+  MessagePartSourceFormat,
+} from "./message-parts/index.js";
 import {
   applyTagFilter,
   normalizeTags,
@@ -666,9 +670,17 @@ export interface EngramAccessWriteResponse {
   idempotencyReplay?: boolean;
 }
 
+export interface EngramAccessObserveMessage {
+  role: "user" | "assistant";
+  content: string;
+  parts?: LcmMessagePartInput[];
+  rawContent?: unknown;
+  sourceFormat?: MessagePartSourceFormat;
+}
+
 export interface EngramAccessObserveRequest {
   sessionKey: string;
-  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  messages: EngramAccessObserveMessage[];
   namespace?: string;
   authenticatedPrincipal?: string;
   skipExtraction?: boolean;
@@ -3367,6 +3379,9 @@ export class EngramAccessService {
         sessionKey: lcmSessionKey,
         role: m.role,
         content: m.content,
+        parts: m.parts,
+        rawContent: m.rawContent,
+        sourceFormat: m.sourceFormat,
         timestamp: new Date().toISOString(),
       }));
       // Fire-and-forget: queue extraction in the background so the HTTP
@@ -3379,7 +3394,9 @@ export class EngramAccessService {
       // queueBufferedExtraction). Fire-and-forget here just decouples
       // the HTTP response from the queue drain.
       try {
-        const extractionPromise = this.orchestrator.ingestReplayBatch(turns);
+        const extractionPromise = this.orchestrator.ingestReplayBatch(turns, {
+          archiveLcm: false,
+        });
         extractionPromise.catch((err) => {
           log.error(`access-observe background extraction failed: ${err}`);
         });

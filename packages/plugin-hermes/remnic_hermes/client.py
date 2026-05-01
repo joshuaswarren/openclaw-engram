@@ -96,7 +96,7 @@ class RemnicClient:
     async def observe(
         self,
         session_key: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         **kwargs: Any,
     ) -> dict[str, Any]:
         return await self._post_json(
