@@ -122,6 +122,314 @@ test("fallback llm falls back to models.json for built-in providers missing from
   }
 });
 
+test("fallback llm resolves legacy openai-codex model refs through the codex provider", { concurrency: false }, async () => {
+  clearModelsJsonCache();
+  clearSecretCache();
+
+  const llm = new FallbackLlmClient({
+    agents: {
+      defaults: {
+        model: {
+          primary: "openai-codex/gpt-5.5",
+        },
+      },
+    },
+    models: {
+      providers: {
+        codex: {
+          baseUrl: "https://codex.example/v1",
+          api: "openai-codex-responses",
+          apiKey: "codex-test-key",
+          models: [],
+        },
+      },
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  globalThis.fetch = (async (url) => {
+    capturedUrl = String(url);
+    return new Response(
+      JSON.stringify({
+        output_text: "ok from codex alias",
+        usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  try {
+    const response = await llm.chatCompletion(
+      [{ role: "user", content: "Say OK" }],
+      { temperature: 0, maxTokens: 16 },
+    );
+
+    assert.equal(response?.content, "ok from codex alias");
+    assert.equal(response?.modelUsed, "openai-codex/gpt-5.5");
+    assert.equal(capturedUrl, "https://codex.example/v1/responses");
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearModelsJsonCache();
+    clearSecretCache();
+  }
+});
+
+test("fallback llm prefers requested canonical models.json provider before legacy aliases", { concurrency: false }, async () => {
+  __setModelsJsonForTest({
+    codex: {
+      baseUrl: "https://codex.example/v1",
+      api: "openai-responses",
+      apiKey: "codex-test-key",
+      models: [],
+    },
+    "openai-codex": {
+      baseUrl: "https://legacy-codex.example/v1",
+      api: "openai-responses",
+      apiKey: "secretref-managed",
+      models: [],
+    },
+  });
+  clearSecretCache();
+
+  const llm = new FallbackLlmClient({
+    agents: {
+      defaults: {
+        model: {
+          primary: "codex/gpt-5.5",
+        },
+      },
+    },
+    models: {
+      providers: {},
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  globalThis.fetch = (async (url) => {
+    capturedUrl = String(url);
+    return new Response(
+      JSON.stringify({
+        output_text: "ok from canonical codex",
+        usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  try {
+    const response = await llm.chatCompletion(
+      [{ role: "user", content: "Say OK" }],
+      { temperature: 0, maxTokens: 16 },
+    );
+
+    assert.equal(response?.content, "ok from canonical codex");
+    assert.equal(capturedUrl, "https://codex.example/v1/responses");
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearModelsJsonCache();
+    clearSecretCache();
+  }
+});
+
+test("fallback llm has built-in anthropic defaults when the gateway provider catalog is unavailable", { concurrency: false }, async () => {
+  clearModelsJsonCache();
+  clearSecretCache();
+
+  const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = "anthropic-test-key";
+
+  const llm = new FallbackLlmClient({
+    agents: {
+      defaults: {
+        model: {
+          primary: "anthropic/claude-sonnet-4-6",
+        },
+      },
+    },
+    models: {
+      providers: {},
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  let capturedAuth = "";
+  globalThis.fetch = (async (url, init) => {
+    capturedUrl = String(url);
+    capturedAuth = String((init?.headers as Record<string, string> | undefined)?.["x-api-key"] ?? "");
+    return new Response(
+      JSON.stringify({
+        content: [{ type: "text", text: "ok from anthropic default" }],
+        usage: { input_tokens: 2, output_tokens: 3 },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  try {
+    const response = await llm.chatCompletion(
+      [{ role: "user", content: "Say OK" }],
+      { temperature: 0, maxTokens: 16 },
+    );
+
+    assert.equal(response?.content, "ok from anthropic default");
+    assert.equal(capturedUrl, "https://api.anthropic.com/v1/messages");
+    assert.equal(capturedAuth, "anthropic-test-key");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousAnthropicKey === undefined) {
+      delete process.env.ANTHROPIC_API_KEY;
+    } else {
+      process.env.ANTHROPIC_API_KEY = previousAnthropicKey;
+    }
+    clearModelsJsonCache();
+    clearSecretCache();
+  }
+});
+
+test("fallback llm prefers configured alias providers before built-in defaults", { concurrency: false }, async () => {
+  __setModelsJsonForTest({
+    "claude-cli": {
+      baseUrl: "https://materialized-claude-cli.example/v1",
+      api: "anthropic-messages",
+      apiKey: "materialized-claude-cli-key",
+      models: [],
+    },
+  });
+  clearSecretCache();
+
+  const llm = new FallbackLlmClient({
+    agents: {
+      defaults: {
+        model: {
+          primary: "claude-cli/claude-sonnet-4-6",
+        },
+      },
+    },
+    models: {
+      providers: {
+        anthropic: {
+          baseUrl: "https://configured-anthropic.example/custom",
+          api: "anthropic-messages",
+          apiKey: "configured-anthropic-key",
+          models: [],
+        },
+      },
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  let capturedAuth = "";
+  globalThis.fetch = (async (url, init) => {
+    capturedUrl = String(url);
+    capturedAuth = String((init?.headers as Record<string, string> | undefined)?.["x-api-key"] ?? "");
+    return new Response(
+      JSON.stringify({
+        content: [{ type: "text", text: "ok from configured alias" }],
+        usage: { input_tokens: 2, output_tokens: 3 },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  try {
+    const response = await llm.chatCompletion(
+      [{ role: "user", content: "Say OK" }],
+      { temperature: 0, maxTokens: 16 },
+    );
+
+    assert.equal(response?.content, "ok from configured alias");
+    assert.equal(capturedUrl, "https://configured-anthropic.example/custom/v1/messages");
+    assert.equal(capturedAuth, "configured-anthropic-key");
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearModelsJsonCache();
+    clearSecretCache();
+  }
+});
+
+test("fallback llm resolves claude-cli refs through the anthropic built-in fallback", { concurrency: false }, async () => {
+  __setModelsJsonForTest({
+    "claude-cli": {
+      baseUrl: "https://materialized-claude-cli.example/v1",
+      api: "anthropic-messages",
+      apiKey: "secretref-managed",
+      models: [],
+    },
+  });
+  clearSecretCache();
+
+  const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = "anthropic-test-key";
+
+  const llm = new FallbackLlmClient({
+    agents: {
+      defaults: {
+        model: {
+          primary: "claude-cli/claude-sonnet-4-6",
+        },
+      },
+    },
+    models: {
+      providers: {},
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  let capturedAuth = "";
+  globalThis.fetch = (async (url, init) => {
+    capturedUrl = String(url);
+    capturedAuth = String((init?.headers as Record<string, string> | undefined)?.["x-api-key"] ?? "");
+    return new Response(
+      JSON.stringify({
+        content: [{ type: "text", text: "ok from anthropic alias default" }],
+        usage: { input_tokens: 2, output_tokens: 3 },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  try {
+    const response = await llm.chatCompletion(
+      [{ role: "user", content: "Say OK" }],
+      { temperature: 0, maxTokens: 16 },
+    );
+
+    assert.equal(response?.content, "ok from anthropic alias default");
+    assert.equal(response?.modelUsed, "claude-cli/claude-sonnet-4-6");
+    assert.equal(capturedUrl, "https://api.anthropic.com/v1/messages");
+    assert.equal(capturedAuth, "anthropic-test-key");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousAnthropicKey === undefined) {
+      delete process.env.ANTHROPIC_API_KEY;
+    } else {
+      process.env.ANTHROPIC_API_KEY = previousAnthropicKey;
+    }
+    clearModelsJsonCache();
+    clearSecretCache();
+  }
+});
+
 test("fallback llm uses the Responses API for openai-responses transports", { concurrency: false }, async () => {
   clearModelsJsonCache();
   clearSecretCache();
