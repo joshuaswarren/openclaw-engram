@@ -2973,6 +2973,11 @@ function resolveOpenclawPluginDir(cliPath?: string): string {
   return path.join(resolveHomeDir(), ".openclaw", "extensions", REMNIC_OPENCLAW_PLUGIN_ID);
 }
 
+function resolveOpenclawLegacyPluginDir(cliPath?: string): string {
+  if (cliPath) return path.resolve(expandTilde(cliPath));
+  return path.join(resolveHomeDir(), ".openclaw", "extensions", REMNIC_OPENCLAW_LEGACY_PLUGIN_ID);
+}
+
 function formatOpenclawUpgradeStamp(now = new Date()): string {
   const yyyy = now.getFullYear().toString();
   const mm = String(now.getMonth() + 1).padStart(2, "0");
@@ -6182,6 +6187,7 @@ interface OpenclawUpgradeOptions extends OpenclawInstallOptions {
   pluginDir?: string;
   version?: string;
   restartGateway: boolean;
+  legacyPluginDirForBackup?: string;
 }
 
 async function promptYesNo(question: string, defaultYes = true): Promise<boolean> {
@@ -6553,6 +6559,9 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
 async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
   const configPath = resolveOpenclawConfigPath(opts.configPath);
   const pluginDir = resolveOpenclawPluginDir(opts.pluginDir);
+  const legacyPluginDirForBackup = opts.legacyPluginDirForBackup
+    ? resolveOpenclawLegacyPluginDir(opts.legacyPluginDirForBackup)
+    : undefined;
   const fallbackMemoryDir = path.join(resolveHomeDir(), ".openclaw", "workspace", "memory", "local");
   const packageSpec = `@remnic/plugin-openclaw@${opts.version ?? "latest"}`;
 
@@ -6569,17 +6578,29 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
   );
   const configBackupPath = path.join(backupDir, "openclaw.json");
   const pluginBackupDir = path.join(backupDir, "extensions", REMNIC_OPENCLAW_PLUGIN_ID);
+  const legacyPluginBackupDir = legacyPluginDirForBackup
+    ? path.join(backupDir, "extensions", REMNIC_OPENCLAW_LEGACY_PLUGIN_ID)
+    : undefined;
 
   assertDirectoryPathOrMissing(pluginDir, "OpenClaw plugin dir");
+  if (legacyPluginDirForBackup) {
+    assertDirectoryPathOrMissing(legacyPluginDirForBackup, "Legacy OpenClaw plugin dir");
+  }
 
   console.log(`OpenClaw config: ${configPath}`);
   console.log(`Plugin dir:      ${pluginDir}`);
+  if (legacyPluginDirForBackup) {
+    console.log(`Legacy dir:      ${legacyPluginDirForBackup}`);
+  }
   console.log(`Memory dir:      ${preservedMemoryDir}`);
   console.log(`Package spec:    ${packageSpec}`);
   console.log(`Backup dir:      ${backupDir}`);
 
   const plannedActions = [
     `backup openclaw.json and the existing ${REMNIC_OPENCLAW_PLUGIN_ID} extension`,
+    ...(legacyPluginDirForBackup
+      ? [`backup the existing ${REMNIC_OPENCLAW_LEGACY_PLUGIN_ID} extension without modifying it`]
+      : []),
     `npm pack ${packageSpec} and stage a clean plugin copy before swap`,
     `re-run remnic openclaw install with the preserved memory dir`,
     opts.restartGateway
@@ -6616,6 +6637,13 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
     backupNotes.push(`+ Backed up plugin dir to ${pluginBackupDir}`);
   } else {
     backupNotes.push(`  No existing plugin dir found at ${pluginDir}; a fresh install will be staged`);
+  }
+  if (legacyPluginDirForBackup && legacyPluginBackupDir) {
+    if (backupPathIfPresent(legacyPluginDirForBackup, legacyPluginBackupDir)) {
+      backupNotes.push(`+ Backed up legacy plugin dir to ${legacyPluginBackupDir}`);
+    } else {
+      backupNotes.push(`  No existing legacy plugin dir found at ${legacyPluginDirForBackup}; nothing to preserve`);
+    }
   }
 
   let installResult: { rollbackDir?: string; version?: string } | undefined;
@@ -6696,6 +6724,23 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
     console.log("Run this manually when you're ready:");
     console.log(`  launchctl kickstart -k gui/$(id -u)/${OPENCLAW_GATEWAY_LABEL}`);
   }
+}
+
+async function cmdOpenclawMigrateEngram(opts: OpenclawUpgradeOptions): Promise<void> {
+  console.log(
+    `Migrating legacy ${REMNIC_OPENCLAW_LEGACY_PLUGIN_ID} installs to ${REMNIC_OPENCLAW_PLUGIN_ID}.`,
+  );
+  console.log(
+    "The legacy config entry and extension directory are preserved for rollback and custom patch reference.",
+  );
+  await cmdOpenclawUpgrade({
+    ...opts,
+    legacyPluginDirForBackup: opts.legacyPluginDirForBackup ?? resolveOpenclawLegacyPluginDir(),
+  });
+  console.log("\nMigration notes:");
+  console.log(`  - plugins.entries["${REMNIC_OPENCLAW_PLUGIN_ID}"] is the canonical entry.`);
+  console.log(`  - plugins.entries["${REMNIC_OPENCLAW_LEGACY_PLUGIN_ID}"] is retained temporarily for rollback.`);
+  console.log("  - Re-apply any local source patches to the new package only after verifying the published build.");
 }
 
 // ── Taxonomy commands (#366) ─────────────────────────────────────────────────
@@ -7853,15 +7898,16 @@ Run 'remnic capsule <subcommand> --help' for subcommand details.`);
         const memoryDir = resolveRequiredValueFlag(args, "--memory-dir");
         const configOverride = resolveRequiredValueFlag(args, "--config");
         await cmdOpenclawInstall({ yes, dryRun, memoryDir, configPath: configOverride });
-      } else if (subAction === "upgrade") {
+      } else if (subAction === "upgrade" || subAction === "migrate-engram") {
         const yes = args.includes("--yes") || args.includes("-y") || args.includes("--force");
         const dryRun = args.includes("--dry-run");
         const memoryDir = resolveRequiredValueFlag(args, "--memory-dir");
         const configOverride = resolveRequiredValueFlag(args, "--config");
         const version = resolveRequiredValueFlag(args, "--version");
         const pluginDir = resolveRequiredValueFlag(args, "--plugin-dir");
+        const legacyPluginDir = resolveRequiredValueFlag(args, "--legacy-plugin-dir");
         const restartGateway = !args.includes("--no-restart");
-        await cmdOpenclawUpgrade({
+        const opts = {
           yes,
           dryRun,
           memoryDir,
@@ -7869,12 +7915,21 @@ Run 'remnic capsule <subcommand> --help' for subcommand details.`);
           pluginDir,
           version,
           restartGateway,
-        });
+          legacyPluginDirForBackup: legacyPluginDir,
+        };
+        if (subAction === "migrate-engram") {
+          await cmdOpenclawMigrateEngram(opts);
+        } else {
+          await cmdOpenclawUpgrade(opts);
+        }
       } else {
-        console.log(`Usage: remnic openclaw <install|upgrade>
+        console.log(`Usage: remnic openclaw <install|upgrade|migrate-engram>
 
   install    Configure OpenClaw to use Remnic as the memory plugin.
   upgrade    Backup the current setup, refresh the published npm package, and re-apply the config.
+  migrate-engram
+             Migrate a legacy @joshuaswarren/openclaw-engram install to
+             @remnic/plugin-openclaw while backing up the legacy extension.
 
              Sets plugins.entries["${REMNIC_OPENCLAW_PLUGIN_ID}"] and plugins.slots.memory
              in ~/.openclaw/openclaw.json (or $OPENCLAW_CONFIG_PATH).
@@ -7886,6 +7941,8 @@ Options:
   --config <path>         Override OpenClaw config path
   --version <tag>         Upgrade @remnic/plugin-openclaw from a specific npm tag/version
   --plugin-dir <path>     Override OpenClaw extension dir (~/.openclaw/extensions/openclaw-remnic)
+  --legacy-plugin-dir <path>
+                          Override legacy extension dir backed up by migrate-engram
   --no-restart            Skip the final launchctl kickstart after upgrade`);
       }
       break;
@@ -7909,12 +7966,15 @@ Usage:
   remnic config                Show current config
   remnic openclaw install      Configure OpenClaw to use Remnic memory (sets slot + entry)
   remnic openclaw upgrade      Safe OpenClaw npm upgrade with backups and gateway restart
+  remnic openclaw migrate-engram
+    Migrate legacy @joshuaswarren/openclaw-engram installs with legacy extension backup
     --yes / -y / --force       Skip prompts
     --dry-run                  Preview changes without writing
     --memory-dir <path>        Custom memory directory
     --config <path>            Custom OpenClaw config path
     --version <tag>            Upgrade @remnic/plugin-openclaw from a specific npm tag/version
     --plugin-dir <path>        Custom OpenClaw extension directory
+    --legacy-plugin-dir <path> Custom legacy extension directory for migration backup
     --no-restart               Skip the final launchctl kickstart after upgrade
   remnic daemon <start|stop|restart|install|uninstall|status>  Manage background server
   remnic token <generate|list|revoke> [connector-id]  Manage auth tokens

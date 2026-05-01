@@ -2,6 +2,12 @@
 
 This guide covers the migration from the old single-package Engram plugin to the Remnic platform architecture introduced in v9.1.36. If you are an existing OpenClaw user upgrading through the normal plugin update path, most changes are transparent.
 
+If you are moving from the legacy `@joshuaswarren/openclaw-engram` package to
+the canonical `@remnic/plugin-openclaw` package, start with
+[OpenClaw Engram to Remnic migration](openclaw-engram-to-remnic.md). That guide
+covers `plugins.entries.openclaw-engram` vs `plugins.entries.openclaw-remnic`,
+the `remnic openclaw migrate-engram` tooling, and local patch preservation.
+
 ---
 
 ## What Changed (M0-M7)

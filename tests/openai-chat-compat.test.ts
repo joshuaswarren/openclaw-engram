@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildChatCompletionTemperature,
   buildChatCompletionTokenLimit,
   shouldAssumeOpenAiChatCompletions,
+  supportsTemperature,
   usesMaxCompletionTokens,
 } from "../src/openai-chat-compat.ts";
 import { parseConfig } from "../src/config.ts";
@@ -39,6 +41,18 @@ test("buildChatCompletionTokenLimit selects max_completion_tokens for gpt-5 mode
   });
   assert.deepEqual(buildChatCompletionTokenLimit("o2-local", 2048, { assumeOpenAI: true }), {
     max_tokens: 2048,
+  });
+});
+
+test("buildChatCompletionTemperature omits temperature for native OpenAI gpt-5 chat completions", () => {
+  assert.equal(supportsTemperature("gpt-5.4-mini", { assumeOpenAI: true }), false);
+  assert.equal(supportsTemperature("gpt-5.4-mini"), true);
+  assert.deepEqual(buildChatCompletionTemperature("gpt-5.4-mini", 0.3, { assumeOpenAI: true }), {});
+  assert.deepEqual(buildChatCompletionTemperature("gpt-4o-mini", 0.3, { assumeOpenAI: true }), {
+    temperature: 0.3,
+  });
+  assert.deepEqual(buildChatCompletionTemperature("gpt-5.4-mini", 0.3), {
+    temperature: 0.3,
   });
 });
 
@@ -181,6 +195,7 @@ test("fallback OpenAI client uses max_completion_tokens for gpt-5 providers", as
     assert.equal(requestBody?.model, "gpt-5.2");
     assert.equal(requestBody?.max_completion_tokens, 1234);
     assert.equal("max_tokens" in (requestBody ?? {}), false);
+    assert.equal("temperature" in (requestBody ?? {}), false);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -281,6 +296,7 @@ test("fallback OpenAI client keeps max_tokens for custom base URLs", async () =>
     assert.equal(requestBody?.model, "gpt-5.2");
     assert.equal(requestBody?.max_tokens, 256);
     assert.equal("max_completion_tokens" in (requestBody ?? {}), false);
+    assert.equal(requestBody?.temperature, 0.3);
   } finally {
     globalThis.fetch = originalFetch;
   }

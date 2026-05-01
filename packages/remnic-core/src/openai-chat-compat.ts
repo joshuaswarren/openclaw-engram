@@ -37,3 +37,20 @@ export function buildChatCompletionTokenLimit(
   }
   return { max_tokens: safeMaxTokens };
 }
+
+export function supportsTemperature(model: string, options?: { assumeOpenAI?: boolean }): boolean {
+  const normalized = normalizedModel(model);
+  if (options?.assumeOpenAI === true && matchesModelFamily(normalized, /^gpt-5(?:$|[-.])/)) {
+    return false;
+  }
+  return true;
+}
+
+export function buildChatCompletionTemperature(
+  model: string,
+  temperature: number,
+  options?: { assumeOpenAI?: boolean },
+): { temperature: number } | Record<string, never> {
+  if (!supportsTemperature(model, options)) return {};
+  return { temperature };
+}

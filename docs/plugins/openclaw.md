@@ -26,6 +26,16 @@ Or use the Remnic installer:
 remnic openclaw install
 ```
 
+If you are migrating from the legacy `@joshuaswarren/openclaw-engram` package,
+use the dedicated migration guide and command:
+
+```bash
+remnic openclaw migrate-engram --yes
+```
+
+See [OpenClaw Engram to Remnic migration](../guides/openclaw-engram-to-remnic.md)
+for config-key behavior, backup behavior, and local patch preservation notes.
+
 ## Configure
 
 Minimal configuration:

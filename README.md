@@ -84,6 +84,12 @@ remnic doctor
 
 `remnic openclaw install` writes `plugins.entries["openclaw-remnic"]` and `plugins.slots.memory = "openclaw-remnic"` to `~/.openclaw/openclaw.json`. Without the slot, hooks never fire — see [Troubleshooting: hooks aren't firing](#troubleshooting-hooks-arent-firing) for details.
 
+Migrating from the legacy `@joshuaswarren/openclaw-engram` package? Run
+`remnic openclaw migrate-engram --yes`; it backs up the legacy extension,
+installs `@remnic/plugin-openclaw`, preserves `memoryDir`, and switches the
+OpenClaw memory slot to `openclaw-remnic`. See the
+[OpenClaw Engram to Remnic migration guide](docs/guides/openclaw-engram-to-remnic.md).
+
 ## Installation
 
 ### Option 1: Install from the CLI

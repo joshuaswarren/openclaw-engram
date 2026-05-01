@@ -2,6 +2,7 @@ import { log } from "./logger.js";
 import type { GatewayConfig, ModelProviderConfig, AgentPersona } from "./types.js";
 import { extractJsonCandidates } from "./json-extract.js";
 import {
+  buildChatCompletionTemperature,
   buildChatCompletionTokenLimit,
   shouldAssumeOpenAiChatCompletions,
 } from "./openai-chat-compat.js";
@@ -493,7 +494,9 @@ export class FallbackLlmClient {
     const body = {
       model: modelId,
       messages,
-      temperature: options.temperature ?? 0.3,
+      ...buildChatCompletionTemperature(modelId, options.temperature ?? 0.3, {
+        assumeOpenAI,
+      }),
       ...buildChatCompletionTokenLimit(modelId, options.maxTokens ?? 4096, {
         assumeOpenAI,
       }),
@@ -582,7 +585,9 @@ export class FallbackLlmClient {
       model: modelId,
       input,
       max_output_tokens: Math.max(0, Math.floor(options.maxTokens ?? 4096)),
-      temperature: options.temperature ?? 0.3,
+      ...buildChatCompletionTemperature(modelId, options.temperature ?? 0.3, {
+        assumeOpenAI: shouldAssumeOpenAiChatCompletions(config.baseUrl),
+      }),
     };
     if (instructions.length > 0) {
       body.instructions = instructions;
