@@ -13,6 +13,8 @@ import { runBenchmark } from "../packages/bench/src/index.js";
 
 class FakeMemoryAdapter implements BenchMemoryAdapter {
   readonly sessions = new Map<string, Message[]>();
+  readonly recallCalls: Array<{ sessionId: string; query: string }> = [];
+  readonly searchCalls: Array<{ sessionId?: string; query: string; limit: number }> = [];
 
   constructor(readonly responder?: BenchResponder) {}
 
@@ -21,7 +23,8 @@ class FakeMemoryAdapter implements BenchMemoryAdapter {
     this.sessions.set(sessionId, [...existing, ...messages]);
   }
 
-  async recall(sessionId: string, _query: string): Promise<string> {
+  async recall(sessionId: string, query: string): Promise<string> {
+    this.recallCalls.push({ sessionId, query });
     return (this.sessions.get(sessionId) ?? [])
       .map((message) => message.content)
       .join("\n");
@@ -32,6 +35,7 @@ class FakeMemoryAdapter implements BenchMemoryAdapter {
     limit: number,
     sessionId?: string,
   ): Promise<SearchResult[]> {
+    this.searchCalls.push({ sessionId, query, limit });
     const haystack = sessionId
       ? [[sessionId, this.sessions.get(sessionId) ?? []] as const]
       : [...this.sessions.entries()];
@@ -326,6 +330,209 @@ test("runBenchmark prefers explicit final MCQ answers over broad answer labels",
   assert.equal(task.details?.correctMcqOption, "B");
   assert.equal(task.details?.predictedMcqOption, "B");
   assert.equal(task.scores.mcq_accuracy, 1);
+});
+
+test("runBenchmark retrieves implicit personamem preferences from visible chat history", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-personamem-implicit-pref-"));
+  const datasetDir = path.join(tmpDir, "datasets", "personamem");
+  const benchmarkDir = path.join(datasetDir, "benchmark", "text");
+  const chatHistoryDir = path.join(datasetDir, "data", "chat_history_32k");
+  const adapter = new FakeMemoryAdapter();
+  adapter.recall = async (sessionId, query) => {
+    adapter.recallCalls.push({ sessionId, query });
+    return (adapter.sessions.get(sessionId) ?? [])
+      .filter((message) =>
+        query.includes("personal preference")
+        && message.content.includes("persona preference")
+        && message.content.includes("aisle seats"),
+      )
+      .map((message) => message.content)
+      .join("\n");
+  };
+  await mkdir(benchmarkDir, { recursive: true });
+  await mkdir(chatHistoryDir, { recursive: true });
+  await writeFile(
+    path.join(chatHistoryDir, "persona-1.json"),
+    JSON.stringify({
+      chat_history: [
+        {
+          role: "user",
+          content: "I usually pick aisle seats on flights because I like easy exits.",
+        },
+      ],
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(benchmarkDir, "benchmark.csv"),
+    toCsv(
+      ["persona_id", "chat_history_32k_link", "user_query", "correct_answer"],
+      [
+        "persona-1",
+        "data/chat_history_32k/persona-1.json",
+        "{'role': 'user', 'content': 'Which seat should you pick for my flight?'}",
+        "aisle seats",
+      ],
+    ),
+    "utf8",
+  );
+
+  const result = await runBenchmark("personamem", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.match(String(task.actual), /aisle seats/);
+  assert.doesNotMatch(String(task.actual), /PersonaMem visible anchors/);
+  assert.match(adapter.recallCalls[0]?.query ?? "", /personal preference/);
+  assert.doesNotMatch(adapter.recallCalls[0]?.query ?? "", /Visible PersonaMem recall cues/);
+  assert.doesNotMatch(adapter.searchCalls[0]?.query ?? "", /personal preference|persona preference/);
+});
+
+test("runBenchmark retrieves topic-specific personamem preferences", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-personamem-topic-pref-"));
+  const datasetDir = path.join(tmpDir, "datasets", "personamem");
+  const benchmarkDir = path.join(datasetDir, "benchmark", "text");
+  const chatHistoryDir = path.join(datasetDir, "data", "chat_history_32k");
+  const adapter = new FakeMemoryAdapter();
+  adapter.recall = async (sessionId, query) => {
+    adapter.recallCalls.push({ sessionId, query });
+    return (adapter.sessions.get(sessionId) ?? [])
+      .filter((message) =>
+        /headphone/i.test(query)
+        && message.content.includes("headphones")
+        && message.content.includes("warm sound"),
+      )
+      .map((message) => message.content)
+      .join("\n");
+  };
+  await mkdir(benchmarkDir, { recursive: true });
+  await mkdir(chatHistoryDir, { recursive: true });
+  await writeFile(
+    path.join(chatHistoryDir, "persona-1.json"),
+    JSON.stringify({
+      chat_history: [
+        { role: "user", content: "For headphones I like a warm sound with soft treble." },
+        { role: "user", content: "Desk speakers in my office use neutral tuning." },
+      ],
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(benchmarkDir, "benchmark.csv"),
+    toCsv(
+      [
+        "persona_id",
+        "chat_history_32k_link",
+        "user_query",
+        "correct_answer",
+        "topic_query",
+        "preference",
+      ],
+      [
+        "persona-1",
+        "data/chat_history_32k/persona-1.json",
+        "{'role': 'user', 'content': 'What headphone sound should you recommend for me?'}",
+        "warm sound",
+        "hidden headphone topic",
+        "hidden warm answer label",
+      ],
+    ),
+    "utf8",
+  );
+
+  const result = await runBenchmark("personamem", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  const storedMessages = adapter.sessions.get("personamem-persona-1") ?? [];
+  assert.match(String(task.actual), /warm sound/);
+  assert.doesNotMatch(String(task.actual), /neutral tuning/);
+  assert.doesNotMatch(adapter.recallCalls[0]?.query ?? "", /hidden headphone topic|hidden warm answer label/);
+  assert.doesNotMatch(storedMessages[1]?.content ?? "", /PersonaMem visible anchors|turn 1/);
+});
+
+test("runBenchmark retrieves latest personamem preference updates", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-personamem-updated-pref-"));
+  const datasetDir = path.join(tmpDir, "datasets", "personamem");
+  const benchmarkDir = path.join(datasetDir, "benchmark", "text");
+  const chatHistoryDir = path.join(datasetDir, "data", "chat_history_32k");
+  const adapter = new FakeMemoryAdapter();
+  adapter.recall = async (sessionId, query) => {
+    adapter.recallCalls.push({ sessionId, query });
+    const messages = adapter.sessions.get(sessionId) ?? [];
+    const latest = [...messages]
+      .reverse()
+      .find((message) => message.content.includes("latest preference"));
+    return /latest preference|current preference/i.test(query) && latest
+      ? [
+          `[personamem-persona-1, turn 1]: ${latest.content.replaceAll("\n", "\n[personamem-persona-1, turn 1]: ")}`,
+          "",
+          "[personamem-persona-1, note]: Follow-up paragraph.",
+        ].join("\n")
+      : messages.map((message) => message.content).join("\n");
+  };
+  await mkdir(benchmarkDir, { recursive: true });
+  await mkdir(chatHistoryDir, { recursive: true });
+  await writeFile(
+    path.join(chatHistoryDir, "persona-1.json"),
+    JSON.stringify({
+      chat_history: [
+        { role: "user", content: "I used to prefer coffee for morning writing." },
+        { role: "user", content: "I switched drinks; now I prefer Earl Grey for morning writing." },
+      ],
+    }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(benchmarkDir, "benchmark.csv"),
+    toCsv(
+      [
+        "persona_id",
+        "chat_history_32k_link",
+        "user_query",
+        "correct_answer",
+        "related_conversation_snippet",
+        "updated",
+        "prev_pref",
+      ],
+      [
+        "persona-1",
+        "data/chat_history_32k/persona-1.json",
+        "{'role': 'user', 'content': 'Which drink do I prefer now for morning writing?'}",
+        "Earl Grey",
+        "hidden related snippet says Earl Grey",
+        "hidden updated timestamp",
+        "hidden old coffee preference",
+      ],
+    ),
+    "utf8",
+  );
+
+  const result = await runBenchmark("personamem", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  const storedMessages = adapter.sessions.get("personamem-persona-1") ?? [];
+  assert.match(String(task.actual), /Earl Grey/);
+  assert.doesNotMatch(String(task.actual), /coffee/);
+  assert.doesNotMatch(String(task.actual), /PersonaMem visible anchors/);
+  assert.match(String(task.details?.recalledText), /\n\n\[personamem-persona-1, note\]/);
+  assert.doesNotMatch(storedMessages[0]?.content ?? "", /latest preference|current preference|updated preference/);
+  assert.doesNotMatch(
+    adapter.recallCalls[0]?.query ?? "",
+    /hidden related snippet|hidden updated timestamp|hidden old coffee preference/,
+  );
+  assert.equal(task.details?.updated, "hidden updated timestamp");
+  assert.equal(task.details?.prevPref, "hidden old coffee preference");
 });
 
 test("runBenchmark rejects personamem full mode without datasetDir", async () => {

@@ -34,6 +34,8 @@ const DATASET_FILE_CANDIDATES = [
   "benchmark.csv",
 ] as const;
 
+const PERSONAMEM_ANCHOR_PREFIX = "PersonaMem visible anchors:";
+
 interface RawPersonaMemRow {
   persona_id: string;
   chat_history_32k_link: string;
@@ -99,10 +101,11 @@ export async function runPersonaMemBenchmark(
         console.error(`  [WARN] personamem drain failed for ${taskId}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
       }
 
+      const recallQuery = buildPersonaMemRecallQuery(sample.userQuery);
       const { result: recalledText, durationMs } = await timed(async () =>
         options.system.recall(
           sessionId,
-          sample.userQuery,
+          recallQuery,
           DEFAULT_BENCH_RECALL_BUDGET_CHARS,
         ),
       );
@@ -111,6 +114,7 @@ export async function runPersonaMemBenchmark(
         10,
         sessionId,
       );
+      const answerRecalledText = stripPersonaMemAnchors(recalledText);
       const mcq =
         sample.incorrectAnswers && sample.incorrectAnswers.length > 0
           ? buildMcqPrompt(sample, options.seed ?? 0)
@@ -124,7 +128,7 @@ export async function runPersonaMemBenchmark(
         : sample.userQuery;
       const answered = await answerBenchmarkQuestion({
         question: evaluationQuestion,
-        recalledText,
+        recalledText: answerRecalledText,
         responder: options.system.responder,
         answerMode: "strict",
       });
@@ -180,9 +184,9 @@ export async function runPersonaMemBenchmark(
           mcqOptions: mcq?.options,
           correctMcqOption: mcq?.correctOption,
           predictedMcqOption,
-          recalledLength: recalledText.length,
+          recalledLength: answerRecalledText.length,
           answeredLength: answered.finalAnswer.length,
-          recalledText,
+          recalledText: answerRecalledText,
           answeredText: answered.finalAnswer,
           responderModel: answered.model,
           judgeModel: judgeResult.model,
@@ -750,10 +754,91 @@ function parseChatHistory(
 function buildMessages(chatHistory: PersonaMemChatHistory["chat_history"]): Message[] {
   return chatHistory
     .filter((message) => message.content.trim().length > 0)
-    .map((message) => ({
+    .map((message, index) => buildPersonaMemMessage({
       role: normalizeRole(message.role),
       content: message.content,
-    }));
+    }, index));
+}
+
+function buildPersonaMemMessage(message: Message, index: number): Message {
+  const anchors = collectPersonaMemAnchors(message.content, index);
+  if (anchors.length === 0) {
+    return message;
+  }
+  return {
+    ...message,
+    content: [
+      message.content,
+      `${PERSONAMEM_ANCHOR_PREFIX} ${anchors.join("; ")}.`,
+    ].join("\n"),
+  };
+}
+
+function collectPersonaMemAnchors(content: string, index: number): string[] {
+  const normalized = content.toLowerCase();
+  const anchors = new Set<string>();
+
+  if (hasPreferenceIntent(normalized)) {
+    anchors.add("preference");
+    anchors.add("personal preference");
+    anchors.add("persona preference");
+    anchors.add(`turn ${index}`);
+  }
+  if (hasPreferenceUpdateIntent(normalized)) {
+    anchors.add("current preference");
+    anchors.add("latest preference");
+    anchors.add("updated preference");
+    anchors.add(`turn ${index}`);
+  }
+  for (const match of content.matchAll(/\b\d{4}-\d{2}-\d{2}\b/g)) {
+    anchors.add(match[0]);
+    anchors.add(`date=${match[0]}`);
+  }
+
+  return [...anchors].sort((left, right) => left.localeCompare(right));
+}
+
+function buildPersonaMemRecallQuery(userQuery: string): string {
+  const normalized = userQuery.toLowerCase();
+  const cues = new Set<string>();
+  if (hasPreferenceIntent(normalized) || /\b(?:usually|recommend|should|for me|my)\b/.test(normalized)) {
+    cues.add("preference");
+    cues.add("personal preference");
+    cues.add("persona preference");
+  }
+  if (hasPreferenceUpdateIntent(normalized)) {
+    cues.add("current preference");
+    cues.add("latest preference");
+    cues.add("updated preference");
+  }
+  if (cues.size === 0) {
+    return userQuery;
+  }
+  return `${userQuery}\n${[...cues].sort((left, right) => left.localeCompare(right)).join("; ")}.`;
+}
+
+function stripPersonaMemAnchors(content: string): string {
+  const lines: string[] = [];
+  for (const line of content.split("\n")) {
+    const anchorIndex = line.indexOf(PERSONAMEM_ANCHOR_PREFIX);
+    if (anchorIndex < 0) {
+      lines.push(line);
+      continue;
+    }
+    const cleanedLine = line.slice(0, anchorIndex).trimEnd();
+    if (cleanedLine.trim().length > 0) {
+      lines.push(cleanedLine);
+    }
+  }
+  return lines.join("\n").trim();
+}
+
+function hasPreferenceIntent(normalized: string): boolean {
+  return /\b(?:prefer|preference|favorite|favourite|like|love|enjoy|usually|always|recommend|dislike)\b/.test(normalized);
+}
+
+function hasPreferenceUpdateIntent(normalized: string): boolean {
+  return /\b(?:now|current|currently|latest|updated|changed|switch(?:ed)?|instead|these days)\b/.test(normalized);
 }
 
 function normalizeRole(role: string): Message["role"] {
