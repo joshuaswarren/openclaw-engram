@@ -961,7 +961,7 @@ function buildBeamAnchorMessage(input: BeamSessionAnchorInput): Message {
     .filter((id) => id.length > 0);
   if (chatIds.length > 0) {
     fields.push(`chat_ids=${chatIds.join(",")}`);
-    for (const chatId of chatIds.slice(0, 16)) {
+    for (const chatId of chatIds) {
       fields.push(`chat_id=${chatId}`);
       fields.push(`source_chat_id=${chatId}`);
     }

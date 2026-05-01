@@ -91,6 +91,9 @@ class QueryVisibleBeamAdapter extends FakeMemoryAdapter {
       const planId = visiblePlanMatch[1]!.replace(/[.,;:!?]+$/g, "");
       return content.includes(`plan_id=${planId}`) ? content : "";
     }
+    if (query.toLowerCase().includes("chat id 27")) {
+      return content.includes("chat_id=27") ? content : "";
+    }
     return content;
   }
 }
@@ -287,6 +290,51 @@ test("runBenchmark keeps hidden beam source metadata reporting-only", async () =
   );
   assert.equal(String(task.details.recalledText).includes("hidden-source-77"), false);
   assert.equal(String(task.details.recalledText).includes("hidden-plan-reference"), false);
+});
+
+test("runBenchmark indexes later beam chat ids as memory evidence", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-chat-cue-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new QueryVisibleBeamAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "100K.json"),
+    JSON.stringify([
+      {
+        conversation_id: "beam-visible-chat-1",
+        chat: [
+          Array.from({ length: 27 }, (_, index) => ({
+            id: index + 1,
+            role: "user",
+            content:
+              index === 26
+                ? "Marisol owns the late referenced chat evidence."
+                : `Filler BEAM chat turn ${index + 1}.`,
+          })),
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "Using chat id 27, who owns the late referenced chat evidence?",
+              answer: "Marisol",
+            },
+          ],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("beam", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.actual.includes("Marisol"), true);
+  assert.match(String(task.details.recalledText), /chat_id=27/);
 });
 
 test("runBenchmark streams beam JSON arrays without misreading braces in strings", async () => {
