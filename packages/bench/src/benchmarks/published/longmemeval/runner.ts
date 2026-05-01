@@ -7,6 +7,8 @@
  * `LongMemEvalItem` into a `HarnessPlan`.
  */
 
+import { collectTemporalLexicalCues } from "@remnic/core";
+
 import { type LongMemEvalItem } from "./fixture.js";
 import {
   LONG_MEM_EVAL_DATASET_FILENAMES,
@@ -69,6 +71,7 @@ function buildPlan(
 ): HarnessPlan {
   const ingestSessions: HarnessPlan["ingestSessions"] = [];
   const sessionIds: string[] = [];
+  const annotateTemporalSources = shouldAnnotateTemporalSources(item.question);
   for (
     let sessionIndex = 0;
     sessionIndex < item.haystack_sessions.length;
@@ -76,10 +79,16 @@ function buildPlan(
   ) {
     const sessionId =
       item.haystack_session_ids[sessionIndex] ?? `session-${sessionIndex}`;
+    const haystackDate = item.haystack_dates[sessionIndex];
     const messages = item.haystack_sessions[sessionIndex]!.map<Message>(
       (turn) => ({
         role: turn.role,
-        content: turn.content,
+        content: annotateTemporalSources
+          ? formatLongMemEvalTurn(turn.content, {
+              sessionId,
+              haystackDate,
+            })
+          : turn.content,
       }),
     );
     sessionIds.push(sessionId);
@@ -98,13 +107,76 @@ function buildPlan(
       haystackSessionIds: item.haystack_session_ids,
       answerSessionIds: item.answer_session_ids,
     },
-    postAnswerHook: async ({ question }) => {
+    postAnswerHook: async ({ question, recalledText }) => {
       const searchResults = await options.system.search(question, 10);
-      return { extraScores: { search_hits: searchResults.length } };
+      return {
+        extraScores: { search_hits: searchResults.length },
+        extraDetails: {
+          temporalRecallAudit: buildTemporalRecallAudit({
+            item,
+            question,
+            recalledText,
+          }),
+        },
+      };
     },
   };
 
   return { ingestSessions, trials: [trial] };
+}
+
+function formatLongMemEvalTurn(
+  content: string,
+  metadata: { sessionId: string; haystackDate?: string },
+): string {
+  const fields = [`source_session: ${metadata.sessionId}`];
+  if (metadata.haystackDate) {
+    fields.push(`source_date: ${metadata.haystackDate}`);
+  }
+  return `[${fields.join("] [")}] ${content}`;
+}
+
+function shouldAnnotateTemporalSources(question: string): boolean {
+  return (
+    collectIsoDateCues(question).length > 0 ||
+    collectTemporalLexicalCues(question).length > 0
+  );
+}
+
+function buildTemporalRecallAudit(options: {
+  item: LongMemEvalItem;
+  question: string;
+  recalledText: string;
+}): Record<string, unknown> {
+  const questionDates = collectIsoDateCues(options.question);
+  const temporalCues = collectTemporalLexicalCues(options.question);
+  const recalledText = options.recalledText;
+  return {
+    questionDates,
+    temporalCues,
+    matchedQuestionDates: questionDates.filter((date) =>
+      recalledText.includes(date),
+    ),
+    matchedTemporalCues: temporalCues.filter((cue) =>
+      recalledText.toLowerCase().includes(cue.toLowerCase()),
+    ),
+    matchedSourceDates: options.item.haystack_dates.filter((date) =>
+      recalledText.includes(date),
+    ),
+    matchedSourceSessionIds: options.item.haystack_session_ids.filter(
+      (sessionId) => recalledText.includes(`source_session: ${sessionId}`),
+    ),
+    answerSessionIdsUsedForRecall: false,
+  };
+}
+
+function collectIsoDateCues(value: string): string[] {
+  return [
+    ...new Set(
+      [...value.matchAll(/\b\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?Z?)?\b/g)]
+        .map((match) => match[0]),
+    ),
+  ].sort((left, right) => left.localeCompare(right));
 }
 
 async function loadDataset(

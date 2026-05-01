@@ -44,12 +44,61 @@ const TURN_REFERENCE_WINDOW_RADIUS = 0;
 const LEXICAL_CUE_WINDOW_RADIUS = 1;
 const LEXICAL_CUE_SEARCH_LIMIT = 3;
 const LEXICAL_CUE_MAX_TOKENS = 400;
+const RELATIVE_TEMPORAL_CUES = [
+  "as of",
+  "most recent",
+  "last time",
+  "last week",
+  "last month",
+  "last year",
+  "last session",
+  "last conversation",
+  "next time",
+  "next week",
+  "next month",
+  "next year",
+  "next session",
+  "next conversation",
+  "previous time",
+  "previous week",
+  "previous month",
+  "previous year",
+  "previous session",
+  "previous conversation",
+  "prior time",
+  "prior week",
+  "prior month",
+  "prior year",
+  "prior session",
+  "prior conversation",
+  "today",
+  "yesterday",
+  "tomorrow",
+  "tonight",
+  "earlier",
+  "later",
+  "recently",
+  "previously",
+  "currently",
+  "now",
+  "latest",
+  "newest",
+  "oldest",
+  "earliest",
+  "before",
+  "after",
+  "since",
+  "updated",
+  "changed",
+  "change",
+];
 const SPEAKER_NAME_STOPWORDS = new Set([
   "A",
   "According",
   "An",
   "And",
   "Are",
+  "As",
   "At",
   "Before",
   "Can",
@@ -329,6 +378,9 @@ export function collectLexicalCues(query: string): string[] {
   for (const match of query.matchAll(/\b\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?Z?)?\b/g)) {
     cues.add(match[0]);
   }
+  for (const cue of collectTemporalLexicalCues(query)) {
+    cues.add(cue);
+  }
   for (const match of query.matchAll(/\b(?:session|source|chat|plan|task|event|file|tool)[_-][A-Za-z0-9][A-Za-z0-9_.:-]{0,80}\b/gi)) {
     cues.add(match[0]);
   }
@@ -348,6 +400,30 @@ export function collectLexicalCues(query: string): string[] {
   return [...cues].sort((left, right) => left.localeCompare(right));
 }
 
+export function collectTemporalLexicalCues(query: string): string[] {
+  const cues = new Set<string>();
+  const normalizedQuery = query.toLowerCase().replace(/\s+/g, " ");
+  for (const cue of RELATIVE_TEMPORAL_CUES) {
+    let searchFrom = 0;
+    while (searchFrom < normalizedQuery.length) {
+      const index = normalizedQuery.indexOf(cue, searchFrom);
+      if (index < 0) {
+        break;
+      }
+      const afterIndex = index + cue.length;
+      if (
+        isTemporalCueBoundary(normalizedQuery[index - 1]) &&
+        isTemporalCueBoundary(normalizedQuery[afterIndex])
+      ) {
+        cues.add(cue);
+        break;
+      }
+      searchFrom = afterIndex;
+    }
+  }
+  return [...cues].sort((left, right) => left.localeCompare(right));
+}
+
 function normalizeSpeakerNameCue(value: string): string | undefined {
   const words = value.trim().split(/\s+/).filter(Boolean);
   while (words.length > 0 && SPEAKER_NAME_STOPWORDS.has(words[0]!)) {
@@ -357,6 +433,13 @@ function normalizeSpeakerNameCue(value: string): string | undefined {
     words.pop();
   }
   return words.length > 0 ? words.join(" ") : undefined;
+}
+
+function isTemporalCueBoundary(char: string | undefined): boolean {
+  if (!char) {
+    return true;
+  }
+  return !isAsciiLetterOrDigit(char);
 }
 
 function tokenizeReferenceQuery(query: string): string[] {
