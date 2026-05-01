@@ -292,6 +292,50 @@ test("runBenchmark keeps hidden beam source metadata reporting-only", async () =
   assert.equal(String(task.details.recalledText).includes("hidden-plan-reference"), false);
 });
 
+test("runBenchmark does not create beam sessions for empty turn batches", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-empty-batch-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "100K.json"),
+    JSON.stringify([
+      {
+        conversation_id: "beam-empty-batch-1",
+        chat: [
+          [],
+          [
+            {
+              id: 1,
+              role: "user",
+              content: "Only the non-empty batch should become a BEAM session.",
+            },
+          ],
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "Which batch should become a BEAM session?",
+              answer: "Only the non-empty batch",
+            },
+          ],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("beam", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.details.sessionCount, 1);
+  assert.equal([...adapter.sessions.keys()].length, 1);
+});
+
 test("runBenchmark indexes later beam chat ids as memory evidence", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-chat-cue-"));
   const datasetDir = path.join(tmpDir, "datasets", "beam");

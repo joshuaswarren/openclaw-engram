@@ -89,6 +89,20 @@ const BENCHMARK_ABILITY_CUES = new Map([
   ["multi-session reasoning", "ability=multi_session_reasoning"],
   ["instruction following", "ability=instruction_following"],
 ]);
+const BENCHMARK_ANCHOR_VALUE_STOPWORDS = new Set([
+  "a",
+  "about",
+  "an",
+  "for",
+  "from",
+  "in",
+  "on",
+  "the",
+  "to",
+  "use",
+  "using",
+  "with",
+]);
 const RELATIVE_TEMPORAL_CUES = [
   "as of",
   "most recent",
@@ -525,19 +539,45 @@ export function collectBenchmarkAnchorCues(query: string): string[] {
       valueIndex += 1;
     }
 
-    const rawValue = tokens[valueIndex];
-    if (!rawValue || normalizeBenchmarkAnchorPrefix(rawValue)) {
+    let consumedValue = false;
+    for (
+      let currentValueIndex = valueIndex;
+      currentValueIndex < tokens.length;
+      currentValueIndex += 1
+    ) {
+      const rawValue = tokens[currentValueIndex];
+      const normalizedValue = rawValue?.toLowerCase();
+      if (!rawValue || normalizeBenchmarkAnchorPrefix(rawValue)) {
+        break;
+      }
+      if (normalizedValue === "and" || normalizedValue === "or") {
+        continue;
+      }
+      if (BENCHMARK_ANCHOR_VALUE_STOPWORDS.has(normalizedValue)) {
+        break;
+      }
+      addBenchmarkAnchorCues(cues, prefix, rawValue);
+      consumedValue = true;
+      index = currentValueIndex;
+    }
+    if (!consumedValue) {
       continue;
     }
-    cues.add(`${prefix}_id=${rawValue}`);
-    cues.add(`${prefix}-${rawValue}`);
-    if (prefix === "source_chat") {
-      cues.add(`chat_id=${rawValue}`);
-    }
-    index = valueIndex;
   }
 
   return [...cues].sort((left, right) => left.localeCompare(right));
+}
+
+function addBenchmarkAnchorCues(
+  cues: Set<string>,
+  prefix: string,
+  rawValue: string,
+): void {
+  cues.add(`${prefix}_id=${rawValue}`);
+  cues.add(`${prefix}-${rawValue}`);
+  if (prefix === "source_chat") {
+    cues.add(`chat_id=${rawValue}`);
+  }
 }
 
 function normalizeBenchmarkAnchorPrefix(token: string | undefined): string | undefined {

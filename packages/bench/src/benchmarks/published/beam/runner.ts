@@ -928,7 +928,7 @@ function buildMessages(
     role: normalizeRole(turn.role),
     content: turn.content,
   }));
-  if (!anchors) {
+  if (!anchors || messages.length === 0) {
     return messages;
   }
   return [buildBeamAnchorMessage(anchors), ...messages];
