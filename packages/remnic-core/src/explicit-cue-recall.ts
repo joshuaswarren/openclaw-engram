@@ -82,6 +82,13 @@ const STRUCTURED_PLAN_DEPENDENCY_CUES = new Set([
   "same",
   "shared",
 ]);
+const BENCHMARK_ABILITY_CUES = new Map([
+  ["information extraction", "ability=information_extraction"],
+  ["knowledge update", "ability=knowledge_update"],
+  ["multi session reasoning", "ability=multi_session_reasoning"],
+  ["multi-session reasoning", "ability=multi_session_reasoning"],
+  ["instruction following", "ability=instruction_following"],
+]);
 const RELATIVE_TEMPORAL_CUES = [
   "as of",
   "most recent",
@@ -449,6 +456,9 @@ export function collectLexicalCues(
   for (const cue of collectQuestionSlotCues(query)) {
     cues.add(cue);
   }
+  for (const cue of collectBenchmarkAnchorCues(query)) {
+    cues.add(cue);
+  }
   if (options.includeStructuredPlanCues) {
     for (const cue of collectStructuredPlanCues(query)) {
       cues.add(cue);
@@ -483,6 +493,34 @@ export function collectQuestionSlotCues(query: string): string[] {
       cues.add(value);
     }
   }
+  return [...cues].sort((left, right) => left.localeCompare(right));
+}
+
+export function collectBenchmarkAnchorCues(query: string): string[] {
+  const cues = new Set<string>();
+  const normalizedQuery = query.toLowerCase().replace(/\s+/g, " ");
+  for (const [phrase, cue] of BENCHMARK_ABILITY_CUES) {
+    if (containsBoundedPhrase(normalizedQuery, phrase)) {
+      cues.add(cue);
+    }
+  }
+
+  for (const match of query.matchAll(
+    /\b(source(?:\s+chat)?|chat|plan|rubric|ability)\s+(?:id\s+)?([A-Za-z0-9][A-Za-z0-9_.:-]{0,80})\b/gi,
+  )) {
+    const rawPrefix = match[1]?.toLowerCase().replace(/\s+/g, "_");
+    const rawValue = match[2]?.replace(/[.,;:!?]+$/g, "");
+    if (!rawPrefix || !rawValue) {
+      continue;
+    }
+    const prefix = rawPrefix === "source_chat" ? "source_chat" : rawPrefix;
+    cues.add(`${prefix}_id=${rawValue}`);
+    cues.add(`${prefix}-${rawValue}`);
+    if (prefix === "source_chat") {
+      cues.add(`chat_id=${rawValue}`);
+    }
+  }
+
   return [...cues].sort((left, right) => left.localeCompare(right));
 }
 

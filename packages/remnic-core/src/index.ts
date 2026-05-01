@@ -53,6 +53,7 @@ export {
 export {
   buildExplicitCueRecallSection,
   collectExplicitTurnReferences,
+  collectBenchmarkAnchorCues,
   collectLexicalCues,
   collectQuestionSlotCues,
   collectStructuredPlanCues,
