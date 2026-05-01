@@ -136,14 +136,18 @@ export class LcmArchive {
     `);
     for (let index = 0; index < parts.length; index += 1) {
       const part = parts[index]!;
+      const rawPart = part as unknown as Record<string, unknown>;
+      const toolName = part.toolName ?? asNullableString(rawPart.tool_name);
+      const filePath = part.filePath ?? asNullableString(rawPart.file_path);
+      const createdAt = part.createdAt ?? asNullableString(rawPart.created_at);
       stmt.run(
         messageId,
         part.ordinal ?? index,
         part.kind,
         JSON.stringify(part.payload ?? {}),
-        part.toolName ?? null,
-        part.filePath ?? null,
-        part.createdAt ?? fallbackCreatedAt,
+        toolName ?? null,
+        filePath ?? null,
+        createdAt ?? fallbackCreatedAt,
       );
     }
   }
@@ -547,6 +551,10 @@ function extractStructuredToolTerms(query: string): string[] {
 
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
+function asNullableString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
 /**

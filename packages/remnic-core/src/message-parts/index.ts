@@ -35,8 +35,11 @@ export interface LcmMessagePartInput {
   kind: LcmMessagePartKind;
   payload: Record<string, unknown>;
   toolName?: string | null;
+  tool_name?: string | null;
   filePath?: string | null;
+  file_path?: string | null;
   createdAt?: string | null;
+  created_at?: string | null;
 }
 
 export interface LcmMessagePartRow extends LcmMessagePartInput {

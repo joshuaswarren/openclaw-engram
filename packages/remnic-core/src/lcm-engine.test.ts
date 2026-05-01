@@ -114,6 +114,8 @@ function createPluginConfig(memoryDir: string): PluginConfig {
     lcmDeterministicMaxTokens: 128,
     lcmArchiveRetentionDays: 90,
     lcmRecallBudgetShare: 0.15,
+    messagePartsEnabled: true,
+    messagePartsRecallMaxResults: 6,
   } as unknown as PluginConfig;
 }
 
@@ -301,6 +303,90 @@ test("close prevents deferred observe work from reinitializing the engine", asyn
     assert.equal((engine as any).dag, null);
     assert.equal((engine as any).summarizer, null);
     assert.equal((engine as any).observeQueue, null);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("observeMessages stores structured message parts and file-aware recall finds them", async () => {
+  const memoryDir = await mkdtemp(
+    path.join(os.tmpdir(), "engram-lcm-message-parts-"),
+  );
+
+  try {
+    const engine = new LcmEngine(createPluginConfig(memoryDir), async () => {
+      return "summary";
+    });
+
+    await engine.observeMessages("session-1", [
+      {
+        role: "assistant",
+        content: "Edited src/auth.ts to repair the login flow.",
+        rawContent: {
+          content: [
+            {
+              type: "tool_use",
+              name: "Edit",
+              input: { path: "src/auth.ts" },
+            },
+          ],
+        },
+        sourceFormat: "anthropic",
+      },
+    ]);
+    await engine.waitForSessionObserveIdle("session-1");
+
+    const matches = await engine.searchStructuredParts(
+      "session-1",
+      "what changed in src/auth.ts",
+    );
+
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0]!.file_path, "src/auth.ts");
+    assert.equal(matches[0]!.kind, "file_write");
+
+    const section = engine.formatStructuredRecall(matches, 1000);
+    assert.match(section, /Structured Session Matches/);
+    assert.match(section, /src\/auth\.ts/);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("observeMessages preserves snake_case normalized part metadata", async () => {
+  const memoryDir = await mkdtemp(
+    path.join(os.tmpdir(), "engram-lcm-message-parts-snake-"),
+  );
+
+  try {
+    const engine = new LcmEngine(createPluginConfig(memoryDir), async () => {
+      return "summary";
+    });
+
+    await engine.observeMessages("session-1", [
+      {
+        role: "assistant",
+        content: "Edited src/config.ts.",
+        parts: [
+          {
+            kind: "file_write",
+            payload: { path: "src/config.ts" },
+            tool_name: "Edit",
+            file_path: "src/config.ts",
+          },
+        ],
+      },
+    ]);
+    await engine.waitForSessionObserveIdle("session-1");
+
+    const matches = await engine.searchStructuredParts(
+      "session-1",
+      "what changed in src/config.ts",
+    );
+
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0]!.file_path, "src/config.ts");
+    assert.equal(matches[0]!.tool_name, "Edit");
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
