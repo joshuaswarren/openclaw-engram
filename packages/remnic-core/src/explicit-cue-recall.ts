@@ -556,6 +556,9 @@ export function collectBenchmarkAnchorCues(query: string): string[] {
       if (BENCHMARK_ANCHOR_VALUE_STOPWORDS.has(normalizedValue)) {
         break;
       }
+      if (!isBenchmarkAnchorValue(rawValue)) {
+        break;
+      }
       addBenchmarkAnchorCues(cues, prefix, rawValue);
       consumedValue = true;
       index = currentValueIndex;
@@ -578,6 +581,26 @@ function addBenchmarkAnchorCues(
   if (prefix === "source_chat") {
     cues.add(`chat_id=${rawValue}`);
   }
+}
+
+function isBenchmarkAnchorValue(token: string): boolean {
+  for (const char of token) {
+    if (
+      isAsciiDigitChar(char) ||
+      char === "_" ||
+      char === "-" ||
+      char === "." ||
+      char === ":"
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isAsciiDigitChar(char: string): boolean {
+  const code = char.charCodeAt(0);
+  return code >= 48 && code <= 57;
 }
 
 function normalizeBenchmarkAnchorPrefix(token: string | undefined): string | undefined {
