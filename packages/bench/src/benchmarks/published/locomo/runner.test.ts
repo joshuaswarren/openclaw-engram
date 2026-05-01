@@ -12,6 +12,7 @@ test("LoCoMo normalizes numeric answers and adversarial-answer fallbacks from th
   const datasetPath = path.join(tempDir, "locomo10.json");
   const storedMessages: Message[] = [];
   const respondentQuestions: string[] = [];
+  const respondentContexts: string[] = [];
 
   try {
     await writeFile(
@@ -33,7 +34,7 @@ test("LoCoMo normalizes numeric answers and adversarial-answer fallbacks from th
           },
           qa: [
             {
-              question: "What year did Maya move?",
+              question: "According to D1:1, what year did Maya move?",
               answer: 2022,
               evidence: ["D1:1"],
               category: 1,
@@ -60,9 +61,9 @@ test("LoCoMo normalizes numeric answers and adversarial-answer fallbacks from th
         },
         async recall(_sessionId, question) {
           if (question.includes("year")) {
-            return "2022";
+            return "[D1:1] Maya: I moved in 2022.";
           }
-          return "blue";
+          return "D1:2 Maya: The jacket was blue.";
         },
         async search() {
           return [];
@@ -73,8 +74,9 @@ test("LoCoMo normalizes numeric answers and adversarial-answer fallbacks from th
           return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: 0 };
         },
         responder: {
-          async respond(question) {
+          async respond(question, recalledText) {
             respondentQuestions.push(question);
+            respondentContexts.push(recalledText);
             return {
               text: question.includes("jacket") ? "blue" : "2022",
               tokens: { input: 1, output: 1 },
@@ -105,6 +107,15 @@ test("LoCoMo normalizes numeric answers and adversarial-answer fallbacks from th
     assert.equal(result.results.tasks[0]?.actual, "2022");
     assert.equal(result.results.tasks[1]?.actual, "blue");
     assert.equal(result.results.tasks[0]?.details.answerFormat, "short");
+    assert.equal(
+      result.results.tasks[0]?.scores.locomo_hidden_evidence_id_leak,
+      1,
+    );
+    assert.equal(result.results.tasks[0]?.details.hiddenEvidenceIdLeakCount, 0);
+    assert.equal(result.results.tasks[1]?.details.hiddenEvidenceIdLeakCount, 0);
+    assert.match(respondentContexts[0] ?? "", /\[D1:1\]/);
+    assert.equal(/\[D\d+:\d+\]/.test(respondentContexts[1] ?? ""), false);
+    assert.match(respondentContexts[0] ?? "", /Maya: I moved in 2022/);
     assert.ok(
       respondentQuestions.every((question) =>
         /shortest complete answer/.test(question),

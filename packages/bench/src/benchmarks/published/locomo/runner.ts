@@ -37,6 +37,7 @@ const CATEGORY_NAMES: Record<number, string> = {
   4: "open_domain",
   5: "adversarial",
 };
+const DIALOGUE_ID_PATTERN = /\bD\d+:\d+\b/g;
 
 /** Extract sessions from the conversation dict as ordered (sessionId, turns) pairs. */
 function extractSessions(
@@ -148,6 +149,21 @@ function buildTrial(
     expected: qa.answer,
     recallSessionIds: sessionIds,
     answerFormat: "short",
+    recallTextTransform: sanitizeLoCoMoRecallText,
+    postAnswerHook: async ({ question, recalledText }) => {
+      const hiddenEvidenceIdLeakCount = countHiddenEvidenceIdsInRecall(
+        qa.evidence,
+        question,
+        recalledText,
+      );
+      return {
+        extraScores: {
+          locomo_hidden_evidence_id_leak:
+            hiddenEvidenceIdLeakCount === 0 ? 1 : 0,
+        },
+        extraDetails: { hiddenEvidenceIdLeakCount },
+      };
+    },
     extraDetails: {
       category: qa.category,
       categoryName,
@@ -156,6 +172,46 @@ function buildTrial(
       sessionIds,
     },
   };
+}
+
+function sanitizeLoCoMoRecallText(args: {
+  question: string;
+  recalledText: string;
+}): string {
+  const queryVisibleIds = collectDialogueIds(args.question);
+  return args.recalledText
+    .replace(/\[(D\d+:\d+)\]\s*/g, (match, id: string) =>
+      queryVisibleIds.has(id) ? match : "",
+    )
+    .replace(DIALOGUE_ID_PATTERN, (id: string) =>
+      queryVisibleIds.has(id) ? id : "",
+    );
+}
+
+function countHiddenEvidenceIdsInRecall(
+  evidence: readonly string[] | undefined,
+  question: string,
+  recalledText: string,
+): number {
+  const queryVisibleIds = collectDialogueIds(question);
+  let count = 0;
+  for (const id of evidence ?? []) {
+    if (queryVisibleIds.has(id)) {
+      continue;
+    }
+    if (new RegExp(`\\b${escapeRegExp(id)}\\b`).test(recalledText)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function collectDialogueIds(text: string): Set<string> {
+  return new Set(text.match(DIALOGUE_ID_PATTERN) ?? []);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function loadDataset(

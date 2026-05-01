@@ -95,6 +95,18 @@ test("collectLexicalCues extracts visible ids, dates, and bracket labels", () =>
     collectLexicalCues("Use D1:1 from session_alpha on 2026-04-30 [profile decision]."),
     ["2026-04-30", "D1:1", "profile decision", "session_alpha"],
   );
+  assert.deepEqual(
+    collectLexicalCues("What did Maya Chen tell Jordan about session_2?"),
+    ["Jordan", "Maya Chen", "session_2"],
+  );
+  assert.deepEqual(
+    collectLexicalCues("Can Maya Chen remember what Jordan said?"),
+    ["Jordan", "Maya Chen"],
+  );
+  assert.deepEqual(
+    collectLexicalCues("Were Maya Chen and Jordan aligned?"),
+    ["Jordan", "Maya Chen"],
+  );
 });
 
 test("buildExplicitCueRecallSection expands paired action and observation references", async () => {
@@ -172,6 +184,24 @@ test("buildExplicitCueRecallSection searches lexical cues across sessions when n
   });
 
   assert.match(section, /Maya moved to Seattle/);
+});
+
+test("buildExplicitCueRecallSection searches query-visible speaker names", async () => {
+  const engine = new FakeCueEngine({
+    locomo: [
+      { role: "user", content: "[D1:1] Maya Chen: I moved to Austin in 2022." },
+      { role: "assistant", content: "[D1:2] Jordan: The jacket was blue." },
+    ],
+  });
+
+  const section = await buildExplicitCueRecallSection({
+    engine,
+    query: "When did Maya Chen move?",
+    maxChars: 2000,
+  });
+
+  assert.match(section, /Maya Chen/);
+  assert.match(section, /2022/);
 });
 
 test("buildExplicitCueRecallSection stays silent when disabled by budget or no cues", async () => {

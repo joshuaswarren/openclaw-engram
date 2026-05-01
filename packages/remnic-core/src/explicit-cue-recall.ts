@@ -44,6 +44,51 @@ const TURN_REFERENCE_WINDOW_RADIUS = 0;
 const LEXICAL_CUE_WINDOW_RADIUS = 1;
 const LEXICAL_CUE_SEARCH_LIMIT = 3;
 const LEXICAL_CUE_MAX_TOKENS = 400;
+const SPEAKER_NAME_STOPWORDS = new Set([
+  "A",
+  "According",
+  "An",
+  "And",
+  "Are",
+  "At",
+  "Before",
+  "Can",
+  "Compare",
+  "Could",
+  "Did",
+  "Do",
+  "Does",
+  "For",
+  "From",
+  "Had",
+  "Has",
+  "Have",
+  "How",
+  "In",
+  "Is",
+  "It",
+  "Of",
+  "On",
+  "Or",
+  "Please",
+  "Review",
+  "Step",
+  "Tell",
+  "The",
+  "To",
+  "Turn",
+  "Use",
+  "Was",
+  "Were",
+  "What",
+  "When",
+  "Where",
+  "Which",
+  "Who",
+  "Why",
+  "Will",
+  "Would",
+]);
 
 export async function buildExplicitCueRecallSection(
   options: ExplicitCueRecallOptions,
@@ -284,8 +329,14 @@ export function collectLexicalCues(query: string): string[] {
   for (const match of query.matchAll(/\b\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?Z?)?\b/g)) {
     cues.add(match[0]);
   }
-  for (const match of query.matchAll(/\b(?:session|source|chat|plan|task|event|file|tool)[_-][A-Za-z0-9][A-Za-z0-9_.:-]{1,80}\b/gi)) {
+  for (const match of query.matchAll(/\b(?:session|source|chat|plan|task|event|file|tool)[_-][A-Za-z0-9][A-Za-z0-9_.:-]{0,80}\b/gi)) {
     cues.add(match[0]);
+  }
+  for (const match of query.matchAll(/\b[A-Z][a-z]{1,30}(?:\s+[A-Z][a-z]{1,30}){0,2}\b/g)) {
+    const value = normalizeSpeakerNameCue(match[0]);
+    if (value) {
+      cues.add(value);
+    }
   }
   for (const match of query.matchAll(/\[([A-Za-z0-9][A-Za-z0-9_.:/ -]{1,80})\]/g)) {
     const value = match[1]?.trim();
@@ -295,6 +346,17 @@ export function collectLexicalCues(query: string): string[] {
   }
 
   return [...cues].sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeSpeakerNameCue(value: string): string | undefined {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  while (words.length > 0 && SPEAKER_NAME_STOPWORDS.has(words[0]!)) {
+    words.shift();
+  }
+  while (words.length > 0 && SPEAKER_NAME_STOPWORDS.has(words[words.length - 1]!)) {
+    words.pop();
+  }
+  return words.length > 0 ? words.join(" ") : undefined;
 }
 
 function tokenizeReferenceQuery(query: string): string[] {
