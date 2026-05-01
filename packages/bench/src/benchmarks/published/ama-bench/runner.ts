@@ -26,6 +26,13 @@ import {
 } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
 
+const RECALL_SECTION_TITLES = new Set([
+  "Explicit Cue Evidence",
+  "Remnic recall pipeline",
+  "Search evidence",
+  "Raw messages",
+]);
+
 export const amaBenchDefinition: BenchmarkDefinition = {
   id: "ama-bench",
   title: "AMA-Bench",
@@ -157,6 +164,7 @@ export async function runAmaBenchBenchmark(
             numTurns: episode.num_turns,
             totalTokens: episode.total_tokens,
             recalledLength: recalledText.length,
+            recallSections: extractRecallSectionTitles(recalledText),
             answeredLength: answered.finalAnswer.length,
             recalledText,
             answeredText: answered.finalAnswer,
@@ -313,6 +321,17 @@ function applyLimit<T>(items: T[], limit: number | undefined): T[] {
     return [...items];
   }
   return items.slice(0, limit);
+}
+
+function extractRecallSectionTitles(recalledText: string): string[] {
+  const titles = new Set<string>();
+  for (const match of recalledText.matchAll(/^##\s+(.+)$/gm)) {
+    const title = match[1]?.trim();
+    if (title && RECALL_SECTION_TITLES.has(title)) {
+      titles.add(title);
+    }
+  }
+  return [...titles];
 }
 
 function parseEpisode(line: string, lineNumber: number): AMABenchEpisode {
