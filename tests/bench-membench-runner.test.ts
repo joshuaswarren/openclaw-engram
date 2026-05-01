@@ -346,6 +346,58 @@ function createFlatChoiceOnlyDataset() {
   ];
 }
 
+function createStepCueDataset() {
+  return [
+    {
+      id: "step-cue-separation",
+      memoryType: "factual",
+      scenario: "participant",
+      level: "low_level",
+      turns: [
+        {
+          role: "user",
+          content: "The first item was the blue mug.",
+        },
+        {
+          role: "assistant",
+          content: "The blue mug is saved.",
+        },
+        {
+          role: "user",
+          content: "The later item was the green notebook.",
+        },
+      ],
+      question: "What item appears at step 2?",
+      answer: "green notebook",
+      targetStepIds: [0],
+    },
+  ];
+}
+
+function createTimeCueDataset() {
+  return [
+    {
+      id: "time-cue-observation",
+      memoryType: "factual",
+      scenario: "observation",
+      level: "low_level",
+      turns: [
+        {
+          role: "user",
+          content: "On 2026-04-02, Avery confirmed the lapis sample.",
+        },
+        {
+          role: "user",
+          content: "On 2026-04-03, Avery confirmed the quartz sample.",
+        },
+      ],
+      question: "At the current time, what package did Avery confirm?",
+      answer: "quartz sample",
+      questionTime: "2026-04-03",
+    },
+  ];
+}
+
 test("runBenchmark executes membench in quick mode through the phase-1 package API", async () => {
   const adapter = new FakeMemoryAdapter();
 
@@ -494,6 +546,91 @@ test("runBenchmark scores official MemBench multiple-choice accuracy and recall"
     result.results.aggregates.membench_accuracy_factual_observation?.mean,
     1,
   );
+});
+
+test("runBenchmark retrieves query-visible MemBench step cues without target id leakage", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-membench-step-cue-"));
+  const datasetDir = path.join(tmpDir, "datasets", "membench");
+  const adapter = new FakeMemoryAdapter();
+  const recallQueries: string[] = [];
+  const searchQueries: string[] = [];
+  adapter.recall = async (sessionId, query) => {
+    recallQueries.push(query);
+    return (adapter.sessions.get(sessionId) ?? [])
+      .filter((message) =>
+        message.content.includes("step 2")
+        || message.content.includes("step_id=2"),
+      )
+      .map((message) => message.content)
+      .join("\n");
+  };
+  adapter.search = async (query, _limit, sessionId) => {
+    searchQueries.push(query);
+    return [
+      {
+        turnIndex: 2,
+        role: "user",
+        snippet: "The later item was the green notebook.",
+        sessionId,
+        score: 1,
+      },
+    ];
+  };
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "membench.json"),
+    JSON.stringify(createStepCueDataset()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("membench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.details?.scenario, "participant");
+  assert.equal(task.scores.contains_answer, 1);
+  assert.equal(task.scores.membench_recall_at_10, 0);
+  assert.match(String(task.actual), /green notebook/);
+  assert.doesNotMatch(recallQueries.join("\n"), /target/i);
+  assert.doesNotMatch(searchQueries.join("\n"), /target/i);
+  assert.deepEqual(task.details?.targetStepIds, [0]);
+});
+
+test("runBenchmark retrieves query-visible MemBench time cues for observation cases", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-membench-time-cue-"));
+  const datasetDir = path.join(tmpDir, "datasets", "membench");
+  const adapter = new FakeMemoryAdapter();
+  let recallQuery = "";
+  adapter.recall = async (sessionId, query) => {
+    recallQuery = query;
+    return (adapter.sessions.get(sessionId) ?? [])
+      .filter((message) => message.content.includes("2026-04-03"))
+      .map((message) => message.content)
+      .join("\n");
+  };
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "membench.json"),
+    JSON.stringify(createTimeCueDataset()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("membench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.details?.scenario, "observation");
+  assert.equal(task.details?.questionTime, "2026-04-03");
+  assert.match(recallQuery, /2026-04-03/);
+  assert.match(String(task.actual), /quartz sample/);
+  assert.doesNotMatch(String(task.actual), /lapis sample/);
+  assert.equal(task.scores.contains_answer, 1);
 });
 
 test("runBenchmark accepts official first-agent message_list and QA records", async () => {

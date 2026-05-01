@@ -93,8 +93,9 @@ export async function runMemBenchBenchmark(
       await options.system.reset();
 
       const sessionId = `membench-${testCase.id}`;
-      if (testCase.turns.length > 0) {
-        await options.system.store(sessionId, testCase.turns);
+      const storedTurns = buildStoredTurns(testCase);
+      if (storedTurns.length > 0) {
+        await options.system.store(sessionId, storedTurns);
       }
 
       try {
@@ -112,9 +113,10 @@ export async function runMemBenchBenchmark(
         ),
       );
       const answerQuestion = buildQuestionPrompt(testCase);
+      const answerRecalledText = stripMemBenchStepAnchors(recalledText);
       const answered = await answerBenchmarkQuestion({
         question: answerQuestion,
-        recalledText,
+        recalledText: answerRecalledText,
         responder: options.system.responder,
         answerMode: "strict",
       });
@@ -164,7 +166,7 @@ export async function runMemBenchBenchmark(
           scenario: testCase.scenario,
           level: testCase.level,
           turnCount: testCase.turns.length,
-          recalledLength: recalledText.length,
+          recalledLength: answerRecalledText.length,
           answeredLength: answered.finalAnswer.length,
           officialProtocol: testCase.choices ? "multiple_choice_accuracy" : "exact_answer_accuracy",
           choices: testCase.choices,
@@ -175,7 +177,7 @@ export async function runMemBenchBenchmark(
           questionTime: testCase.questionTime,
           targetStepIds: testCase.targetStepIds,
           targetStepCoordinates: testCase.targetStepCoordinates,
-          recalledText,
+          recalledText: answerRecalledText,
           answeredText: answered.finalAnswer,
           responderModel: answered.model,
           judgeModel: judgeResult.model,
@@ -1029,6 +1031,28 @@ function buildRecallQuery(testCase: MemBenchCase): string {
   return testCase.questionTime
     ? `${testCase.question} (${testCase.questionTime})`
     : testCase.question;
+}
+
+function buildStoredTurns(testCase: MemBenchCase): Message[] {
+  return testCase.turns.map((message, index) => ({
+    ...message,
+    content: appendMemBenchStepAnchor(message.content, index),
+  }));
+}
+
+function appendMemBenchStepAnchor(content: string, index: number): string {
+  return [
+    content,
+    `MemBench turn anchors: step ${index}; step_id=${index}; turn ${index}; turn_id=${index}; message ${index}; message_id=${index}.`,
+  ].join("\n");
+}
+
+function stripMemBenchStepAnchors(content: string): string {
+  return content
+    .split("\n")
+    .filter((line) => !line.startsWith("MemBench turn anchors:"))
+    .join("\n")
+    .trim();
 }
 
 function extractChoice(answer: string): MemBenchChoice | undefined {
