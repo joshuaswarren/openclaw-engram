@@ -54,8 +54,7 @@ export interface ParseMessagePartsOptions {
 
 const SECRET_KEY_RE = /(api[_-]?key|authorization|bearer|credential|password|secret|token)/i;
 const MAX_PAYLOAD_STRING = 8_000;
-const FILE_PATH_RE =
-  /(?:^|[\s"'`(])((?:\.{1,2}\/|\/|~\/)?[\w@.-][\w@./ -]*\.[A-Za-z0-9_+-]{1,12})(?=$|[\s"'`),:;])/g;
+const MAX_FILE_SCAN_CHARS = 20_000;
 
 export function isLcmMessagePartKind(value: unknown): value is LcmMessagePartKind {
   return (
@@ -248,18 +247,15 @@ export function parseOpenClawMessageParts(
 }
 
 export function partsFromRenderedText(text: string): LcmMessagePartInput[] {
-  if (!text.includes("*** Begin Patch") && !FILE_PATH_RE.test(text)) {
-    FILE_PATH_RE.lastIndex = 0;
-    return [];
-  }
-  FILE_PATH_RE.lastIndex = 0;
-  const paths = extractFilePaths(text);
   if (text.includes("*** Begin Patch")) {
+    const paths = extractFilePaths(text);
     const patchPaths = extractPatchPaths(text);
     return withOrdinals((patchPaths.length > 0 ? patchPaths : paths).map((filePath) =>
       makePart("patch", { text: truncateString(text) }, { filePath })
     ));
   }
+  const paths = extractFilePaths(text);
+  if (paths.length === 0) return [];
   return withOrdinals(paths.map((filePath) =>
     makePart("file_read", { text: truncateString(text) }, { filePath })
   ));
@@ -425,20 +421,103 @@ function firstFilePath(text: string): string | null {
 
 function extractFilePaths(text: string): string[] {
   const out = new Set<string>();
-  FILE_PATH_RE.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = FILE_PATH_RE.exec(text)) !== null) {
-    const candidate = normalizeFilePathCandidate(match[1] ?? "");
-    if (candidate.length > 0 && !candidate.includes("://")) out.add(candidate);
+  let token = "";
+  const scanLength = Math.min(text.length, MAX_FILE_SCAN_CHARS);
+  for (let index = 0; index <= scanLength; index += 1) {
+    const char = index < scanLength ? text[index]! : " ";
+    if (isFilePathTokenSeparator(char)) {
+      addFilePathCandidate(out, token);
+      token = "";
+      continue;
+    }
+    token += char;
+    if (token.length > 512) {
+      addFilePathCandidate(out, token);
+      token = "";
+    }
   }
   return [...out].slice(0, 20);
 }
 
-function normalizeFilePathCandidate(raw: string): string {
-  const trimmed = raw.trim();
-  if (!/\s/.test(trimmed)) return trimmed;
-  const tokens = trimmed.split(/\s+/).reverse();
-  return tokens.find((token) => token.includes("/") || /\.[A-Za-z0-9_+-]{1,12}$/.test(token)) ?? trimmed;
+function isFilePathTokenSeparator(char: string): boolean {
+  return (
+    char === " " ||
+    char === "\n" ||
+    char === "\r" ||
+    char === "\t" ||
+    char === "\"" ||
+    char === "'" ||
+    char === "`" ||
+    char === "(" ||
+    char === ")" ||
+    char === "[" ||
+    char === "]" ||
+    char === "{" ||
+    char === "}" ||
+    char === "<" ||
+    char === ">" ||
+    char === ","
+  );
+}
+
+function addFilePathCandidate(out: Set<string>, raw: string): void {
+  const candidate = trimFilePathPunctuation(raw);
+  if (candidate.length === 0 || candidate.includes("://")) return;
+  if (isLikelyFilePath(candidate)) out.add(candidate);
+}
+
+function trimFilePathPunctuation(raw: string): string {
+  let start = 0;
+  let end = raw.length;
+  while (start < end && isTrimmedFilePathPunctuation(raw[start]!)) start += 1;
+  while (end > start && isTrimmedFilePathPunctuation(raw[end - 1]!)) end -= 1;
+  return raw.slice(start, end);
+}
+
+function isTrimmedFilePathPunctuation(char: string): boolean {
+  return (
+    char === "." ||
+    char === ":" ||
+    char === ";" ||
+    char === "!" ||
+    char === "?" ||
+    char === "|" ||
+    char === "*" ||
+    char === "="
+  );
+}
+
+function isLikelyFilePath(value: string): boolean {
+  if (value.startsWith("/") || value.startsWith("./") || value.startsWith("../") || value.startsWith("~/")) {
+    return hasValidFileExtension(value);
+  }
+  if (value.includes("/")) return hasValidFileExtension(value);
+  return hasValidFileExtension(value);
+}
+
+function hasValidFileExtension(value: string): boolean {
+  const lastSlash = value.lastIndexOf("/");
+  const basename = value.slice(lastSlash + 1);
+  const dot = basename.lastIndexOf(".");
+  if (dot <= 0 || dot === basename.length - 1) return false;
+  const ext = basename.slice(dot + 1);
+  if (ext.length < 1 || ext.length > 12) return false;
+  for (const char of ext) {
+    if (!isFileExtensionChar(char)) return false;
+  }
+  return true;
+}
+
+function isFileExtensionChar(char: string): boolean {
+  const code = char.charCodeAt(0);
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    char === "_" ||
+    char === "+" ||
+    char === "-"
+  );
 }
 
 function extractPatchPaths(text: string): string[] {
