@@ -38,6 +38,23 @@ interface ModelRef {
   modelString: string;
 }
 
+const PROVIDER_ALIASES: Record<string, readonly string[]> = {
+  "openai-codex": ["codex"],
+  codex: ["openai-codex"],
+  "claude-cli": ["anthropic"],
+};
+
+const LEGACY_PROVIDER_IDS = new Set(["openai-codex", "claude-cli"]);
+
+const BUILT_IN_PROVIDER_FALLBACKS: Record<string, ModelProviderConfig> = {
+  anthropic: {
+    baseUrl: "https://api.anthropic.com/v1",
+    api: "anthropic-messages",
+    apiKey: "secretref-managed",
+    models: [],
+  },
+};
+
 /**
  * Generic fallback LLM client that uses the gateway's default AI configuration
  * and walks through the full fallback chain (primary + fallbacks).
@@ -246,20 +263,73 @@ export class FallbackLlmClient {
       return null;
     }
 
-    const providerId = parts[0];
+    const requestedProviderId = parts[0];
     const modelId = parts.slice(1).join("/"); // Handle cases like "openai/gpt-5.2-turbo"
 
     // Respect the active gateway config first so profile-local overrides and
     // credentials win. Fall back to the materialized models.json only when
     // the provider is absent from the loaded config (for built-in providers
     // registered by the gateway at runtime).
-    const providerConfig = providers[providerId] ?? this.resolveFromModelsJson(providerId);
+    const resolvedProvider = this.resolveProviderConfig(requestedProviderId, providers);
+    const providerConfig = resolvedProvider?.config;
     if (!providerConfig) {
-      log.warn(`fallback LLM: provider not found: ${providerId}`);
+      log.warn(
+        `fallback LLM: provider not found: ${requestedProviderId} ` +
+        `(tried: ${this.providerResolutionCandidates(requestedProviderId).join(", ")})`,
+      );
       return null;
     }
 
-    return { providerId, modelId, providerConfig, modelString };
+    return {
+      providerId: resolvedProvider.providerId,
+      modelId,
+      providerConfig,
+      modelString,
+    };
+  }
+
+  private resolveProviderConfig(
+    providerId: string,
+    providers: Record<string, ModelProviderConfig>,
+  ): { providerId: string; config: ModelProviderConfig } | null {
+    const candidates = this.providerResolutionCandidates(providerId);
+    const aliasCandidates = candidates.filter((candidate) => candidate !== providerId);
+    const fallbackCandidates = LEGACY_PROVIDER_IDS.has(providerId)
+      ? [...aliasCandidates, providerId]
+      : [providerId, ...aliasCandidates];
+    for (const candidate of candidates) {
+      const config = providers[candidate];
+      if (config) {
+        if (candidate !== providerId) {
+          log.debug(`fallback LLM: provider "${providerId}" resolved via alias "${candidate}"`);
+        }
+        return { providerId: candidate, config };
+      }
+    }
+    for (const candidate of fallbackCandidates) {
+      const config = this.resolveFromModelsJson(candidate);
+      if (config) {
+        if (candidate !== providerId) {
+          log.debug(`fallback LLM: provider "${providerId}" resolved via models.json alias "${candidate}"`);
+        }
+        return { providerId: candidate, config };
+      }
+      const builtInConfig = BUILT_IN_PROVIDER_FALLBACKS[candidate];
+      if (builtInConfig) {
+        if (candidate === providerId) {
+          log.debug(`fallback LLM: provider "${providerId}" resolved from built-in defaults`);
+          return { providerId, config: builtInConfig };
+        }
+        log.debug(`fallback LLM: provider "${providerId}" resolved via built-in alias "${candidate}"`);
+        return { providerId: candidate, config: builtInConfig };
+      }
+    }
+    return null;
+  }
+
+  private providerResolutionCandidates(providerId: string): string[] {
+    const candidates = [providerId, ...(PROVIDER_ALIASES[providerId] ?? [])];
+    return [...new Set(candidates)];
   }
 
   /**
