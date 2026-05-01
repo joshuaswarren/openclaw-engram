@@ -44,6 +44,17 @@ const TURN_REFERENCE_WINDOW_RADIUS = 0;
 const LEXICAL_CUE_WINDOW_RADIUS = 1;
 const LEXICAL_CUE_SEARCH_LIMIT = 3;
 const LEXICAL_CUE_MAX_TOKENS = 400;
+const LATEST_STATE_CUES = new Set([
+  "as of",
+  "currently",
+  "latest",
+  "most recent",
+  "newest",
+  "now",
+  "updated",
+  "changed",
+  "change",
+]);
 const RELATIVE_TEMPORAL_CUES = [
   "as of",
   "most recent",
@@ -137,6 +148,20 @@ const SPEAKER_NAME_STOPWORDS = new Set([
   "Why",
   "Will",
   "Would",
+]);
+const QUESTION_SLOT_STOPWORDS = new Set([
+  "answer",
+  "choice",
+  "did",
+  "does",
+  "do",
+  "is",
+  "should",
+  "single",
+  "the",
+  "user",
+  "was",
+  "were",
 ]);
 
 export async function buildExplicitCueRecallSection(
@@ -268,15 +293,20 @@ async function collectLexicalCueEvidence(options: {
   seenTurns: Set<string>;
 }): Promise<void> {
   const cues = collectLexicalCues(options.query).slice(0, options.maxReferences);
+  const preferLatest = hasLatestStateIntent(options.query);
   for (const cue of cues) {
-    const results = await options.engine.searchContextFull(
-      cue,
-      LEXICAL_CUE_SEARCH_LIMIT,
-      options.sessionId,
+    const results = sortLexicalCueResults(
+      await options.engine.searchContextFull(
+        cue,
+        LEXICAL_CUE_SEARCH_LIMIT,
+        options.sessionId,
+      ),
+      preferLatest,
     );
     for (const result of results) {
-      const fromTurn = Math.max(0, result.turn_index - LEXICAL_CUE_WINDOW_RADIUS);
-      const toTurn = result.turn_index + LEXICAL_CUE_WINDOW_RADIUS;
+      const windowRadius = preferLatest ? 0 : LEXICAL_CUE_WINDOW_RADIUS;
+      const fromTurn = Math.max(0, result.turn_index - windowRadius);
+      const toTurn = result.turn_index + windowRadius;
       const expanded = await options.engine.expandContext(
         result.session_id,
         fromTurn,
@@ -381,6 +411,9 @@ export function collectLexicalCues(query: string): string[] {
   for (const cue of collectTemporalLexicalCues(query)) {
     cues.add(cue);
   }
+  for (const cue of collectQuestionSlotCues(query)) {
+    cues.add(cue);
+  }
   for (const match of query.matchAll(/\b(?:session|source|chat|plan|task|event|file|tool)[_-][A-Za-z0-9][A-Za-z0-9_.:-]{0,80}\b/gi)) {
     cues.add(match[0]);
   }
@@ -397,6 +430,19 @@ export function collectLexicalCues(query: string): string[] {
     }
   }
 
+  return [...cues].sort((left, right) => left.localeCompare(right));
+}
+
+export function collectQuestionSlotCues(query: string): string[] {
+  const cues = new Set<string>();
+  for (const match of query.matchAll(
+    /\b(?:what|which)\s+([a-z][a-z0-9_-]{2,30})\s+(?:does|do|did|is|are|was|were|should|would|could|can|will)\b/gi,
+  )) {
+    const value = match[1]?.toLowerCase();
+    if (value && !QUESTION_SLOT_STOPWORDS.has(value)) {
+      cues.add(value);
+    }
+  }
   return [...cues].sort((left, right) => left.localeCompare(right));
 }
 
@@ -422,6 +468,39 @@ export function collectTemporalLexicalCues(query: string): string[] {
     }
   }
   return [...cues].sort((left, right) => left.localeCompare(right));
+}
+
+function hasLatestStateIntent(query: string): boolean {
+  return collectTemporalLexicalCues(query).some((cue) =>
+    LATEST_STATE_CUES.has(cue),
+  );
+}
+
+function sortLexicalCueResults<
+  T extends { session_id: string; turn_index: number; score?: number },
+>(results: T[], preferLatest: boolean): T[] {
+  return [...results].sort((left, right) => {
+    if (preferLatest) {
+      const sessionOrder = left.session_id.localeCompare(right.session_id);
+      if (sessionOrder !== 0) {
+        return sessionOrder;
+      }
+      const turnOrder = right.turn_index - left.turn_index;
+      if (turnOrder !== 0) {
+        return turnOrder;
+      }
+      return (right.score ?? 0) - (left.score ?? 0);
+    }
+    const scoreDelta = (right.score ?? 0) - (left.score ?? 0);
+    if (scoreDelta !== 0) {
+      return scoreDelta;
+    }
+    const sessionOrder = left.session_id.localeCompare(right.session_id);
+    if (sessionOrder !== 0) {
+      return sessionOrder;
+    }
+    return left.turn_index - right.turn_index;
+  });
 }
 
 function normalizeSpeakerNameCue(value: string): string | undefined {

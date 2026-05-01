@@ -697,6 +697,14 @@ function buildSessionMessages(session: AMemGymSession): Message[] {
     });
   }
 
+  const stateDescription = formatExposedStateUpdate(session.exposed_states);
+  if (stateDescription) {
+    messages.push({
+      role: "user",
+      content: `[User state update]: ${stateDescription}`,
+    });
+  }
+
   if (session.query) {
     messages.push({
       role: "user",
@@ -711,17 +719,19 @@ function buildSessionMessages(session: AMemGymSession): Message[] {
     });
   }
 
-  if (messages.length === 0 && Object.keys(session.exposed_states).length > 0) {
-    const stateDescription = Object.entries(session.exposed_states)
-      .map(([key, value]) => `${key}: ${value}`)
-      .join(", ");
-    messages.push({
-      role: "user",
-      content: `[User state]: ${stateDescription}`,
-    });
-  }
-
   return messages;
+}
+
+function formatExposedStateUpdate(
+  exposedStates: Record<string, string>,
+): string | undefined {
+  const entries = Object.entries(exposedStates).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  if (entries.length === 0) {
+    return undefined;
+  }
+  return entries.map(([key, value]) => `${key}: ${value}`).join(", ");
 }
 
 function normalizeRole(role: string): Message["role"] {
