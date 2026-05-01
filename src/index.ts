@@ -73,13 +73,13 @@ import { planRecallMode } from "../packages/remnic-core/src/intent.js";
 import {
   resolvePrincipal,
   resolveAgentAccessAuthToken,
-  hasEnabledLiveConnector,
 } from "@remnic/core";
 import { findGatewayRuntimeModules } from "./resolve-provider-secret.js";
 import { createDreamsSurface } from "../packages/remnic-core/src/surfaces/dreams.js";
 import { createHeartbeatSurface, type HeartbeatEntry } from "../packages/remnic-core/src/surfaces/heartbeat.js";
 import type { ConsolidationObservation } from "../packages/remnic-core/src/types.js";
 import { ensureLiveConnectorCron } from "./openclaw-live-connector-cron.js";
+import { hasEnabledLiveConnectorConfig } from "./openclaw-live-connector-config.js";
 
 /**
  * Per-plugin runtime state is scoped by `serviceId` so a single process can host
@@ -311,7 +311,7 @@ function readPluginHooksPolicy(
 }
 
 async function maybeRegisterLiveConnectorCron(orchestrator: Orchestrator): Promise<void> {
-  if (!hasEnabledLiveConnector(orchestrator.config.connectors)) return;
+  if (!hasEnabledLiveConnectorConfig(orchestrator.config.connectors)) return;
 
   const jobsPath = path.join(resolveHomeDir(), ".openclaw", "cron", "jobs.json");
   try {
