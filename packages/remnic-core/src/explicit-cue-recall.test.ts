@@ -5,6 +5,7 @@ import {
   buildExplicitCueRecallSection,
   collectExplicitTurnReferences,
   collectLexicalCues,
+  collectQuestionSlotCues,
   collectTemporalLexicalCues,
   type ExplicitCueRecallEngine,
 } from "./explicit-cue-recall.js";
@@ -115,6 +116,14 @@ test("collectLexicalCues extracts visible ids, dates, and bracket labels", () =>
   assert.deepEqual(
     collectLexicalCues("As of 2025-02-01, what changed yesterday?"),
     ["2025-02-01", "as of", "changed", "yesterday"],
+  );
+  assert.deepEqual(
+    collectQuestionSlotCues("What city does the user live in now?"),
+    ["city"],
+  );
+  assert.deepEqual(
+    collectLexicalCues("What city does the user live in now?"),
+    ["city", "now"],
   );
 });
 
@@ -232,6 +241,30 @@ test("buildExplicitCueRecallSection searches explicit temporal cues", async () =
 
   assert.match(section, /2025-02-01/);
   assert.match(section, /shellfish/);
+});
+
+test("buildExplicitCueRecallSection prioritizes latest state updates for current questions", async () => {
+  const engine = new FakeCueEngine({
+    amemgym: [
+      { role: "user", content: "[User state update]: city: Austin" },
+      { role: "user", content: "I am packing boxes this week." },
+      { role: "user", content: "[User state update]: city: Denver" },
+    ],
+  });
+
+  const section = await buildExplicitCueRecallSection({
+    engine,
+    sessionId: "amemgym",
+    query: "What city does the user live in now?",
+    maxChars: 2000,
+  });
+
+  assert.match(section, /city: Denver/);
+  assert.match(section, /city: Austin/);
+  assert.ok(
+    section.indexOf("city: Denver") < section.indexOf("city: Austin"),
+    "latest matching state should appear before superseded history",
+  );
 });
 
 test("buildExplicitCueRecallSection stays silent when disabled by budget or no cues", async () => {

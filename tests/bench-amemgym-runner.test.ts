@@ -148,6 +148,75 @@ function createDatasetProfile() {
   ];
 }
 
+function createUpdatedStateDatasetProfile() {
+  return [
+    {
+      id: "dataset-profile-updates",
+      start_time: "2025-02-01T00:00:00Z",
+      user_profile: {
+        uuid: "dataset-user-updates",
+        name: "Jordan",
+        age: 34,
+        gender: "nonbinary",
+      },
+      state_schema: {
+        city: { type: "string" },
+      },
+      periods: [
+        {
+          period_start: "2025-02-01T00:00:00Z",
+          period_end: "2025-02-28T23:59:59Z",
+          period_summary: "Jordan lived in Austin.",
+          sessions: [
+            {
+              event: "Jordan moved to Austin.",
+              exposed_states: { city: "Austin" },
+              query: "I live in Austin now.",
+              messages: [],
+              session_time: "2025-02-12T08:00:00Z",
+            },
+          ],
+          state: { city: "Austin" },
+          updates: { city: "Austin" },
+          update_cnts: { city: 1 },
+        },
+        {
+          period_start: "2025-03-01T00:00:00Z",
+          period_end: "2025-03-31T23:59:59Z",
+          period_summary: "Jordan moved again.",
+          sessions: [
+            {
+              event: "Jordan moved to Denver.",
+              exposed_states: { city: "Denver" },
+              query: "I moved again and live in Denver now.",
+              messages: [
+                {
+                  role: "assistant",
+                  content: "I will remember Denver as the current city.",
+                },
+              ],
+              session_time: "2025-03-12T08:00:00Z",
+            },
+          ],
+          state: { city: "Denver" },
+          updates: { city: "Denver" },
+          update_cnts: { city: 1 },
+        },
+      ],
+      qas: [
+        {
+          query: "What city does Jordan live in now?",
+          required_info: ["city"],
+          answer_choices: [
+            { state: ["Austin"], answer: "Austin" },
+            { state: ["Denver"], answer: "Denver" },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
 test("runBenchmark executes amemgym in quick mode through the phase-1 package API", async () => {
   const adapter = new FakeMemoryAdapter();
 
@@ -187,6 +256,41 @@ test("runBenchmark executes amemgym in full mode from an explicit dataset file",
 
   assert.equal(result.results.tasks.length, 1);
   assert.equal(result.results.tasks[0]?.expected, "Seattle");
+  const stored = adapter.sessions.get("amemgym-dataset-profile-1") ?? [];
+  assert.match(
+    stored.map((message) => message.content).join("\n"),
+    /\[User state update\]: city: Seattle/,
+  );
+});
+
+test("runBenchmark ingests repeated AMemGym state updates without final-state injection", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-updates-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("2"));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(createUpdatedStateDatasetProfile()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.expected, "Denver");
+  assert.equal(task.scores.qa_accuracy, 1);
+  assert.equal(task.details?.expectedChoiceIndex, 2);
+
+  const storedText = (adapter.sessions.get("amemgym-dataset-profile-updates") ?? [])
+    .map((message) => message.content)
+    .join("\n");
+  assert.match(storedText, /\[User state update\]: city: Austin/);
+  assert.match(storedText, /\[User state update\]: city: Denver/);
+  assert.doesNotMatch(storedText, /Answer choices:/);
 });
 
 test("runBenchmark scores amemgym using the benchmark multiple-choice protocol", async () => {
