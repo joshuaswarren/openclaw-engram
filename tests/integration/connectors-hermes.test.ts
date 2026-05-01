@@ -166,6 +166,389 @@ test("upsertHermesConfig creates config.yaml when profile dir exists but file do
   });
 });
 
+test("upsertHermesConfig supports Hermes default root config.yaml layout", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        const hermesDir = path.join(tmpHome, ".hermes");
+        fs.mkdirSync(hermesDir, { recursive: true });
+        const rootCfgPath = path.join(hermesDir, "config.yaml");
+        fs.writeFileSync(rootCfgPath, "model:\n  provider: anthropic\n", { mode: 0o600 });
+
+        const result = mod.upsertHermesConfig({
+          profile: "default",
+          host: "127.0.0.1",
+          port: 4318,
+          token: "remnic_hm_SYNTHETICROOTCONFIG",
+        });
+
+        assert.equal(result.updated, true, "root config update must report updated");
+        assert.equal(result.skipped, false, "root config update must not skip");
+        assert.equal(result.configPath, rootCfgPath, "default profile should target ~/.hermes/config.yaml");
+
+        const written = fs.readFileSync(rootCfgPath, "utf-8");
+        assert.ok(written.includes("model:"), "existing root Hermes config must be preserved");
+        assert.ok(written.includes("remnic:"), "root config must receive remnic block");
+        assert.ok(written.includes("remnic_hm_SYNTHETICROOTCONFIG"), "root config must receive token");
+        assert.ok(
+          !fs.existsSync(path.join(hermesDir, "profiles", "default", "config.yaml")),
+          "default profile config must not be created when Hermes uses root config",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("upsertHermesConfig treats non-directory default profile path as root-layout Hermes", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        const hermesDir = path.join(tmpHome, ".hermes");
+        fs.mkdirSync(path.join(hermesDir, "profiles"), { recursive: true });
+        fs.writeFileSync(path.join(hermesDir, "profiles", "default"), "not a directory");
+        const rootCfgPath = path.join(hermesDir, "config.yaml");
+        fs.writeFileSync(rootCfgPath, "model:\n  provider: anthropic\n", { mode: 0o600 });
+
+        const result = mod.upsertHermesConfig({
+          profile: "default",
+          host: "127.0.0.1",
+          port: 4318,
+          token: "remnic_hm_SYNTHETICFILEPROFILE",
+        });
+
+        assert.equal(result.updated, true, "root config update must report updated");
+        assert.equal(result.configPath, rootCfgPath, "file-valued default profile path must fall back to root config");
+        assert.ok(
+          fs.readFileSync(rootCfgPath, "utf-8").includes("remnic_hm_SYNTHETICFILEPROFILE"),
+          "root config must receive the token instead of throwing ENOTDIR",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("upsertHermesConfig falls back to default profile when root config path is not a file", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        const hermesDir = path.join(tmpHome, ".hermes");
+        const rootCfgPath = path.join(hermesDir, "config.yaml");
+        const legacyProfileDir = path.join(hermesDir, "profiles", "default");
+        const legacyCfgPath = path.join(legacyProfileDir, "config.yaml");
+        fs.mkdirSync(rootCfgPath, { recursive: true });
+        fs.mkdirSync(legacyProfileDir, { recursive: true });
+        fs.writeFileSync(legacyCfgPath, "model:\n  provider: anthropic\n", { mode: 0o600 });
+
+        const result = mod.upsertHermesConfig({
+          profile: "default",
+          host: "127.0.0.1",
+          port: 4318,
+          token: "remnic_hm_SYNTHETICROOTDIR",
+        });
+
+        assert.equal(result.updated, true, "legacy default profile update must report updated");
+        assert.equal(result.configPath, legacyCfgPath, "directory-valued root config path must not be selected");
+        assert.ok(
+          fs.readFileSync(legacyCfgPath, "utf-8").includes("remnic_hm_SYNTHETICROOTDIR"),
+          "legacy profile config must receive the token instead of throwing EISDIR",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("removeHermesConfig cleans root and legacy default profile configs", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        const hermesDir = path.join(tmpHome, ".hermes");
+        const legacyProfileDir = path.join(hermesDir, "profiles", "default");
+        fs.mkdirSync(legacyProfileDir, { recursive: true });
+        const rootCfgPath = path.join(hermesDir, "config.yaml");
+        const legacyCfgPath = path.join(legacyProfileDir, "config.yaml");
+        const rootToken = "remnic_hm_SYNTHETICROOTREMOVE";
+        const legacyToken = "remnic_hm_SYNTHETICLEGACYREMOVE";
+
+        fs.writeFileSync(
+          rootCfgPath,
+          `model:\n  provider: anthropic\nremnic:\n  host: "127.0.0.1"\n  port: 4318\n  token: "${rootToken}"\n`,
+          { mode: 0o600 },
+        );
+        fs.writeFileSync(
+          legacyCfgPath,
+          `plugins:\n  - remnic\nremnic:\n  host: "127.0.0.1"\n  port: 4318\n  token: "${legacyToken}"\n`,
+          { mode: 0o600 },
+        );
+
+        const result = mod.removeHermesConfig({ profile: "default" });
+
+        assert.equal(result.updated, true, "removeHermesConfig must update when either config has remnic");
+        assert.ok(result.configPath.includes(rootCfgPath), "cleanup should include root config");
+        assert.ok(result.configPath.includes(legacyCfgPath), "cleanup should include legacy default profile config");
+        const rootAfter = fs.readFileSync(rootCfgPath, "utf-8");
+        const legacyAfter = fs.readFileSync(legacyCfgPath, "utf-8");
+        assert.ok(!rootAfter.includes("remnic:"), "root remnic block must be removed");
+        assert.ok(!legacyAfter.includes("remnic:"), "legacy profile remnic block must be removed");
+        assert.ok(!legacyAfter.includes(legacyToken), "legacy token material must be removed");
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("removeHermesConfig continues default cleanup when one candidate path fails", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        const hermesDir = path.join(tmpHome, ".hermes");
+        const legacyProfileDir = path.join(hermesDir, "profiles", "default");
+        fs.mkdirSync(legacyProfileDir, { recursive: true });
+        const rootCfgPath = path.join(hermesDir, "config.yaml");
+        const legacyCfgPath = path.join(legacyProfileDir, "config.yaml");
+        const rootToken = "remnic_hm_SYNTHETICROOTCONTINUE";
+
+        fs.writeFileSync(
+          rootCfgPath,
+          `model:\n  provider: anthropic\nremnic:\n  host: "127.0.0.1"\n  port: 4318\n  token: "${rootToken}"\n`,
+          { mode: 0o600 },
+        );
+        fs.mkdirSync(legacyCfgPath, { recursive: true });
+
+        const result = mod.removeHermesConfig({ profile: "default" });
+
+        assert.equal(result.updated, false, "partial cleanup must not be mistaken for full success");
+        assert.equal(result.skipped, true, "partial cleanup must be surfaced as a non-success cleanup result");
+        assert.ok(result.configPath.includes(rootCfgPath), "cleanup should include the successfully updated root config");
+        assert.ok(result.configPath.includes(legacyCfgPath), "cleanup should identify the failed legacy config path");
+        assert.match(
+          result.reason ?? "",
+          /Hermes config cleanup partially failed/,
+          "partial cleanup failures must be surfaced even when another path was updated",
+        );
+        const rootAfter = fs.readFileSync(rootCfgPath, "utf-8");
+        assert.ok(!rootAfter.includes("remnic:"), "root remnic block must be removed despite bad legacy path");
+        assert.ok(!rootAfter.includes(rootToken), "root token material must be removed despite bad legacy path");
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("removeHermesConfig surfaces cleanup failure when no candidate was updated", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        const hermesDir = path.join(tmpHome, ".hermes");
+        const legacyProfileDir = path.join(hermesDir, "profiles", "default");
+        fs.mkdirSync(legacyProfileDir, { recursive: true });
+        const rootCfgPath = path.join(hermesDir, "config.yaml");
+        const legacyCfgPath = path.join(legacyProfileDir, "config.yaml");
+
+        fs.writeFileSync(rootCfgPath, "model:\n  provider: anthropic\n", { mode: 0o600 });
+        fs.mkdirSync(legacyCfgPath, { recursive: true });
+
+        const result = mod.removeHermesConfig({ profile: "default" });
+
+        assert.equal(result.updated, false, "cleanup must not report updated when no file changed");
+        assert.equal(result.skipped, true, "cleanup failure should still be a skipped cleanup result");
+        assert.match(
+          result.reason ?? "",
+          /Hermes config cleanup failed:/,
+          "cleanup failure must not be hidden by a benign no-block result",
+        );
+        assert.equal(result.configPath, legacyCfgPath, "failure should identify the bad config path");
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("removeConnector hermes reports error when config cleanup partially fails", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+        const hermesDir = path.join(tmpHome, ".hermes");
+        const legacyProfileDir = path.join(hermesDir, "profiles", "default");
+        fs.mkdirSync(legacyProfileDir, { recursive: true });
+        const rootCfgPath = path.join(hermesDir, "config.yaml");
+        const legacyCfgPath = path.join(legacyProfileDir, "config.yaml");
+        fs.writeFileSync(rootCfgPath, "memory:\n  provider: builtin\n", { mode: 0o600 });
+
+        const install = mod.installConnector({
+          connectorId: "hermes",
+          config: { host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(install.status, "installed", install.message);
+
+        fs.mkdirSync(legacyCfgPath, { recursive: true });
+
+        const removed = mod.removeConnector("hermes");
+
+        assert.equal(removed.status, "error", "partial Hermes config cleanup must be an error result");
+        assert.match(removed.message, /Hermes remove partially succeeded/);
+        assert.match(removed.message, /Hermes config cleanup partially failed/);
+        assert.ok(removed.message.includes(legacyCfgPath), "message must identify the failed legacy config path");
+
+        const rootAfter = fs.readFileSync(rootCfgPath, "utf-8");
+        assert.ok(!rootAfter.includes("remnic:"), "successful cleanup path should still be cleaned");
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("installConnector hermes succeeds against default root config.yaml layout", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+        const hermesDir = path.join(tmpHome, ".hermes");
+        fs.mkdirSync(hermesDir, { recursive: true });
+        const rootCfgPath = path.join(hermesDir, "config.yaml");
+        fs.writeFileSync(rootCfgPath, "memory:\n  provider: builtin\n", { mode: 0o600 });
+
+        const install = mod.installConnector({
+          connectorId: "hermes",
+          config: { host: "127.0.0.1", port: 4318 },
+        });
+
+        assert.equal(install.status, "installed", install.message);
+        assert.ok(install.message.includes(rootCfgPath), "install message should point at root config.yaml");
+
+        const written = fs.readFileSync(rootCfgPath, "utf-8");
+        assert.ok(written.includes("memory:"), "existing Hermes root config must be preserved");
+        assert.ok(written.includes("remnic:"), "install must write remnic block to root config");
+        assert.ok(written.includes("remnic_hm_"), "install must write generated Hermes token to root config");
+        assert.ok(
+          !fs.existsSync(path.join(hermesDir, "profiles", "default", "config.yaml")),
+          "install must not require or create ~/.hermes/profiles/default/config.yaml",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("installConnector hermes cleans legacy default remnic block when switching to root config", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+        const hermesDir = path.join(tmpHome, ".hermes");
+        const legacyProfileDir = path.join(hermesDir, "profiles", "default");
+        fs.mkdirSync(legacyProfileDir, { recursive: true });
+        const legacyCfgPath = path.join(legacyProfileDir, "config.yaml");
+
+        const install1 = mod.installConnector({
+          connectorId: "hermes",
+          config: { host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(install1.status, "installed", install1.message);
+
+        const legacyBefore = fs.readFileSync(legacyCfgPath, "utf-8");
+        assert.ok(legacyBefore.includes("remnic:"), "legacy default profile must receive first install");
+        assert.ok(legacyBefore.includes("remnic_hm_"), "legacy default profile must contain first token");
+
+        const rootCfgPath = path.join(hermesDir, "config.yaml");
+        fs.writeFileSync(rootCfgPath, "memory:\n  provider: builtin\n", { mode: 0o600 });
+
+        const install2 = mod.installConnector({
+          connectorId: "hermes",
+          force: true,
+          config: { host: "127.0.0.1", port: 4318 },
+        });
+
+        assert.equal(install2.status, "installed", install2.message);
+        assert.ok(install2.message.includes(rootCfgPath), "force reinstall should write to root config");
+
+        const rootAfter = fs.readFileSync(rootCfgPath, "utf-8");
+        assert.ok(rootAfter.includes("memory:"), "root Hermes config must be preserved");
+        assert.ok(rootAfter.includes("remnic:"), "root Hermes config must receive remnic block");
+        assert.ok(rootAfter.includes("remnic_hm_"), "root Hermes config must contain replacement token");
+
+        const legacyAfter = fs.readFileSync(legacyCfgPath, "utf-8");
+        assert.ok(!legacyAfter.includes("remnic:"), "legacy default profile remnic block must be removed");
+        assert.ok(!legacyAfter.includes("remnic_hm_"), "legacy default profile stale token must be removed");
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("installConnector hermes does not clean legacy default symlink to active root config", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+        const hermesDir = path.join(tmpHome, ".hermes");
+        const legacyProfileDir = path.join(hermesDir, "profiles", "default");
+        fs.mkdirSync(legacyProfileDir, { recursive: true });
+        const rootCfgPath = path.join(hermesDir, "config.yaml");
+        const legacyCfgPath = path.join(legacyProfileDir, "config.yaml");
+        fs.writeFileSync(rootCfgPath, "memory:\n  provider: builtin\n", { mode: 0o600 });
+        fs.symlinkSync(rootCfgPath, legacyCfgPath);
+
+        const install = mod.installConnector({
+          connectorId: "hermes",
+          config: { host: "127.0.0.1", port: 4318 },
+        });
+
+        assert.equal(install.status, "installed", install.message);
+        assert.ok(install.message.includes(rootCfgPath), "install should write to root config");
+        const rootAfter = fs.readFileSync(rootCfgPath, "utf-8");
+        assert.ok(rootAfter.includes("memory:"), "root Hermes config must be preserved");
+        assert.ok(rootAfter.includes("remnic:"), "root remnic block must remain after compatibility symlink cleanup");
+        assert.ok(rootAfter.includes("remnic_hm_"), "root Hermes config must retain generated token");
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
 test("upsertHermesConfig round-trip: existing YAML with other keys is preserved", () => {
   withTempHome((tmpHome) => {
     const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
