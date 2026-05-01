@@ -337,6 +337,9 @@ const MEMORY_OS_PRESETS: Record<MemoryOsPresetName, Record<string, unknown>> = {
     contextCompressionActionsEnabled: true,
     compressionGuidelineLearningEnabled: true,
     compressionGuidelineSemanticRefinementEnabled: true,
+    explicitCueRecallEnabled: true,
+    explicitCueRecallMaxChars: 3200,
+    lcmEnabled: true,
     maxProactiveQuestionsPerExtraction: 4,
     maxCompressionTokensPerHour: 3000,
     behaviorLoopAutoTuneEnabled: true,
@@ -2701,6 +2704,15 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.tmtHourlyMinMemories === "number" ? cfg.tmtHourlyMinMemories : 3,
     tmtSummaryMaxTokens:
       typeof cfg.tmtSummaryMaxTokens === "number" ? cfg.tmtSummaryMaxTokens : 300,
+    explicitCueRecallEnabled: coerceBool(cfg.explicitCueRecallEnabled) === true,
+    explicitCueRecallMaxChars:
+      coerceNumber(cfg.explicitCueRecallMaxChars) !== undefined
+        ? Math.max(0, Math.floor(coerceNumber(cfg.explicitCueRecallMaxChars)!))
+        : 2400,
+    explicitCueRecallMaxReferences:
+      coerceNumber(cfg.explicitCueRecallMaxReferences) !== undefined
+        ? Math.max(0, Math.floor(coerceNumber(cfg.explicitCueRecallMaxReferences)!))
+        : 24,
     // Lossless Context Management (LCM)
     lcmEnabled: cfg.lcmEnabled === true,
     lcmLeafBatchSize:
@@ -3294,6 +3306,18 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
         typeof cfg.sharedContextMaxInjectChars === "number"
           ? Math.max(0, Math.floor(cfg.sharedContextMaxInjectChars))
           : 4000,
+    },
+    {
+      id: "explicit-cue",
+      enabled: coerceBool(cfg.explicitCueRecallEnabled) === true,
+      maxChars:
+        coerceNumber(cfg.explicitCueRecallMaxChars) !== undefined
+          ? Math.max(0, Math.floor(coerceNumber(cfg.explicitCueRecallMaxChars)!))
+          : 2400,
+      maxResults:
+        coerceNumber(cfg.explicitCueRecallMaxReferences) !== undefined
+          ? Math.max(0, Math.floor(coerceNumber(cfg.explicitCueRecallMaxReferences)!))
+          : 24,
     },
     {
       id: "profile",

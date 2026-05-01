@@ -1537,6 +1537,13 @@ export interface PluginConfig {
   temporalMemoryTreeEnabled: boolean;
   tmtHourlyMinMemories: number;
   tmtSummaryMaxTokens: number;
+  // Explicit cue recall
+  /** Front-load exact stored evidence for query-visible cues like turns, dates, ids, files, and tools. */
+  explicitCueRecallEnabled: boolean;
+  /** Character budget for the explicit cue evidence section. */
+  explicitCueRecallMaxChars: number;
+  /** Maximum query-visible cues expanded per recall. */
+  explicitCueRecallMaxReferences: number;
   // Lossless Context Management (LCM)
   lcmEnabled: boolean;
   lcmLeafBatchSize: number;

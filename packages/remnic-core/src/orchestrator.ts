@@ -163,6 +163,7 @@ import {
   entityRecentTranscriptLookbackHours,
   readRecentEntityTranscriptEntries,
 } from "./entity-retrieval.js";
+import { buildExplicitCueRecallSection } from "./explicit-cue-recall.js";
 import {
   hasBroadGraphIntent,
   inferIntentFromText,
@@ -8347,6 +8348,39 @@ export class Orchestrator {
     // 0. Shared context
     if (sharedCtx)
       this.appendRecallSection(sectionBuckets, "shared-context", sharedCtx);
+
+    // 0a. Explicit cue evidence
+    const explicitCueMaxChars =
+      this.getRecallSectionMaxChars("explicit-cue") ??
+      this.config.explicitCueRecallMaxChars;
+    if (
+      this.config.explicitCueRecallEnabled &&
+      this.isRecallSectionEnabled("explicit-cue") &&
+      explicitCueMaxChars !== 0 &&
+      this.lcmEngine?.enabled &&
+      (recallMode as RecallPlanMode) !== "no_recall"
+    ) {
+      try {
+        const explicitCueSection = await buildExplicitCueRecallSection({
+          engine: this.lcmEngine,
+          sessionId: sessionKey,
+          query: retrievalQuery,
+          maxChars: explicitCueMaxChars,
+          maxReferences:
+            this.getRecallSectionNumber("explicit-cue", "maxResults") ??
+            this.config.explicitCueRecallMaxReferences,
+        });
+        if (explicitCueSection) {
+          this.appendRecallSection(
+            sectionBuckets,
+            "explicit-cue",
+            explicitCueSection,
+          );
+        }
+      } catch (err) {
+        log.debug(`Explicit cue recall assembly error: ${err}`);
+      }
+    }
 
     // 1. Profile
     if (profile)

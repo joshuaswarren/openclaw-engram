@@ -79,6 +79,58 @@ test("parseConfig activeRecallCacheTtlMs=500 preserves the explicit positive ttl
   assert.equal(result.activeRecallCacheTtlMs, 500);
 });
 
+test("parseConfig keeps explicit cue recall opt-in and budgets configurable", () => {
+  const defaults = parseConfig({});
+  assert.equal(defaults.explicitCueRecallEnabled, false);
+  assert.equal(defaults.explicitCueRecallMaxChars, 2400);
+  assert.equal(defaults.explicitCueRecallMaxReferences, 24);
+  assert.equal(
+    defaults.recallPipeline.find((section) => section.id === "explicit-cue")
+      ?.enabled,
+    false,
+  );
+
+  const cfg = parseConfig({
+    explicitCueRecallEnabled: true,
+    explicitCueRecallMaxChars: 0,
+    explicitCueRecallMaxReferences: 0,
+  });
+  assert.equal(cfg.explicitCueRecallEnabled, true);
+  assert.equal(cfg.explicitCueRecallMaxChars, 0);
+  assert.equal(cfg.explicitCueRecallMaxReferences, 0);
+  const section = cfg.recallPipeline.find((entry) => entry.id === "explicit-cue");
+  assert.equal(section?.enabled, true);
+  assert.equal(section?.maxChars, 0);
+  assert.equal(section?.maxResults, 0);
+
+  const cliStyle = parseConfig({
+    explicitCueRecallEnabled: "true",
+    explicitCueRecallMaxChars: "3200",
+    explicitCueRecallMaxReferences: "12",
+  });
+  assert.equal(cliStyle.explicitCueRecallEnabled, true);
+  assert.equal(cliStyle.explicitCueRecallMaxChars, 3200);
+  assert.equal(cliStyle.explicitCueRecallMaxReferences, 12);
+  const cliSection = cliStyle.recallPipeline.find(
+    (entry) => entry.id === "explicit-cue",
+  );
+  assert.equal(cliSection?.enabled, true);
+  assert.equal(cliSection?.maxChars, 3200);
+  assert.equal(cliSection?.maxResults, 12);
+});
+
+test("research-max preset enables explicit cue recall for benchmark-grade runs", () => {
+  const cfg = parseConfig({ memoryOsPreset: "research-max" });
+  assert.equal(cfg.explicitCueRecallEnabled, true);
+  assert.equal(cfg.explicitCueRecallMaxChars, 3200);
+  assert.equal(cfg.lcmEnabled, true);
+  assert.equal(
+    cfg.recallPipeline.find((section) => section.id === "explicit-cue")
+      ?.enabled,
+    true,
+  );
+});
+
 test("parseConfig activeRecallCacheTtlMs=-1 falls back to the default ttl", () => {
   const result = parseConfig({ activeRecallCacheTtlMs: -1 });
   assert.equal(result.activeRecallCacheTtlMs, 15000);

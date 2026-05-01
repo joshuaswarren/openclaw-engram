@@ -44,6 +44,8 @@ test("parseConfig applies research-max preset defaults", () => {
   assert.equal(cfg.contextCompressionActionsEnabled, true);
   assert.equal(cfg.compressionGuidelineLearningEnabled, true);
   assert.equal(cfg.compressionGuidelineSemanticRefinementEnabled, true);
+  assert.equal(cfg.explicitCueRecallEnabled, true);
+  assert.equal(cfg.lcmEnabled, true);
   assert.equal(cfg.maxProactiveQuestionsPerExtraction, 4);
   assert.equal(cfg.maxCompressionTokensPerHour, 3000);
   assert.equal(cfg.behaviorLoopAutoTuneEnabled, true);
