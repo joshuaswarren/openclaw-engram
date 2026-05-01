@@ -557,10 +557,11 @@ function tokenizeAnchorQuery(query: string): string[] {
   const tokens: string[] = [];
   let current = "";
   const push = () => {
-    if (current.length > 0) {
-      tokens.push(current);
-      current = "";
+    const token = trimTrailingAnchorTokenPunctuation(current);
+    if (token.length > 0) {
+      tokens.push(token);
     }
+    current = "";
   };
 
   for (const char of query) {
@@ -578,6 +579,24 @@ function tokenizeAnchorQuery(query: string): string[] {
   }
   push();
   return tokens;
+}
+
+function trimTrailingAnchorTokenPunctuation(token: string): string {
+  let end = token.length;
+  while (end > 0) {
+    const char = token[end - 1];
+    if (
+      char !== "." &&
+      char !== ":" &&
+      char !== ";" &&
+      char !== "!" &&
+      char !== "?"
+    ) {
+      break;
+    }
+    end -= 1;
+  }
+  return token.slice(0, end);
 }
 
 export function collectStructuredPlanCues(query: string): string[] {
