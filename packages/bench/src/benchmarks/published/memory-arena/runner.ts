@@ -112,7 +112,14 @@ export async function runMemoryArenaBenchmark(
           }
 
           if (!isScored) {
-            await storeCompletedSubtask(options, sessionId, questionIndex, question, expected);
+            await storeCompletedSubtask(
+              options,
+              sessionId,
+              questionIndex,
+              question,
+              expected,
+              expectedAnswer,
+            );
             continue;
           }
 
@@ -196,7 +203,14 @@ export async function runMemoryArenaBenchmark(
           });
 
           try {
-            await storeCompletedSubtask(options, sessionId, questionIndex, question, expected);
+            await storeCompletedSubtask(
+              options,
+              sessionId,
+              questionIndex,
+              question,
+              expected,
+              expectedAnswer,
+            );
           } catch (storeErr) {
             console.error(`  [WARN] memory-arena store failed for ${taskResultId}: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`);
           }
@@ -600,6 +614,9 @@ async function storeInitialTaskState(
   const plan = basePerson.daily_plans == null
     ? ""
     : answerToString(basePerson.daily_plans);
+  const planFieldAnchors = basePerson.daily_plans == null
+    ? []
+    : formatPlanFieldAnchorLines(basePerson.daily_plans);
   if (query.trim().length === 0 && plan.trim().length === 0) {
     return;
   }
@@ -617,6 +634,7 @@ async function storeInitialTaskState(
         `MemoryArena initial finalized plan for ${name}.`,
         query.trim().length > 0 ? `Base traveler request: ${query}` : "",
         plan.trim().length > 0 ? `Environment result: ${plan}` : "",
+        ...planFieldAnchors,
       ].filter((part) => part.length > 0).join("\n"),
     },
   ]);
@@ -799,6 +817,20 @@ function extractPlanFieldValues(answer: ArenaExpectedAnswer): PlanFieldExpectati
     }
   }
   return fields;
+}
+
+function formatPlanFieldAnchorLines(answer: ArenaExpectedAnswer): string[] {
+  const fields = extractPlanFieldValues(answer);
+  if (fields.length === 0) {
+    return [];
+  }
+  return [
+    "MemoryArena structured plan field anchors:",
+    ...fields.map((field) => {
+      const day = field.day === undefined ? "" : `Day ${field.day} `;
+      return `${day}${field.fieldKey.replace(/_/g, " ")}: ${field.value}`;
+    }),
+  ];
 }
 
 function normalizePlanText(value: string): string {
@@ -1106,7 +1138,9 @@ async function storeCompletedSubtask(
   questionIndex: number,
   question: string,
   expected: string,
+  expectedAnswer: ArenaExpectedAnswer,
 ): Promise<void> {
+  const planFieldAnchors = formatPlanFieldAnchorLines(expectedAnswer);
   await options.system.store(sessionId, [
     {
       role: "user",
@@ -1118,6 +1152,7 @@ async function storeCompletedSubtask(
         `MemoryArena completed subtask ${questionIndex + 1}.`,
         `Instruction: ${question}`,
         `Environment result: ${expected}`,
+        ...planFieldAnchors,
       ].join("\n"),
     },
   ]);
