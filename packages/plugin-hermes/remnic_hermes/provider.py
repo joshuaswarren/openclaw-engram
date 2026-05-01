@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import threading
 import uuid
+from collections import OrderedDict
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
+from time import monotonic
 from typing import Any
 
 from remnic_hermes.client import RemnicClient
 from remnic_hermes.config import RemnicHermesConfig
+
+try:  # Hermes Agent is present when loaded as an installed memory provider.
+    from agent.memory_provider import MemoryProvider as HermesMemoryProvider
+except Exception:  # pragma: no cover - keeps package importable outside Hermes.
+    HermesMemoryProvider = object
 
 
 _NAMESPACE = {"type": "string"}
@@ -54,6 +65,48 @@ _SHARED_FEEDBACK_DECISIONS = ["approved", "approved_with_feedback", "rejected"]
 _SHARED_FEEDBACK_SEVERITIES = ["low", "medium", "high"]
 _GOVERNANCE_MODES = ["shadow", "apply"]
 
+_loop: asyncio.AbstractEventLoop | None = None
+_loop_thread: threading.Thread | None = None
+_loop_lock = threading.Lock()
+
+
+def _get_loop() -> asyncio.AbstractEventLoop:
+    global _loop, _loop_thread
+    with _loop_lock:
+        if _loop is not None and not _loop.is_closed():
+            return _loop
+        loop = asyncio.new_event_loop()
+        _loop = loop
+
+        def _run() -> None:
+            asyncio.set_event_loop(loop)
+            loop.run_forever()
+
+        _loop_thread = threading.Thread(target=_run, daemon=True, name="remnic-hermes-loop")
+        _loop_thread.start()
+        return loop
+
+
+def _run_sync(coro: Any, timeout: float) -> Any:
+    future = asyncio.run_coroutine_threadsafe(coro, _get_loop())
+    try:
+        return future.result(timeout=timeout)
+    except FutureTimeoutError as err:
+        future.cancel()
+        raise TimeoutError("Remnic operation timed out") from err
+
+
+def _schedule(coro: Any) -> None:
+    future = asyncio.run_coroutine_threadsafe(coro, _get_loop())
+
+    def _consume_result(done: Any) -> None:
+        try:
+            done.result()
+        except Exception:
+            pass
+
+    future.add_done_callback(_consume_result)
+
 
 def _schema(
     name: str,
@@ -77,7 +130,7 @@ def _legacy_schema(schema: dict[str, Any], name: str, description: str) -> dict[
     return {**schema, "name": name, "description": description}
 
 
-class RemnicMemoryProvider:
+class RemnicMemoryProvider(HermesMemoryProvider):  # type: ignore[misc]
     """MemoryProvider that delegates to the Remnic daemon via HTTP."""
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
@@ -89,9 +142,28 @@ class RemnicMemoryProvider:
         self._configured_session_key = bool(cfg.session_key)
         self._session_key = cfg.session_key or f"hermes-{uuid.uuid4().hex[:12]}"
         self._client: RemnicClient | None = None
+        self._prefetch_cache: OrderedDict[str, tuple[str, float]] = OrderedDict()
+        self._prefetch_inflight: set[str] = set()
+        self._prefetch_lock = threading.Lock()
+        self._prefetch_wait_timeout = min(cfg.timeout, 0.1)
+        self._prefetch_cache_ttl = 60.0
+        self._prefetch_cache_max_entries = 128
 
-    async def initialize(self, config: dict[str, Any] | None = None) -> None:
+    @property
+    def name(self) -> str:
+        return "remnic"
+
+    def is_available(self) -> bool:
+        return bool(self._token)
+
+    def initialize(self, session_id: Any = "", **kwargs: Any) -> None:
         """Connect to Remnic daemon and verify health."""
+        del kwargs
+        if isinstance(session_id, str) and session_id and not self._configured_session_key:
+            self._session_key = session_id
+        _run_sync(self._initialize_async(), self._timeout)
+
+    async def _initialize_async(self) -> None:
         self._client = RemnicClient(
             host=self._host,
             port=self._port,
@@ -105,11 +177,120 @@ class RemnicMemoryProvider:
         except Exception:
             pass  # Non-fatal — daemon might start later.
 
-    async def pre_llm_call(self, messages: list[dict[str, str]]) -> str:
-        """Recall relevant memories and return context to inject into system prompt."""
+    def system_prompt_block(self) -> str:
+        return ""
+
+    def prefetch(self, query: str, *, session_id: str = "") -> str:
         if not self._client:
             return ""
+        if not query or len(query.split()) < 3:
+            return ""
 
+        session_key = session_id or self._session_key
+        cache_key = f"{session_key}\0{query}"
+        future: Future[Any] | None = None
+        with self._prefetch_lock:
+            cached = self._get_prefetch_cache_locked(cache_key)
+            if cached is not None:
+                return cached
+            if cache_key not in self._prefetch_inflight:
+                future = self._queue_prefetch_locked(cache_key, query, session_key)
+
+        if future is not None:
+            try:
+                return future.result(timeout=self._prefetch_wait_timeout) or ""
+            except FutureTimeoutError:
+                return ""
+            except Exception:
+                return ""
+
+        return ""
+
+    def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
+        if not self._client:
+            return
+        if not query or len(query.split()) < 3:
+            return
+
+        session_key = session_id or self._session_key
+        cache_key = f"{session_key}\0{query}"
+        with self._prefetch_lock:
+            if self._get_prefetch_cache_locked(cache_key) is not None or cache_key in self._prefetch_inflight:
+                return
+            self._queue_prefetch_locked(cache_key, query, session_key)
+
+    def _get_prefetch_cache_locked(self, cache_key: str) -> str | None:
+        cached = self._prefetch_cache.get(cache_key)
+        if cached is None:
+            return None
+        block, inserted_at = cached
+        if monotonic() - inserted_at > self._prefetch_cache_ttl:
+            self._prefetch_cache.pop(cache_key, None)
+            return None
+        self._prefetch_cache.move_to_end(cache_key)
+        return block
+
+    def _set_prefetch_cache_locked(self, cache_key: str, block: str) -> None:
+        self._prefetch_cache[cache_key] = (block, monotonic())
+        self._prefetch_cache.move_to_end(cache_key)
+        while len(self._prefetch_cache) > self._prefetch_cache_max_entries:
+            self._prefetch_cache.popitem(last=False)
+
+    def _clear_prefetch_cache(self, session_key: str | None = None) -> None:
+        with self._prefetch_lock:
+            if session_key is None:
+                self._prefetch_cache.clear()
+                return
+            prefix = f"{session_key}\0"
+            for cache_key in list(self._prefetch_cache.keys()):
+                if cache_key.startswith(prefix):
+                    self._prefetch_cache.pop(cache_key, None)
+
+    def _queue_prefetch_locked(self, cache_key: str, query: str, session_key: str) -> Future[Any]:
+        self._prefetch_inflight.add(cache_key)
+        future = asyncio.run_coroutine_threadsafe(
+            self._prefetch_async(cache_key, query, session_key),
+            _get_loop(),
+        )
+
+        def _consume_result(done: Future[Any]) -> None:
+            try:
+                done.result()
+            except Exception:
+                pass
+
+        future.add_done_callback(_consume_result)
+        return future
+
+    async def _prefetch_async(self, cache_key: str, query: str, session_key: str) -> str:
+        try:
+            block = await self._recall_block(query=query, session_key=session_key)
+            if block:
+                with self._prefetch_lock:
+                    self._set_prefetch_cache_locked(cache_key, block)
+            return block
+        except Exception:
+            return ""
+        finally:
+            with self._prefetch_lock:
+                self._prefetch_inflight.discard(cache_key)
+
+    async def _recall_block(self, *, query: str, session_key: str) -> str:
+        if not self._client:
+            return ""
+        result = await self._client.recall(
+            query=query,
+            session_key=session_key,
+            top_k=8,
+        )
+        context = result.get("context", "")
+        count = result.get("count", 0)
+        if context and count > 0:
+            return f"<remnic-memory count=\"{count}\">\n{context}\n</remnic-memory>"
+        return ""
+
+    async def pre_llm_call(self, messages: list[dict[str, str]]) -> str:
+        """Recall relevant memories and return context to inject into system prompt."""
         query = ""
         for msg in reversed(messages):
             if msg.get("role") == "user":
@@ -118,51 +299,82 @@ class RemnicMemoryProvider:
 
         if not query or len(query.split()) < 3:
             return ""
-
         try:
-            result = await self._client.recall(
-                query=query,
-                session_key=self._session_key,
-                top_k=8,
-            )
-            context = result.get("context", "")
-            count = result.get("count", 0)
-            if context and count > 0:
-                return f"<remnic-memory count=\"{count}\">\n{context}\n</remnic-memory>"
+            return await self._recall_block(query=query, session_key=self._session_key)
         except Exception:
-            pass
+            return ""
 
-        return ""
-
-    async def sync_turn(self, transcript: list[dict[str, Any]]) -> None:
+    def sync_turn(
+        self,
+        user_content: str | list[dict[str, Any]],
+        assistant_content: str | None = None,
+        *,
+        session_id: str = "",
+    ) -> None:
         """Observe the latest conversation turn."""
-        if not self._client or not transcript:
+        if not self._client:
             return
 
-        recent = transcript[-2:] if len(transcript) >= 2 else transcript
+        if isinstance(user_content, list):
+            if not user_content:
+                return
+            messages = user_content[-2:] if len(user_content) >= 2 else user_content
+        else:
+            messages = [{"role": "user", "content": user_content}]
+            if assistant_content:
+                messages.append({"role": "assistant", "content": assistant_content})
 
-        try:
-            await self._client.observe(
-                session_key=self._session_key,
-                messages=recent,
-            )
-        except Exception:
-            pass
+        session_key = session_id or self._session_key
+        _schedule(self._observe_and_invalidate_async(session_key=session_key, messages=messages))
+
+    async def _observe_and_invalidate_async(self, *, session_key: str, messages: list[dict[str, Any]]) -> None:
+        if not self._client:
+            return
+        await self._client.observe(
+            session_key=session_key,
+            messages=messages,
+        )
+        self._clear_prefetch_cache(session_key)
+
+    def on_session_end(self, messages: list[dict[str, Any]]) -> None:
+        self._observe_messages(messages)
+
+    def on_pre_compress(self, messages: list[dict[str, Any]]) -> str:
+        self._observe_messages(messages)
+        return ""
 
     async def extract_memories(self, session: dict[str, Any]) -> None:
         """Structured extraction at session end — send full transcript for deep analysis."""
         if not self._client:
             return
-
         messages = session.get("messages", [])
         if not messages:
             return
-
         try:
             await self._client.observe(
                 session_key=self._session_key,
                 messages=messages,
             )
+            self._clear_prefetch_cache(self._session_key)
+        except Exception:
+            pass
+
+    def _observe_messages(self, messages: list[dict[str, Any]]) -> None:
+        if not self._client:
+            return
+
+        if not messages:
+            return
+
+        try:
+            _run_sync(
+                self._client.observe(
+                    session_key=self._session_key,
+                    messages=messages,
+                ),
+                self._timeout,
+            )
+            self._clear_prefetch_cache(self._session_key)
         except Exception:
             pass
 
@@ -181,12 +393,55 @@ class RemnicMemoryProvider:
         normalized = new_session_id.strip()
         if normalized:
             self._session_key = normalized
+            self._clear_prefetch_cache()
 
-    async def shutdown(self) -> None:
+    def shutdown(self) -> None:
         """Close the HTTP client."""
         if self._client:
-            await self._client.close()
+            _run_sync(self._client.close(), self._timeout)
             self._client = None
+
+    def get_tool_schemas(self) -> list[dict[str, Any]]:
+        schemas: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for attr_name in dir(self):
+            if not attr_name.endswith("_schema"):
+                continue
+            schema = getattr(self, attr_name, None)
+            if not isinstance(schema, dict):
+                continue
+            name = schema.get("name")
+            if not isinstance(name, str) or name in seen:
+                continue
+            schemas.append(schema)
+            seen.add(name)
+        return sorted(schemas, key=lambda schema: str(schema.get("name", "")))
+
+    def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
+        del kwargs
+        handler_name = self._handler_name_for_tool(tool_name)
+        if not handler_name:
+            return json.dumps({"error": f"Unknown Remnic memory tool: {tool_name}"})
+        handler = getattr(self, handler_name, None)
+        if not callable(handler):
+            return json.dumps({"error": f"Remnic memory tool is not implemented: {tool_name}"})
+        try:
+            return json.dumps(_run_sync(handler(**(args or {})), self._timeout))
+        except Exception as err:
+            return json.dumps({"error": str(err)})
+
+    def _handler_name_for_tool(self, tool_name: str) -> str | None:
+        for attr_name in dir(self):
+            if not attr_name.endswith("_schema"):
+                continue
+            schema = getattr(self, attr_name, None)
+            if not isinstance(schema, dict) or schema.get("name") != tool_name:
+                continue
+            suffix = attr_name.removesuffix("_schema")
+            if suffix.startswith("legacy_"):
+                suffix = suffix.removeprefix("legacy_")
+            return suffix
+        return None
 
     # -- Existing explicit tool schemas for Hermes tool registration --
 
