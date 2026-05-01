@@ -505,23 +505,79 @@ export function collectBenchmarkAnchorCues(query: string): string[] {
     }
   }
 
-  for (const match of query.matchAll(
-    /\b(source(?:\s+chat)?|chat|plan|rubric|ability)\s+(?:id\s+)?([A-Za-z0-9][A-Za-z0-9_.:-]{0,80})\b/gi,
-  )) {
-    const rawPrefix = match[1]?.toLowerCase().replace(/\s+/g, "_");
-    const rawValue = match[2]?.replace(/[.,;:!?]+$/g, "");
-    if (!rawPrefix || !rawValue) {
+  const tokens = tokenizeAnchorQuery(query);
+  for (let index = 0; index < tokens.length; index += 1) {
+    let prefix = normalizeBenchmarkAnchorPrefix(tokens[index]);
+    if (!prefix) {
       continue;
     }
-    const prefix = rawPrefix === "source_chat" ? "source_chat" : rawPrefix;
+
+    let valueIndex = index + 1;
+    if (
+      prefix === "source" &&
+      tokens[valueIndex]?.toLowerCase() === "chat"
+    ) {
+      prefix = "source_chat";
+      valueIndex += 1;
+    }
+    const maybeIdLabel = tokens[valueIndex]?.toLowerCase();
+    if (maybeIdLabel === "id" || maybeIdLabel === "ids") {
+      valueIndex += 1;
+    }
+
+    const rawValue = tokens[valueIndex];
+    if (!rawValue || normalizeBenchmarkAnchorPrefix(rawValue)) {
+      continue;
+    }
     cues.add(`${prefix}_id=${rawValue}`);
     cues.add(`${prefix}-${rawValue}`);
     if (prefix === "source_chat") {
       cues.add(`chat_id=${rawValue}`);
     }
+    index = valueIndex;
   }
 
   return [...cues].sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeBenchmarkAnchorPrefix(token: string | undefined): string | undefined {
+  switch (token?.toLowerCase()) {
+    case "ability":
+    case "chat":
+    case "plan":
+    case "rubric":
+    case "source":
+      return token.toLowerCase();
+    default:
+      return undefined;
+  }
+}
+
+function tokenizeAnchorQuery(query: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  const push = () => {
+    if (current.length > 0) {
+      tokens.push(current);
+      current = "";
+    }
+  };
+
+  for (const char of query) {
+    if (
+      isAsciiLetterOrDigit(char) ||
+      char === "_" ||
+      char === "-" ||
+      char === "." ||
+      char === ":"
+    ) {
+      current += char;
+      continue;
+    }
+    push();
+  }
+  push();
+  return tokens;
 }
 
 export function collectStructuredPlanCues(query: string): string[] {

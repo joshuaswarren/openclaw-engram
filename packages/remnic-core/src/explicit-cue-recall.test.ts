@@ -124,7 +124,7 @@ test("collectLexicalCues extracts visible ids, dates, and bracket labels", () =>
     ["city"],
   );
   assert.deepEqual(
-    collectBenchmarkAnchorCues("Use plan 1, chat id 7, and source chat 8 for information extraction."),
+    collectBenchmarkAnchorCues("Use plan 1, chat ids 7, and source chat ids 8 for information extraction."),
     [
       "ability=information_extraction",
       "chat-7",
