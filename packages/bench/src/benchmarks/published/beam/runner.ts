@@ -924,10 +924,13 @@ function buildMessages(
   turns: BeamChatTurn[],
   anchors?: BeamSessionAnchorInput,
 ): Message[] {
-  const messages = turns.map((turn) => ({
-    role: normalizeRole(turn.role),
-    content: turn.content,
-  }));
+  const messages = turns.map((turn) => {
+    const turnAnchor = buildBeamTurnAnchor(turn);
+    return {
+      role: normalizeRole(turn.role),
+      content: turnAnchor ? `${turnAnchor}\n${turn.content}` : turn.content,
+    };
+  });
   if (!anchors || messages.length === 0) {
     return messages;
   }
@@ -961,16 +964,24 @@ function buildBeamAnchorMessage(input: BeamSessionAnchorInput): Message {
     .filter((id) => id.length > 0);
   if (chatIds.length > 0) {
     fields.push(`chat_ids=${chatIds.join(",")}`);
-    for (const chatId of chatIds) {
-      fields.push(`chat_id=${chatId}`);
-      fields.push(`source_chat_id=${chatId}`);
-    }
   }
 
   return {
     role: "system",
     content: `BEAM evidence anchors: ${fields.join("; ")}`,
   };
+}
+
+function buildBeamTurnAnchor(turn: BeamChatTurn): string | undefined {
+  const id = turn.id;
+  if (typeof id !== "string" && typeof id !== "number") {
+    return undefined;
+  }
+  const chatId = String(id).trim();
+  if (chatId.length === 0) {
+    return undefined;
+  }
+  return `BEAM turn anchors: chat_id=${chatId}; source_chat_id=${chatId}`;
 }
 
 function normalizeRole(role: string): Message["role"] {
