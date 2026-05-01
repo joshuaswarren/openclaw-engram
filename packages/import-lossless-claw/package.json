@@ -1,6 +1,6 @@
 {
   "name": "@remnic/import-lossless-claw",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Import lossless-claw (LCM) SQLite databases into Remnic's LCM mode",
   "type": "module",
   "main": "dist/index.js",
