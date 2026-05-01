@@ -31,7 +31,7 @@ export type MessagePartSourceFormat =
   | "remnic";
 
 export interface LcmMessagePartInput {
-  ordinal?: number;
+  ordinal?: number | null;
   kind: LcmMessagePartKind;
   payload: Record<string, unknown>;
   toolName?: string | null;
@@ -76,16 +76,16 @@ export function parseMessageParts(
   const format = options.sourceFormat ?? inferSourceFormat(input);
   switch (format) {
     case "openai":
-      return parseOpenAiMessageParts(input, options);
+      return withRenderedFallback(parseOpenAiMessageParts(input, options), options);
     case "anthropic":
-      return parseAnthropicMessageParts(input, options);
+      return withRenderedFallback(parseAnthropicMessageParts(input, options), options);
     case "openclaw":
-      return parseOpenClawMessageParts(input, options);
+      return withRenderedFallback(parseOpenClawMessageParts(input, options), options);
     case "lossless-claw":
     case "remnic":
-      return normalizeExplicitParts(input);
+      return withRenderedFallback(normalizeExplicitParts(input), options);
     default:
-      return [];
+      return renderedFallbackParts(options);
   }
 }
 
@@ -367,6 +367,18 @@ function makePart(
 
 function withOrdinals(parts: LcmMessagePartInput[]): LcmMessagePartInput[] {
   return parts.map((part, ordinal) => ({ ...part, ordinal: part.ordinal ?? ordinal }));
+}
+
+function withRenderedFallback(
+  parts: LcmMessagePartInput[],
+  options: ParseMessagePartsOptions,
+): LcmMessagePartInput[] {
+  return parts.length > 0 ? parts : renderedFallbackParts(options);
+}
+
+function renderedFallbackParts(options: ParseMessagePartsOptions): LcmMessagePartInput[] {
+  const rendered = asNonEmptyString(options.renderedContent);
+  return rendered ? partsFromRenderedText(rendered) : [];
 }
 
 function normalizeKind(value: unknown): LcmMessagePartKind | null {

@@ -107,9 +107,10 @@ export class LcmArchive {
       for (const msg of messages) {
         const explicitParts =
           msg.parts && msg.parts.length > 0 ? msg.parts : undefined;
+        const rawContent = msg.rawContent ?? msg.content;
         const parts =
           explicitParts ??
-          parseMessageParts(msg.rawContent, {
+          parseMessageParts(rawContent, {
             sourceFormat: msg.sourceFormat,
             renderedContent: msg.content,
           });
@@ -329,21 +330,22 @@ export class LcmArchive {
     if (fileTerms.length === 0 && toolTerms.length === 0) return [];
 
     const matchWhere: string[] = [];
-    const params: unknown[] = [];
+    const whereParams: unknown[] = [];
     for (const term of fileTerms) {
       matchWhere.push("(p.file_path = ? OR p.file_path LIKE ? ESCAPE '\\')");
-      params.push(term, `%${escapeLike(term)}%`);
+      whereParams.push(term, `%${escapeLike(term)}%`);
     }
     for (const term of toolTerms) {
       matchWhere.push("p.tool_name LIKE ? ESCAPE '\\'");
-      params.push(`%${escapeLike(term)}%`);
+      whereParams.push(`%${escapeLike(term)}%`);
     }
     const where = [`(${matchWhere.join(" OR ")})`];
     if (sessionId) {
       where.push("m.session_id = ?");
-      params.push(sessionId);
+      whereParams.push(sessionId);
     }
-    params.push(cappedLimit);
+    const exactFileScoreParams = [...fileTerms];
+    const sqlParams = [...exactFileScoreParams, ...whereParams, cappedLimit];
 
     const rows = this.db.prepare(`
       SELECT
@@ -368,7 +370,7 @@ export class LcmArchive {
       WHERE ${where.join(" AND ")}
       ORDER BY score DESC, m.turn_index DESC, p.ordinal ASC
       LIMIT ?
-    `).all(...fileTerms, ...params) as LcmStructuredRecallMatch[];
+    `).all(...sqlParams) as LcmStructuredRecallMatch[];
 
     return rows;
   }

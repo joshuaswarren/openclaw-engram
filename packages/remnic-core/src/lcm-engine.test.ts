@@ -354,6 +354,45 @@ test("observeMessages stores structured message parts and file-aware recall find
   }
 });
 
+test("observeMessages derives message parts from content when rawContent is absent", async () => {
+  const memoryDir = await mkdtemp(
+    path.join(os.tmpdir(), "engram-lcm-message-parts-content-"),
+  );
+
+  try {
+    const engine = new LcmEngine(createPluginConfig(memoryDir), async () => {
+      return "summary";
+    });
+
+    await engine.observeMessages("session-1", [
+      {
+        role: "assistant",
+        content: "Reviewed packages/remnic-core/src/auth.ts for the login fix.",
+      },
+    ]);
+    await engine.observeMessages("session-2", [
+      {
+        role: "assistant",
+        content: "Reviewed packages/remnic-core/src/other.ts for a different fix.",
+      },
+    ]);
+    await engine.waitForSessionObserveIdle("session-1");
+    await engine.waitForSessionObserveIdle("session-2");
+
+    const matches = await engine.searchStructuredParts(
+      "session-1",
+      "what happened in packages/remnic-core/src/auth.ts",
+    );
+
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0]!.session_id, "session-1");
+    assert.equal(matches[0]!.file_path, "packages/remnic-core/src/auth.ts");
+    assert.equal(matches[0]!.kind, "file_read");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("observeMessages preserves snake_case normalized part metadata", async () => {
   const memoryDir = await mkdtemp(
     path.join(os.tmpdir(), "engram-lcm-message-parts-snake-"),

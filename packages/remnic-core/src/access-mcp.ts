@@ -551,7 +551,36 @@ export class EngramMcpServer {
                   parts: {
                     type: "array",
                     description: "Optional normalized Remnic LCM message parts.",
-                    items: { type: "object" },
+                    items: {
+                      type: "object",
+                      properties: {
+                        ordinal: { type: ["number", "null"], minimum: 0 },
+                        kind: {
+                          type: "string",
+                          enum: [
+                            "text",
+                            "tool_call",
+                            "tool_result",
+                            "patch",
+                            "file_read",
+                            "file_write",
+                            "step_start",
+                            "step_finish",
+                            "snapshot",
+                            "retry",
+                          ],
+                        },
+                        payload: { type: "object", additionalProperties: true },
+                        toolName: { type: ["string", "null"] },
+                        tool_name: { type: ["string", "null"] },
+                        filePath: { type: ["string", "null"] },
+                        file_path: { type: ["string", "null"] },
+                        createdAt: { type: ["string", "null"] },
+                        created_at: { type: ["string", "null"] },
+                      },
+                      required: ["kind", "payload"],
+                      additionalProperties: false,
+                    },
                   },
                 },
                 required: ["role", "content"],
@@ -1998,36 +2027,21 @@ export class EngramMcpServer {
           effectivePrincipal,
         );
       case "engram.observe": {
-        // Reject non-string cwd/projectTag (CLAUDE.md #51) — these control
-        // namespace routing so silent coercion to undefined would mix memories.
-        if ("cwd" in args && args.cwd !== undefined && args.cwd !== null && typeof args.cwd !== "string") {
-          throw new EngramAccessInputError("cwd must be a string");
-        }
-        if ("projectTag" in args && args.projectTag !== undefined && args.projectTag !== null && typeof args.projectTag !== "string") {
-          throw new EngramAccessInputError("projectTag must be a string");
-        }
+        const body = parseMcpRequest("observe", args);
         return this.service.observe({
-          sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : "",
-          messages: (Array.isArray(args.messages)
-            ? args.messages.map((message) => {
-                if (!message || typeof message !== "object" || Array.isArray(message)) {
-                  return message;
-                }
-                const raw = message as Record<string, unknown>;
-                return {
-                  role: raw.role,
-                  content: raw.content,
-                  parts: Array.isArray(raw.parts) ? raw.parts : undefined,
-                  rawContent: raw.rawContent,
-                  sourceFormat: typeof raw.sourceFormat === "string" ? raw.sourceFormat : undefined,
-                };
-              })
-            : []) as any,
-          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          sessionKey: body.sessionKey,
+          messages: body.messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+            parts: message.parts ?? undefined,
+            rawContent: message.rawContent ?? undefined,
+            sourceFormat: message.sourceFormat ?? undefined,
+          })),
+          namespace: body.namespace,
           authenticatedPrincipal: effectivePrincipal,
-          skipExtraction: args.skipExtraction === true,
-          cwd: typeof args.cwd === "string" ? args.cwd : undefined,
-          projectTag: typeof args.projectTag === "string" ? args.projectTag : undefined,
+          skipExtraction: body.skipExtraction === true,
+          cwd: body.cwd,
+          projectTag: body.projectTag,
         });
       }
       case "engram.lcm_search":

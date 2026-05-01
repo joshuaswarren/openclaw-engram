@@ -145,7 +145,7 @@ const messageSchema = z.object({
   parts: z
     .array(
       z.object({
-        ordinal: z.number().int().min(0).optional(),
+        ordinal: z.number().int().min(0).nullable().optional(),
         kind: z.enum([
           "text",
           "tool_call",
