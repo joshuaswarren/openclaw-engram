@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildExplicitCueRecallSection,
+  collectBenchmarkAnchorCues,
   collectExplicitTurnReferences,
   collectLexicalCues,
   collectQuestionSlotCues,
@@ -123,6 +124,37 @@ test("collectLexicalCues extracts visible ids, dates, and bracket labels", () =>
     ["city"],
   );
   assert.deepEqual(
+    collectBenchmarkAnchorCues("Use plan 1, chat ids 7, and source chat ids 8 for information extraction."),
+    [
+      "ability=information_extraction",
+      "chat-7",
+      "chat_id=7",
+      "plan-1",
+      "plan_id=1",
+      "source_chat-8",
+      "source_chat_id=8",
+      "chat_id=8",
+    ].sort((left, right) => left.localeCompare(right)),
+  );
+  assert.deepEqual(
+    collectBenchmarkAnchorCues("Use chat id 7."),
+    ["chat_id=7", "chat-7"].sort((left, right) => left.localeCompare(right)),
+  );
+  assert.deepEqual(
+    collectBenchmarkAnchorCues("Use chat ids 7 and 8 for the answer."),
+    ["chat_id=7", "chat-7", "chat_id=8", "chat-8"].sort((left, right) =>
+      left.localeCompare(right),
+    ),
+  );
+  assert.deepEqual(
+    collectBenchmarkAnchorCues("Using chat id 27, who owns the late evidence?"),
+    ["chat_id=27", "chat-27"].sort((left, right) => left.localeCompare(right)),
+  );
+  assert.deepEqual(
+    collectBenchmarkAnchorCues("Using chat id 27 late-arriving evidence, who owns it?"),
+    ["chat_id=27", "chat-27"].sort((left, right) => left.localeCompare(right)),
+  );
+  assert.deepEqual(
     collectLexicalCues("What city does the user live in now?"),
     ["city", "now"],
   );
@@ -144,6 +176,32 @@ test("collectLexicalCues extracts visible ids, dates, and bracket labels", () =>
     }),
     ["accommodation", "dinner", "Jennifer", "join", "same"],
   );
+});
+
+test("buildExplicitCueRecallSection searches benchmark anchor cues", async () => {
+  const engine = new FakeCueEngine({
+    beam: [
+      {
+        role: "system",
+        content:
+          "BEAM evidence anchors: session_id=beam-100K-demo-plan-plan-1-1; plan_id=plan-1; chat_id=7; ability=information_extraction",
+      },
+      {
+        role: "user",
+        content: "The plan-specific deployment owner is Nia.",
+      },
+    ],
+  });
+
+  const section = await buildExplicitCueRecallSection({
+    engine,
+    sessionId: "beam",
+    query: "For information extraction, use plan plan-1 and chat id 7.",
+    maxChars: 2000,
+    includeBenchmarkAnchorCues: true,
+  });
+
+  assert.match(section, /plan-specific deployment owner is Nia/);
 });
 
 test("buildExplicitCueRecallSection expands paired action and observation references", async () => {

@@ -94,6 +94,19 @@ interface BeamSession {
   messages: Message[];
 }
 
+interface BeamSessionAnchorInput {
+  sessionId: string;
+  scale: string;
+  conversationId: string;
+  kind: "main" | "plan";
+  planId?: string;
+  mapPlanId?: string;
+  mapIndex?: number;
+  batchIndex?: number;
+  turnBatchIndex?: number;
+  turns: BeamChatTurn[];
+}
+
 interface BeamDatasetSource {
   totalTasks?: number;
   entries(): AsyncIterable<BeamDatasetEntry>;
@@ -754,17 +767,36 @@ function collectSessions(
 
   if (isPlanChatMapCollection(conversation.chat)) {
     flattenPlanChatMapCollection(conversation.chat).forEach((batch) => {
+      const sessionId =
+        `beam-${scale}-${conversationId}-main-${batch.planId}-${batch.mapIndex + 1}-${batch.batchIndex + 1}-${batch.turnBatchIndex + 1}`;
       sessions.push({
-        sessionId:
-          `beam-${scale}-${conversationId}-main-${batch.planId}-${batch.mapIndex + 1}-${batch.batchIndex + 1}-${batch.turnBatchIndex + 1}`,
-        messages: buildMessages(batch.turns),
+        sessionId,
+        messages: buildMessages(batch.turns, {
+          sessionId,
+          scale,
+          conversationId,
+          kind: "main",
+          mapPlanId: batch.planId,
+          mapIndex: batch.mapIndex,
+          batchIndex: batch.batchIndex,
+          turnBatchIndex: batch.turnBatchIndex,
+          turns: batch.turns,
+        }),
       });
     });
   } else {
     flattenChatCollection(conversation.chat).forEach((batch, batchIndex) => {
+      const sessionId = `beam-${scale}-${conversationId}-main-${batchIndex + 1}`;
       sessions.push({
-        sessionId: `beam-${scale}-${conversationId}-main-${batchIndex + 1}`,
-        messages: buildMessages(batch),
+        sessionId,
+        messages: buildMessages(batch, {
+          sessionId,
+          scale,
+          conversationId,
+          kind: "main",
+          batchIndex,
+          turns: batch,
+        }),
       });
     });
   }
@@ -776,20 +808,43 @@ function collectSessions(
 
     if (isPlanChatMapCollection(plan.chat)) {
       flattenPlanChatMapCollection(plan.chat).forEach((batch) => {
+        const planId = String(plan.plan_id ?? planIndex);
+        const sessionId =
+          `beam-${scale}-${conversationId}-plan-${planId}-${batch.planId}-${batch.mapIndex + 1}-${batch.batchIndex + 1}-${batch.turnBatchIndex + 1}`;
         sessions.push({
-          sessionId:
-            `beam-${scale}-${conversationId}-plan-${String(plan.plan_id ?? planIndex)}-${batch.planId}-${batch.mapIndex + 1}-${batch.batchIndex + 1}-${batch.turnBatchIndex + 1}`,
-          messages: buildMessages(batch.turns),
+          sessionId,
+          messages: buildMessages(batch.turns, {
+            sessionId,
+            scale,
+            conversationId,
+            kind: "plan",
+            planId,
+            mapPlanId: batch.planId,
+            mapIndex: batch.mapIndex,
+            batchIndex: batch.batchIndex,
+            turnBatchIndex: batch.turnBatchIndex,
+            turns: batch.turns,
+          }),
         });
       });
       return;
     }
 
     flattenChatCollection(plan.chat).forEach((batch, batchIndex) => {
+      const planId = String(plan.plan_id ?? planIndex);
+      const sessionId =
+        `beam-${scale}-${conversationId}-plan-${planId}-${batchIndex + 1}`;
       sessions.push({
-        sessionId:
-          `beam-${scale}-${conversationId}-plan-${String(plan.plan_id ?? planIndex)}-${batchIndex + 1}`,
-        messages: buildMessages(batch),
+        sessionId,
+        messages: buildMessages(batch, {
+          sessionId,
+          scale,
+          conversationId,
+          kind: "plan",
+          planId,
+          batchIndex,
+          turns: batch,
+        }),
       });
     });
   });
@@ -865,11 +920,68 @@ function comparePlanIds(left: string, right: string): number {
   return left.localeCompare(right);
 }
 
-function buildMessages(turns: BeamChatTurn[]): Message[] {
-  return turns.map((turn) => ({
-    role: normalizeRole(turn.role),
-    content: turn.content,
-  }));
+function buildMessages(
+  turns: BeamChatTurn[],
+  anchors?: BeamSessionAnchorInput,
+): Message[] {
+  const messages = turns.map((turn) => {
+    const turnAnchor = buildBeamTurnAnchor(turn);
+    return {
+      role: normalizeRole(turn.role),
+      content: turnAnchor ? `${turnAnchor}\n${turn.content}` : turn.content,
+    };
+  });
+  if (!anchors || messages.length === 0) {
+    return messages;
+  }
+  return [buildBeamAnchorMessage(anchors), ...messages];
+}
+
+function buildBeamAnchorMessage(input: BeamSessionAnchorInput): Message {
+  const fields = [
+    `session_id=${input.sessionId}`,
+    `scale=${input.scale}`,
+    `conversation_id=${input.conversationId}`,
+    `kind=${input.kind}`,
+    `batch=${input.batchIndex === undefined ? 1 : input.batchIndex + 1}`,
+  ];
+  if (input.planId !== undefined) {
+    fields.push(`plan_id=${input.planId}`);
+  }
+  if (input.mapPlanId !== undefined) {
+    fields.push(`map_plan_id=${input.mapPlanId}`);
+  }
+  if (input.mapIndex !== undefined) {
+    fields.push(`map_index=${input.mapIndex + 1}`);
+  }
+  if (input.turnBatchIndex !== undefined) {
+    fields.push(`turn_batch=${input.turnBatchIndex + 1}`);
+  }
+  const chatIds = input.turns
+    .map((turn) => turn.id)
+    .filter((id): id is string | number => typeof id === "string" || typeof id === "number")
+    .map((id) => String(id).trim())
+    .filter((id) => id.length > 0);
+  if (chatIds.length > 0) {
+    fields.push(`chat_ids=${chatIds.join(",")}`);
+  }
+
+  return {
+    role: "system",
+    content: `BEAM evidence anchors: ${fields.join("; ")}`,
+  };
+}
+
+function buildBeamTurnAnchor(turn: BeamChatTurn): string | undefined {
+  const id = turn.id;
+  if (typeof id !== "string" && typeof id !== "number") {
+    return undefined;
+  }
+  const chatId = String(id).trim();
+  if (chatId.length === 0) {
+    return undefined;
+  }
+  return `BEAM turn anchors: chat_id=${chatId}; source_chat_id=${chatId}`;
 }
 
 function normalizeRole(role: string): Message["role"] {

@@ -79,6 +79,25 @@ class FakeMemoryAdapter implements BenchMemoryAdapter {
   async destroy(): Promise<void> {}
 }
 
+class QueryVisibleBeamAdapter extends FakeMemoryAdapter {
+  readonly recallQueries: Array<{ sessionId: string; query: string }> = [];
+
+  async recall(sessionId: string, query: string): Promise<string> {
+    this.recallQueries.push({ sessionId, query });
+    const messages = this.sessions.get(sessionId) ?? [];
+    const content = messages.map((message) => message.content).join("\n");
+    const visiblePlanMatch = query.match(/\bplan\s+([A-Za-z0-9_.:-]+)/i);
+    if (visiblePlanMatch) {
+      const planId = visiblePlanMatch[1]!.replace(/[.,;:!?]+$/g, "");
+      return content.includes(`plan_id=${planId}`) ? content : "";
+    }
+    if (query.toLowerCase().includes("chat id 27")) {
+      return content.includes("chat_id=27") ? content : "";
+    }
+    return content;
+  }
+}
+
 test("runBenchmark executes beam in quick mode with the bundled smoke fixture", async () => {
   const adapter = new FakeMemoryAdapter();
 
@@ -153,6 +172,213 @@ test("runBenchmark loads beam full-mode datasets and includes 10M plan chats in 
   assert.equal(result.results.tasks[0]?.actual.includes("Micah"), true);
   assert.equal(result.results.tasks[0]?.details.scale, "10M");
   assert.equal(result.results.tasks[0]?.details.sessionCount, 2);
+});
+
+test("runBenchmark stores query-visible beam plan anchors as memory evidence", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-plan-cue-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new QueryVisibleBeamAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "100K.json"),
+    JSON.stringify([
+      {
+        conversation_id: "beam-visible-plan-1",
+        chat: [
+          [
+            {
+              id: 1,
+              role: "user",
+              content: "The main chat is unrelated to release approvals.",
+            },
+          ],
+        ],
+        plans: [
+          {
+            plan_id: "plan-needle",
+            chat: [
+              [
+                {
+                  id: 7,
+                  role: "user",
+                  content: "Serena owns release approvals for the visible plan.",
+                },
+              ],
+            ],
+          },
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "Using plan plan-needle, who owns release approvals?",
+              answer: "Serena",
+            },
+          ],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("beam", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.actual.includes("Serena"), true);
+  assert.match(String(task.details.recalledText), /plan_id=plan-needle/);
+  assert.equal(
+    adapter.recallQueries.every(({ query }) => query.includes("plan-needle")),
+    true,
+  );
+});
+
+test("runBenchmark keeps hidden beam source metadata reporting-only", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-hidden-source-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new QueryVisibleBeamAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "100K.json"),
+    JSON.stringify([
+      {
+        conversation_id: "beam-hidden-source-1",
+        chat: [
+          [
+            {
+              id: 1,
+              role: "user",
+              content: "Talia owns release readiness.",
+            },
+          ],
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "Who owns release readiness?",
+              answer: "Talia",
+              plan_reference: "hidden-plan-reference",
+              source_chat_ids: ["hidden-source-77"],
+            },
+          ],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("beam", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.deepEqual(task.details.sourceChatIds, ["hidden-source-77"]);
+  assert.equal(task.details.planReference, "hidden-plan-reference");
+  assert.equal(
+    adapter.recallQueries.some(({ query }) => query.includes("hidden-source-77")),
+    false,
+  );
+  assert.equal(
+    adapter.recallQueries.some(({ query }) => query.includes("hidden-plan-reference")),
+    false,
+  );
+  assert.equal(String(task.details.recalledText).includes("hidden-source-77"), false);
+  assert.equal(String(task.details.recalledText).includes("hidden-plan-reference"), false);
+});
+
+test("runBenchmark does not create beam sessions for empty turn batches", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-empty-batch-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "100K.json"),
+    JSON.stringify([
+      {
+        conversation_id: "beam-empty-batch-1",
+        chat: [
+          [],
+          [
+            {
+              id: 1,
+              role: "user",
+              content: "Only the non-empty batch should become a BEAM session.",
+            },
+          ],
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "Which batch should become a BEAM session?",
+              answer: "Only the non-empty batch",
+            },
+          ],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("beam", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.details.sessionCount, 1);
+  assert.equal([...adapter.sessions.keys()].length, 1);
+});
+
+test("runBenchmark indexes later beam chat ids as memory evidence", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-chat-cue-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new QueryVisibleBeamAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "100K.json"),
+    JSON.stringify([
+      {
+        conversation_id: "beam-visible-chat-1",
+        chat: [
+          Array.from({ length: 27 }, (_, index) => ({
+            id: index + 1,
+            role: "user",
+            content:
+              index === 26
+                ? "Marisol owns the late referenced chat evidence."
+                : `Filler BEAM chat turn ${index + 1}.`,
+          })),
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "Using chat id 27, who owns the late referenced chat evidence?",
+              answer: "Marisol",
+            },
+          ],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("beam", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.actual.includes("Marisol"), true);
+  assert.match(String(task.details.recalledText), /chat_id=27/);
 });
 
 test("runBenchmark streams beam JSON arrays without misreading braces in strings", async () => {

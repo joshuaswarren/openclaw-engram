@@ -29,6 +29,7 @@ export interface ExplicitCueRecallOptions {
   maxChars: number;
   maxItemChars?: number;
   maxReferences?: number;
+  includeBenchmarkAnchorCues?: boolean;
   includeStructuredPlanCues?: boolean;
 }
 
@@ -81,6 +82,27 @@ const STRUCTURED_PLAN_DEPENDENCY_CUES = new Set([
   "join",
   "same",
   "shared",
+]);
+const BENCHMARK_ABILITY_CUES = new Map([
+  ["information extraction", "ability=information_extraction"],
+  ["knowledge update", "ability=knowledge_update"],
+  ["multi session reasoning", "ability=multi_session_reasoning"],
+  ["multi-session reasoning", "ability=multi_session_reasoning"],
+  ["instruction following", "ability=instruction_following"],
+]);
+const BENCHMARK_ANCHOR_VALUE_STOPWORDS = new Set([
+  "a",
+  "about",
+  "an",
+  "for",
+  "from",
+  "in",
+  "on",
+  "the",
+  "to",
+  "use",
+  "using",
+  "with",
 ]);
 const RELATIVE_TEMPORAL_CUES = [
   "as of",
@@ -234,6 +256,7 @@ export async function buildExplicitCueRecallSection(
     sessionId: options.sessionId,
     query,
     maxReferences,
+    includeBenchmarkAnchorCues: options.includeBenchmarkAnchorCues,
     includeStructuredPlanCues: options.includeStructuredPlanCues,
     evidenceItems,
     seenTurns,
@@ -311,6 +334,7 @@ async function collectLexicalCueEvidence(options: {
   sessionId?: string;
   query: string;
   maxReferences: number;
+  includeBenchmarkAnchorCues?: boolean;
   includeStructuredPlanCues?: boolean;
   evidenceItems: Array<{
     id: string;
@@ -323,6 +347,7 @@ async function collectLexicalCueEvidence(options: {
   seenTurns: Set<string>;
 }): Promise<void> {
   const cues = collectLexicalCues(options.query, {
+    includeBenchmarkAnchorCues: options.includeBenchmarkAnchorCues,
     includeStructuredPlanCues: options.includeStructuredPlanCues,
   }).slice(0, options.maxReferences);
   const preferLatest = hasLatestStateIntent(options.query);
@@ -433,7 +458,10 @@ export function collectExplicitTurnReferences(
 
 export function collectLexicalCues(
   query: string,
-  options: { includeStructuredPlanCues?: boolean } = {},
+  options: {
+    includeBenchmarkAnchorCues?: boolean;
+    includeStructuredPlanCues?: boolean;
+  } = {},
 ): string[] {
   const cues = new Set<string>();
 
@@ -448,6 +476,11 @@ export function collectLexicalCues(
   }
   for (const cue of collectQuestionSlotCues(query)) {
     cues.add(cue);
+  }
+  if (options.includeBenchmarkAnchorCues) {
+    for (const cue of collectBenchmarkAnchorCues(query)) {
+      cues.add(cue);
+    }
   }
   if (options.includeStructuredPlanCues) {
     for (const cue of collectStructuredPlanCues(query)) {
@@ -484,6 +517,152 @@ export function collectQuestionSlotCues(query: string): string[] {
     }
   }
   return [...cues].sort((left, right) => left.localeCompare(right));
+}
+
+export function collectBenchmarkAnchorCues(query: string): string[] {
+  const cues = new Set<string>();
+  const normalizedQuery = query.toLowerCase().replace(/\s+/g, " ");
+  for (const [phrase, cue] of BENCHMARK_ABILITY_CUES) {
+    if (containsBoundedPhrase(normalizedQuery, phrase)) {
+      cues.add(cue);
+    }
+  }
+
+  const tokens = tokenizeAnchorQuery(query);
+  for (let index = 0; index < tokens.length; index += 1) {
+    let prefix = normalizeBenchmarkAnchorPrefix(tokens[index]);
+    if (!prefix) {
+      continue;
+    }
+
+    let valueIndex = index + 1;
+    if (
+      prefix === "source" &&
+      tokens[valueIndex]?.toLowerCase() === "chat"
+    ) {
+      prefix = "source_chat";
+      valueIndex += 1;
+    }
+    const maybeIdLabel = tokens[valueIndex]?.toLowerCase();
+    if (maybeIdLabel === "id" || maybeIdLabel === "ids") {
+      valueIndex += 1;
+    }
+
+    let consumedValue = false;
+    for (
+      let currentValueIndex = valueIndex;
+      currentValueIndex < tokens.length;
+      currentValueIndex += 1
+    ) {
+      const rawValue = tokens[currentValueIndex];
+      const normalizedValue = rawValue?.toLowerCase();
+      if (!rawValue || normalizeBenchmarkAnchorPrefix(rawValue)) {
+        break;
+      }
+      if (normalizedValue === "and" || normalizedValue === "or") {
+        continue;
+      }
+      if (BENCHMARK_ANCHOR_VALUE_STOPWORDS.has(normalizedValue)) {
+        break;
+      }
+      if (!isBenchmarkAnchorValue(rawValue)) {
+        break;
+      }
+      addBenchmarkAnchorCues(cues, prefix, rawValue);
+      consumedValue = true;
+      index = currentValueIndex;
+    }
+    if (!consumedValue) {
+      continue;
+    }
+  }
+
+  return [...cues].sort((left, right) => left.localeCompare(right));
+}
+
+function addBenchmarkAnchorCues(
+  cues: Set<string>,
+  prefix: string,
+  rawValue: string,
+): void {
+  cues.add(`${prefix}_id=${rawValue}`);
+  cues.add(`${prefix}-${rawValue}`);
+  if (prefix === "source_chat") {
+    cues.add(`chat_id=${rawValue}`);
+  }
+}
+
+function isBenchmarkAnchorValue(token: string): boolean {
+  for (const char of token) {
+    if (isAsciiDigitChar(char)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isAsciiDigitChar(char: string): boolean {
+  const code = char.charCodeAt(0);
+  return code >= 48 && code <= 57;
+}
+
+function normalizeBenchmarkAnchorPrefix(token: string | undefined): string | undefined {
+  switch (token?.toLowerCase()) {
+    case "ability":
+    case "chat":
+    case "plan":
+    case "rubric":
+    case "source":
+      return token.toLowerCase();
+    default:
+      return undefined;
+  }
+}
+
+function tokenizeAnchorQuery(query: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  const push = () => {
+    const token = trimTrailingAnchorTokenPunctuation(current);
+    if (token.length > 0) {
+      tokens.push(token);
+    }
+    current = "";
+  };
+
+  for (const char of query) {
+    if (
+      isAsciiLetterOrDigit(char) ||
+      char === "_" ||
+      char === "-" ||
+      char === "." ||
+      char === ":"
+    ) {
+      current += char;
+      continue;
+    }
+    push();
+  }
+  push();
+  return tokens;
+}
+
+function trimTrailingAnchorTokenPunctuation(token: string): string {
+  let end = token.length;
+  while (end > 0) {
+    const char = token[end - 1];
+    if (
+      char !== "." &&
+      char !== ":" &&
+      char !== ";" &&
+      char !== "!" &&
+      char !== "?"
+    ) {
+      break;
+    }
+    end -= 1;
+  }
+  return token.slice(0, end);
 }
 
 export function collectStructuredPlanCues(query: string): string[] {
