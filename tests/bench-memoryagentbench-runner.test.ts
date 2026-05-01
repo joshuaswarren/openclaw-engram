@@ -362,6 +362,154 @@ test("runBenchmark keeps sentence-ending punctuation on the preceding MemoryAgen
   );
 });
 
+test("runBenchmark retrieves MemoryAgentBench event/date cues from stored context only", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-event-date-cues-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FakeMemoryAdapter();
+  adapter.recall = async (sessionId, query) => {
+    adapter.recallCalls.push({ sessionId, query });
+    return (adapter.sessions.get(sessionId) ?? [])
+      .filter((message) =>
+        message.content.includes("event_id=E17")
+        || message.content.includes("date=2026-04-03"),
+      )
+      .map((message) => message.content)
+      .join("\n");
+  };
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: [
+          "Event E11 on 2026-04-02: Maya packed the blue field kit.",
+          "Event E17 on 2026-04-03: Maya walked to the riverside market.",
+        ].join("\n\n"),
+        questions: ["After event E17 on 2026-04-03, what happened next?"],
+        answers: [["riverside market"]],
+        metadata: {
+          source: "eventqa_full",
+          qa_pair_ids: ["mab-event-date-visible-q1"],
+          question_dates: ["2099-01-01"],
+          previous_events: ["hidden previous event"],
+          keypoints: ["hidden keypoint"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.match(String(task.actual), /riverside market/);
+  assert.doesNotMatch(String(task.actual), /MemoryAgentBench visible anchors/);
+  assert.doesNotMatch(adapter.recallCalls[0]?.query ?? "", /2099-01-01|hidden keypoint|hidden previous event/);
+  assert.equal(task.details.questionDate, "2099-01-01");
+  assert.deepEqual(task.details.keypoints, ["hidden keypoint"]);
+});
+
+test("runBenchmark supports latest fact cues for MemoryAgentBench conflict resolution", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-conflict-cues-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FakeMemoryAdapter();
+  adapter.recall = async (sessionId, query) => {
+    adapter.recallCalls.push({ sessionId, query });
+    const messages = adapter.sessions.get(sessionId) ?? [];
+    const latest = [...messages]
+      .reverse()
+      .find((message) => message.content.includes("fact_id=1"));
+    return /current|latest|newest|most recent/i.test(query) && latest
+      ? latest.content
+      : messages.map((message) => message.content).join("\n");
+  };
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: [
+          "0. The active theme is Ember.",
+          "1. The active theme is Aurora.",
+        ].join("\n\n"),
+        questions: ["What is the current active theme?"],
+        answers: [["Aurora"]],
+        metadata: {
+          source: "factconsolidation_visible_fact_ids",
+          qa_pair_ids: ["mab-conflict-visible-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.match(String(task.actual), /Aurora/);
+  assert.doesNotMatch(String(task.actual), /Ember/);
+  assert.doesNotMatch(String(task.actual), /MemoryAgentBench visible anchors/);
+});
+
+test("runBenchmark stores visible MemoryAgentBench chunk cues for chunked context recall", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-chunk-cues-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FakeMemoryAdapter();
+  adapter.recall = async (sessionId, query) => {
+    adapter.recallCalls.push({ sessionId, query });
+    return (adapter.sessions.get(sessionId) ?? [])
+      .filter((message) =>
+        /chunk\s+1/i.test(query) && message.content.includes("chunk_id=1"),
+      )
+      .map((message) => message.content)
+      .join("\n");
+  };
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: [
+          "Chunk zero notes discuss the marble archive.",
+          "Chunk one notes say the archive key is in the cedar box.",
+        ].join("\n\n"),
+        questions: ["Use chunk 1: where is the archive key?"],
+        answers: [["cedar box"]],
+        metadata: {
+          source: "eventqa_chunk_visible",
+          qa_pair_ids: ["mab-chunk-visible-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.match(String(task.actual), /cedar box/);
+  assert.doesNotMatch(String(task.actual), /marble archive/);
+  assert.doesNotMatch(String(task.actual), /MemoryAgentBench visible anchors/);
+});
+
 test("runBenchmark rejects memoryagentbench full mode without datasetDir", async () => {
   const adapter = new FakeMemoryAdapter();
 
