@@ -100,8 +100,10 @@ export class LcmArchive {
       rawContent?: unknown;
       sourceFormat?: MessagePartSourceFormat;
     }>,
+    options: { messagePartsEnabled?: boolean } = {},
   ): void {
     if (messages.length === 0) return;
+    const captureMessageParts = options.messagePartsEnabled !== false;
 
     const txn = this.db.transaction(() => {
       for (const msg of messages) {
@@ -109,11 +111,13 @@ export class LcmArchive {
           msg.parts && msg.parts.length > 0 ? msg.parts : undefined;
         const rawContent = msg.rawContent ?? msg.content;
         const parts =
-          explicitParts ??
-          parseMessageParts(rawContent, {
-            sourceFormat: msg.sourceFormat,
-            renderedContent: msg.content,
-          });
+          captureMessageParts
+            ? explicitParts ??
+              parseMessageParts(rawContent, {
+                sourceFormat: msg.sourceFormat,
+                renderedContent: msg.content,
+              })
+            : undefined;
         this.appendMessage(
           sessionId,
           msg.turnIndex,

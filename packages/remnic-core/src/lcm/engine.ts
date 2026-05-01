@@ -202,7 +202,9 @@ export class LcmEngine {
       sourceFormat: this.config.messagePartsEnabled ? m.sourceFormat : undefined,
     }));
 
-    this.archive.appendMessages(sessionId, newMessages);
+    this.archive.appendMessages(sessionId, newMessages, {
+      messagePartsEnabled: this.config.messagePartsEnabled,
+    });
 
     // Trigger incremental summarization inside the worker, after append.
     try {

@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { LcmEngine } from "./lcm/engine.js";
+import { openLcmDatabase } from "./lcm/schema.js";
 import type { PluginConfig } from "./types.js";
 
 function createPluginConfig(memoryDir: string): PluginConfig {
@@ -388,6 +389,54 @@ test("observeMessages derives message parts from content when rawContent is abse
     assert.equal(matches[0]!.session_id, "session-1");
     assert.equal(matches[0]!.file_path, "packages/remnic-core/src/auth.ts");
     assert.equal(matches[0]!.kind, "file_read");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("observeMessages does not capture message parts when disabled", async () => {
+  const memoryDir = await mkdtemp(
+    path.join(os.tmpdir(), "engram-lcm-message-parts-disabled-"),
+  );
+
+  try {
+    const engine = new LcmEngine(
+      {
+        ...createPluginConfig(memoryDir),
+        messagePartsEnabled: false,
+      } as PluginConfig,
+      async () => {
+        return "summary";
+      },
+    );
+
+    await engine.observeMessages("session-1", [
+      {
+        role: "assistant",
+        content: "Reviewed packages/remnic-core/src/auth.ts for the login fix.",
+        rawContent: {
+          content: [
+            {
+              type: "tool_use",
+              name: "Edit",
+              input: { path: "packages/remnic-core/src/auth.ts" },
+            },
+          ],
+        },
+        sourceFormat: "anthropic",
+      },
+    ]);
+    await engine.waitForSessionObserveIdle("session-1");
+
+    const db = openLcmDatabase(memoryDir);
+    try {
+      const row = db
+        .prepare("SELECT COUNT(*) AS count FROM lcm_message_parts")
+        .get() as { count: number };
+      assert.equal(row.count, 0);
+    } finally {
+      db.close();
+    }
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
