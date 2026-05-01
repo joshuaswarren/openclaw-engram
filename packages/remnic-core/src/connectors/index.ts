@@ -1006,7 +1006,7 @@ export function installConnector(options: InstallOptions): InstallResult {
           `tokens.json restored but config.yaml rollback ALSO failed ` +
           `(${yamlRollbackErrMsg}). ` +
           `Hermes daemon may be in an inconsistent state: config references a stale token. ` +
-          `Manually inspect ~/.hermes/profiles/${hermesProfile}/config.yaml and reinstall.`;
+          `Manually inspect ${yamlResult.configPath} and reinstall.`;
       } else if (yamlRolledBack && !tokensRolledBack) {
         message =
           `Hermes install failed during token commit — ` +
@@ -1022,7 +1022,7 @@ export function installConnector(options: InstallOptions): InstallResult {
           `BOTH rollbacks failed: config.yaml rollback failed (${yamlRollbackErrMsg}); ` +
           `tokens.json rollback failed (${tokensRollbackErrMsg}). ` +
           `Hermes daemon is likely in an inconsistent state. ` +
-          `Manually inspect ~/.hermes/profiles/${hermesProfile}/config.yaml ` +
+          `Manually inspect ${yamlResult.configPath} ` +
           `and ~/.remnic/tokens.json, then reinstall.`;
       }
       return {
@@ -1095,6 +1095,22 @@ export function installConnector(options: InstallOptions): InstallResult {
     const notes: string[] = [];
     notes.push(`Updated Hermes config: ${yamlResult.configPath}`);
 
+    // If a migrated default-profile install now writes to Hermes' root config,
+    // remove stale Remnic credentials from the legacy default profile file too.
+    if (hermesProfile === "default") {
+      const legacyDefaultConfigPath = hermesDefaultProfileConfigPath();
+      if (!sameHermesConfigTarget(yamlResult.configPath, legacyDefaultConfigPath)) {
+        try {
+          const legacyDefaultCleanResult = removeHermesConfigFile(legacyDefaultConfigPath);
+          if (legacyDefaultCleanResult.updated) {
+            notes.push(`Cleaned stale remnic: block from legacy default profile: ${legacyDefaultConfigPath}`);
+          }
+        } catch {
+          notes.push("Note: could not clean stale remnic: block from legacy default profile");
+        }
+      }
+    }
+
     // Clean up the old profile's remnic: block if the profile changed.
     // Compare resolved config paths (not raw strings) so that case-insensitive
     // filesystems (macOS default) don't treat "Research" and "research" as
@@ -1104,7 +1120,7 @@ export function installConnector(options: InstallOptions): InstallResult {
     if (hermesSavedProfile !== undefined) {
       try {
         oldProfileResolvesToDifferentFile =
-          hermesConfigPath(hermesSavedProfile) !== hermesConfigPath(hermesProfile);
+          !sameHermesConfigTarget(hermesConfigPath(hermesSavedProfile), hermesConfigPath(hermesProfile));
       } catch {
         // If either profile fails sanitization the comparison is moot; skip cleanup.
         oldProfileResolvesToDifferentFile = false;
@@ -1769,6 +1785,20 @@ export function removeConnector(connectorId: string): RemoveResult {
       const yamlResult = removeHermesConfig({ profile: storedProfile });
       if (yamlResult.updated) {
         notes.push(`Removed remnic: block from Hermes config: ${yamlResult.configPath}`);
+      } else if (yamlResult.reason?.startsWith("Hermes config cleanup partially failed:")) {
+        const tokenStatus = tokenRevoked
+          ? "the connector registry config was deleted and the token was revoked"
+          : "the connector registry config was deleted but TOKEN REVOCATION ALSO FAILED — " +
+            "inspect ~/.remnic/tokens.json and revoke manually";
+        return {
+          connectorId,
+          configPath,
+          status: "error",
+          message:
+            `Hermes remove partially succeeded: ${tokenStatus}, but ${yamlResult.reason}. ` +
+            `Updated paths: ${yamlResult.configPath}. Manually remove any stale remnic: ` +
+            `block and token material from the failed Hermes config path.`,
+        };
       } else if (yamlResult.skipped) {
         notes.push(`Hermes config cleanup skipped: ${yamlResult.reason}`);
       }
@@ -1837,7 +1867,15 @@ function sanitizeHermesProfile(profile: string): string {
 
 function hermesConfigPath(profile: string): string {
   const safeProfile = sanitizeHermesProfile(profile);
-  const profilesRoot = path.resolve(resolveHomeDir(), ".hermes", "profiles");
+  const hermesRoot = path.resolve(resolveHomeDir(), ".hermes");
+  const rootConfigPath = path.join(hermesRoot, "config.yaml");
+  const profilesRoot = path.join(hermesRoot, "profiles");
+  if (safeProfile === "default") {
+    const defaultProfileDir = path.join(profilesRoot, safeProfile);
+    if (isFile(rootConfigPath) || (!fs.existsSync(rootConfigPath) && !isDirectory(defaultProfileDir))) {
+      return rootConfigPath;
+    }
+  }
   const cfgPath = path.resolve(profilesRoot, safeProfile, "config.yaml");
   // Defense in depth: ensure the resolved path is still under profilesRoot.
   const rel = path.relative(profilesRoot, cfgPath);
@@ -1847,6 +1885,48 @@ function hermesConfigPath(profile: string): string {
     );
   }
   return cfgPath;
+}
+
+function isDirectory(filePath: string): boolean {
+  try {
+    return fs.statSync(filePath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isFile(filePath: string): boolean {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function hermesConfigTarget(filePath: string): string {
+  try {
+    return fs.realpathSync.native(filePath);
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
+function sameHermesConfigTarget(leftPath: string, rightPath: string): boolean {
+  return hermesConfigTarget(leftPath) === hermesConfigTarget(rightPath);
+}
+
+function hermesDefaultProfileConfigPath(): string {
+  const hermesRoot = path.resolve(resolveHomeDir(), ".hermes");
+  return path.join(hermesRoot, "profiles", "default", "config.yaml");
+}
+
+function hermesConfigCleanupPaths(profile: string): string[] {
+  const cfgPath = hermesConfigPath(profile);
+  const safeProfile = sanitizeHermesProfile(profile);
+  if (safeProfile !== "default") {
+    return [cfgPath];
+  }
+  return [...new Set([cfgPath, hermesDefaultProfileConfigPath()])];
 }
 
 /**
@@ -1987,7 +2067,7 @@ export function upsertHermesConfig(opts: {
     throw new Error("Invalid Hermes token: contains non-alphanumeric characters");
   }
 
-  if (!fs.existsSync(profileDir)) {
+  if (!isDirectory(profileDir)) {
     return {
       updated: false,
       skipped: true,
@@ -2109,8 +2189,55 @@ export function upsertHermesConfig(opts: {
  * Idempotent — if the block is absent, returns skipped.
  */
 export function removeHermesConfig(opts: { profile: string }): HermesConfigResult {
-  const cfgPath = hermesConfigPath(opts.profile);
+  const cfgPaths = hermesConfigCleanupPaths(opts.profile);
+  const results = cfgPaths.map((cfgPath) => {
+    try {
+      return removeHermesConfigFile(cfgPath);
+    } catch (err) {
+      return {
+        updated: false,
+        skipped: true,
+        reason: `Hermes config cleanup failed: ${err instanceof Error ? err.message : String(err)}`,
+        configPath: cfgPath,
+      };
+    }
+  });
+  const updated = results.filter((result) => result.updated);
+  const cleanupFailures = results.filter((result) => result.reason?.startsWith("Hermes config cleanup failed:"));
 
+  if (updated.length > 0) {
+    const updatedPaths = updated.map((result) => result.configPath).join(", ");
+    if (cleanupFailures.length > 0) {
+      const failedPaths = cleanupFailures.map((result) => result.configPath).join(", ");
+      return {
+        updated: false,
+        skipped: true,
+        reason: `Hermes config cleanup partially failed: updated ${updatedPaths}; failed ${failedPaths}`,
+        configPath: `${updatedPaths}; failed: ${failedPaths}`,
+      };
+    }
+    return {
+      updated: true,
+      skipped: false,
+      configPath: updatedPaths,
+    };
+  }
+
+  const cleanupFailure = cleanupFailures[0];
+  if (cleanupFailure) {
+    return cleanupFailure;
+  }
+
+  const existingWithoutBlock = results.find((result) => result.reason !== "Hermes config.yaml not found");
+  return existingWithoutBlock ?? results[0] ?? {
+    updated: false,
+    skipped: true,
+    reason: "Hermes config.yaml not found",
+    configPath: hermesConfigPath(opts.profile),
+  };
+}
+
+function removeHermesConfigFile(cfgPath: string): HermesConfigResult {
   if (!fs.existsSync(cfgPath)) {
     return {
       updated: false,
