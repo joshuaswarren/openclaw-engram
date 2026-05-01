@@ -7,10 +7,11 @@
 //
 //   conversations  → session_id resolution
 //   messages       → lcm_messages
+//   message_parts  → lcm_message_parts (when present)
 //   summaries      → lcm_summary_nodes
 //   summary_messages, summary_parents → derived msg_start/msg_end + parent_id
 //
-// Tables intentionally NOT read: large_files, message_parts,
+// Tables intentionally NOT read: large_files,
 // conversation_compaction_telemetry, conversation_compaction_maintenance,
 // lcm_migration_state. None have a Remnic LCM analog and importing them
 // would create dead data.
@@ -101,6 +102,16 @@ export interface LosslessClawMessage {
   created_at: string;
 }
 
+export interface LosslessClawMessagePart {
+  message_id: string;
+  ordinal: number;
+  kind: string;
+  payload: string;
+  tool_name: string | null;
+  file_path: string | null;
+  created_at: string | null;
+}
+
 export interface LosslessClawSummary {
   summary_id: string;
   kind: string;
@@ -172,6 +183,35 @@ export function listMessagesForConversation(
         "FROM messages WHERE conversation_id = ? ORDER BY seq",
     )
     .all(conversationId) as LosslessClawMessage[];
+}
+
+export function listMessageParts(db: Database.Database): LosslessClawMessagePart[] {
+  const hasTable = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='message_parts'")
+    .get() as { name: string } | undefined;
+  if (!hasTable) return [];
+
+  const columns = new Set(
+    (db.prepare("PRAGMA table_info(message_parts)").all() as Array<{ name: string }>)
+      .map((row) => row.name),
+  );
+  if (!columns.has("message_id")) return [];
+
+  const select = (name: string, fallback: string): string =>
+    columns.has(name) ? name : `${fallback} AS ${name}`;
+  return db
+    .prepare(
+      "SELECT " +
+        "message_id, " +
+        `${select("ordinal", "0")}, ` +
+        `${select("kind", "'tool_call'")}, ` +
+        `${select("payload", "'{}'")}, ` +
+        `${select("tool_name", "NULL")}, ` +
+        `${select("file_path", "NULL")}, ` +
+        `${select("created_at", "NULL")} ` +
+        "FROM message_parts ORDER BY message_id, ordinal",
+    )
+    .all() as LosslessClawMessagePart[];
 }
 
 export function listSummaries(db: Database.Database): LosslessClawSummary[] {

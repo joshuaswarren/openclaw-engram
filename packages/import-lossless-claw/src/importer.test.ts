@@ -25,6 +25,16 @@ interface SeedMessage {
   created_at: string;
 }
 
+interface SeedMessagePart {
+  message_id: string;
+  ordinal: number;
+  kind: string;
+  payload: string;
+  tool_name?: string | null;
+  file_path?: string | null;
+  created_at?: string | null;
+}
+
 interface SeedSummary {
   summary_id: string;
   kind: "leaf" | "condensed";
@@ -47,6 +57,7 @@ interface SeedConversation {
 function buildSourceDb(seed: {
   conversations: SeedConversation[];
   messages: SeedMessage[];
+  messageParts?: SeedMessagePart[];
   summaries?: SeedSummary[];
 }): DbHandle {
   const db = new BetterSqlite3(":memory:");
@@ -85,6 +96,15 @@ function buildSourceDb(seed: {
       parent_summary_id TEXT NOT NULL,
       ordinal           INTEGER NOT NULL
     );
+    CREATE TABLE message_parts (
+      message_id TEXT NOT NULL,
+      ordinal    INTEGER NOT NULL,
+      kind       TEXT NOT NULL,
+      payload    TEXT NOT NULL,
+      tool_name  TEXT,
+      file_path  TEXT,
+      created_at TEXT
+    );
   `);
 
   const insConv = db.prepare(
@@ -113,6 +133,22 @@ function buildSourceDb(seed: {
       m.token_count,
       m.identity_hash ?? null,
       m.created_at,
+    );
+  }
+
+  const insPart = db.prepare(
+    "INSERT INTO message_parts (message_id, ordinal, kind, payload, tool_name, file_path, created_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?)",
+  );
+  for (const part of seed.messageParts ?? []) {
+    insPart.run(
+      part.message_id,
+      part.ordinal,
+      part.kind,
+      part.payload,
+      part.tool_name ?? null,
+      part.file_path ?? null,
+      part.created_at ?? null,
     );
   }
 
@@ -171,6 +207,20 @@ function buildDestDb(): DbHandle {
     );
     CREATE INDEX idx_lcm_messages_session ON lcm_messages(session_id, turn_index);
 
+    CREATE TABLE lcm_message_parts (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id  INTEGER NOT NULL REFERENCES lcm_messages(id) ON DELETE CASCADE,
+      ordinal     INTEGER NOT NULL,
+      kind        TEXT NOT NULL,
+      payload     TEXT NOT NULL,
+      tool_name   TEXT,
+      file_path   TEXT,
+      created_at  TEXT NOT NULL
+    );
+    CREATE INDEX idx_lcm_message_parts_msg ON lcm_message_parts(message_id, ordinal);
+    CREATE INDEX idx_lcm_message_parts_tool ON lcm_message_parts(tool_name);
+    CREATE INDEX idx_lcm_message_parts_file ON lcm_message_parts(file_path);
+
     CREATE TABLE lcm_summary_nodes (
       id            TEXT PRIMARY KEY,
       session_id    TEXT NOT NULL,
@@ -208,9 +258,16 @@ function buildDestDb(): DbHandle {
   return db;
 }
 
+function buildPreV2DestDb(): DbHandle {
+  const db = buildDestDb();
+  db.exec("DROP TABLE lcm_message_parts");
+  return db;
+}
+
 const TWO_CONVS = (): {
   conversations: SeedConversation[];
   messages: SeedMessage[];
+  messageParts?: SeedMessagePart[];
   summaries: SeedSummary[];
 } => ({
   conversations: [
@@ -305,6 +362,44 @@ describe("importLosslessClaw — basic copy", () => {
       },
     ]);
   });
+
+  it("imports message_parts into the Remnic LCM sidecar table", () => {
+    const seed = TWO_CONVS();
+    seed.messageParts = [
+      {
+        message_id: "m-a-2",
+        ordinal: 0,
+        kind: "file_write",
+        payload: JSON.stringify({ path: "src/auth.ts" }),
+        tool_name: "Edit",
+        file_path: "src/auth.ts",
+        created_at: "2026-04-01T00:00:01.500Z",
+      },
+    ];
+    const src = buildSourceDb(seed);
+    const dst = buildDestDb();
+    const result = importLosslessClaw({ sourceDb: src, destDb: dst });
+
+    assert.equal(result.messagePartsInserted, 1);
+    assert.equal(result.messagePartsSkipped, 0);
+
+    const parts = dst
+      .prepare(
+        "SELECT p.ordinal, p.kind, p.tool_name, p.file_path, m.session_id, m.turn_index " +
+          "FROM lcm_message_parts p JOIN lcm_messages m ON m.id = p.message_id",
+      )
+      .all();
+    assert.deepEqual(parts, [
+      {
+        ordinal: 0,
+        kind: "file_write",
+        tool_name: "Edit",
+        file_path: "src/auth.ts",
+        session_id: "sess-A",
+        turn_index: 1,
+      },
+    ]);
+  });
 });
 
 describe("importLosslessClaw — idempotency", () => {
@@ -325,6 +420,60 @@ describe("importLosslessClaw — idempotency", () => {
       .prepare("SELECT COUNT(*) AS n FROM lcm_messages")
       .get() as { n: number };
     assert.equal(total.n, 3);
+  });
+
+  it("dry-run skips message_parts that already exist on destination messages", () => {
+    const seed = TWO_CONVS();
+    seed.messageParts = [
+      {
+        message_id: "m-a-2",
+        ordinal: 0,
+        kind: "file_write",
+        payload: JSON.stringify({ path: "src/auth.ts" }),
+        tool_name: "Edit",
+        file_path: "src/auth.ts",
+        created_at: "2026-04-01T00:00:01.500Z",
+      },
+    ];
+    const src = buildSourceDb(seed);
+    const dst = buildDestDb();
+
+    const first = importLosslessClaw({ sourceDb: src, destDb: dst });
+    const dry = importLosslessClaw({
+      sourceDb: src,
+      destDb: dst,
+      dryRun: true,
+    });
+
+    assert.equal(first.messagePartsInserted, 1);
+    assert.equal(dry.messagePartsInserted, 0);
+    assert.equal(dry.messagePartsSkipped, 1);
+  });
+
+  it("dry-run treats missing destination message_parts table as zero existing parts", () => {
+    const seed = TWO_CONVS();
+    seed.messageParts = [
+      {
+        message_id: "m-a-2",
+        ordinal: 0,
+        kind: "file_write",
+        payload: JSON.stringify({ path: "src/auth.ts" }),
+        tool_name: "Edit",
+        file_path: "src/auth.ts",
+        created_at: "2026-04-01T00:00:01.500Z",
+      },
+    ];
+    const src = buildSourceDb(seed);
+    const dst = buildPreV2DestDb();
+
+    const result = importLosslessClaw({
+      sourceDb: src,
+      destDb: dst,
+      dryRun: true,
+    });
+
+    assert.equal(result.messagePartsInserted, 1);
+    assert.equal(result.messagePartsSkipped, 0);
   });
 });
 

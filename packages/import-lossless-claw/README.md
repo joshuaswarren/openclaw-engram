@@ -69,8 +69,11 @@ Re-running the importer inserts zero new rows. Messages dedupe on
 
 - Multi-parent summary DAG → single-parent (lowest `ordinal` wins,
   lexicographic tie-break). Count reported in result.
-- `message_parts`, `large_files`, compaction telemetry — no Remnic LCM
-  analog, skipped silently.
+- `large_files` and compaction telemetry — no Remnic LCM analog, skipped
+  silently.
+
+`message_parts` is imported when present, including indexed `tool_name`
+and `file_path` columns for structured recall.
 
 See the migration doc for the full mapping table.
 

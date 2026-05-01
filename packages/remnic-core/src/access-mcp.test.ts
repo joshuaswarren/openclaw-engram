@@ -245,6 +245,76 @@ test("MCP maintenance: conversation index update rejects non-string sessionKey",
   assert.equal((response as Record<string, unknown> & { result?: { isError?: boolean } }).result?.isError, true);
 });
 
+test("MCP observe rejects malformed message parts before dispatch", async () => {
+  let called = false;
+  const service = {
+    ...makeMockService(),
+    observe: async () => {
+      called = true;
+      return { ok: true };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(service);
+
+  const response = await server.handleRequest(
+    makeToolRequest("engram.observe", {
+      sessionKey: "session-1",
+      messages: [
+        {
+          role: "assistant",
+          content: "Edited src/auth.ts.",
+          parts: [{}],
+        },
+      ],
+    }),
+  );
+
+  assert.equal(called, false);
+  const result = (response as Record<string, unknown> & { result?: { isError?: boolean; content?: { text: string }[] } }).result;
+  assert.equal(result?.isError, true);
+  assert.match(result?.content?.[0]?.text ?? "", /kind/i);
+});
+
+test("MCP observe accepts nullable optional message-part fields", async () => {
+  let received: Record<string, unknown> | undefined;
+  const service = {
+    ...makeMockService(),
+    observe: async (request: Record<string, unknown>) => {
+      received = request;
+      return { ok: true };
+    },
+  } as unknown as EngramAccessService;
+  const server = new EngramMcpServer(service);
+
+  const response = await server.handleRequest(
+    makeToolRequest("engram.observe", {
+      sessionKey: "session-1",
+      messages: [
+        {
+          role: "assistant",
+          content: "Edited src/auth.ts.",
+          parts: [
+            {
+              ordinal: null,
+              kind: "file_write",
+              payload: { path: "src/auth.ts" },
+              toolName: null,
+              filePath: "src/auth.ts",
+              createdAt: null,
+            },
+          ],
+        },
+      ],
+    }),
+  );
+
+  assert.equal((response as Record<string, unknown> & { result?: { isError?: boolean } }).result?.isError, false);
+  const messages = received?.messages as Array<Record<string, unknown>> | undefined;
+  const parts = messages?.[0]?.parts as Array<Record<string, unknown>> | undefined;
+  assert.equal(parts?.[0]?.ordinal, null);
+  assert.equal(parts?.[0]?.kind, "file_write");
+});
+
 test("MCP profiling report dispatches sanitized args to the access service", async () => {
   let received: Record<string, unknown> | undefined;
   const service = {

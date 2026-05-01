@@ -97,6 +97,50 @@ test("observe schema accepts projectTag field", () => {
   }
 });
 
+test("observe schema preserves structured message-part fields", () => {
+  const result = validateRequest<ObserveRequest>("observe", {
+    sessionKey: "sess-1",
+    messages: [
+      {
+        role: "assistant",
+        content: "edited src/auth.ts",
+        sourceFormat: "anthropic",
+        rawContent: {
+          content: [
+            {
+              type: "tool_use",
+              name: "Edit",
+              input: { path: "src/auth.ts" },
+            },
+          ],
+        },
+        parts: [
+          {
+            kind: "file_write",
+            payload: { path: "src/auth.ts" },
+            toolName: "Edit",
+            filePath: "src/auth.ts",
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(result.success, true);
+  if (result.success) {
+    assert.equal(result.data.messages[0]?.sourceFormat, "anthropic");
+    assert.deepEqual(result.data.messages[0]?.rawContent, {
+      content: [
+        {
+          type: "tool_use",
+          name: "Edit",
+          input: { path: "src/auth.ts" },
+        },
+      ],
+    });
+    assert.equal(result.data.messages[0]?.parts?.[0]?.filePath, "src/auth.ts");
+  }
+});
+
 test("observe schema rejects empty cwd", () => {
   const result = validateRequest("observe", {
     sessionKey: "sess-1",

@@ -1546,6 +1546,10 @@ export interface PluginConfig {
   lcmRecallBudgetShare: number;
   lcmDeterministicMaxTokens: number;
   lcmArchiveRetentionDays: number;
+  /** Opt-in structured message-part capture/recall sidecar for LCM. Default false. */
+  messagePartsEnabled: boolean;
+  /** Max structured file/tool matches injected into recall. */
+  messagePartsRecallMaxResults: number;
 
   // v9.1 Parallel Specialized Retrieval (ASMR-inspired)
   /** Enable three-agent parallel retrieval (DirectFact + Contextual + Temporal). Default false. */
@@ -1938,6 +1942,9 @@ export interface BufferTurn {
   providerThreadId?: string | null;
   turnFingerprint?: string;
   persistProcessedFingerprint?: boolean;
+  parts?: import("./message-parts/index.js").LcmMessagePartInput[];
+  rawContent?: unknown;
+  sourceFormat?: import("./message-parts/index.js").MessagePartSourceFormat;
 }
 
 export interface BufferEntryState {

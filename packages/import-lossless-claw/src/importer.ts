@@ -23,12 +23,14 @@ import type Database from "better-sqlite3";
 import {
   assertLosslessClawSchema,
   listConversations,
+  listMessageParts,
   listMessagesForConversation,
   listSummaries,
   listSummaryMessages,
   listSummaryParents,
   type LosslessClawConversation,
   type LosslessClawMessage,
+  type LosslessClawMessagePart,
 } from "./source.js";
 import {
   indexSummaryDerivations,
@@ -62,6 +64,8 @@ export interface ImportLosslessClawResult {
   sessionsTouched: string[];
   messagesInserted: number;
   messagesSkipped: number;
+  messagePartsInserted: number;
+  messagePartsSkipped: number;
   summariesInserted: number;
   summariesSkipped: number;
   summariesMultiParentCollapsed: number;
@@ -74,6 +78,40 @@ export interface ImportLosslessClawResult {
 const NOOP_LOG = (_line: string): void => {
   /* default sink */
 };
+
+type LcmMessagePartKind =
+  | "text"
+  | "tool_call"
+  | "tool_result"
+  | "patch"
+  | "file_read"
+  | "file_write"
+  | "step_start"
+  | "step_finish"
+  | "snapshot"
+  | "retry";
+
+interface LcmMessagePartInput {
+  ordinal?: number;
+  kind: LcmMessagePartKind;
+  payload: Record<string, unknown>;
+  toolName?: string | null;
+  filePath?: string | null;
+  createdAt?: string | null;
+}
+
+const LCM_MESSAGE_PART_KINDS: ReadonlySet<string> = new Set([
+  "text",
+  "tool_call",
+  "tool_result",
+  "patch",
+  "file_read",
+  "file_write",
+  "step_start",
+  "step_finish",
+  "snapshot",
+  "retry",
+]);
 
 export function importLosslessClaw(
   options: ImportLosslessClawOptions,
@@ -99,6 +137,8 @@ export function importLosslessClaw(
     sessionsTouched: [],
     messagesInserted: 0,
     messagesSkipped: 0,
+    messagePartsInserted: 0,
+    messagePartsSkipped: 0,
     summariesInserted: 0,
     summariesSkipped: 0,
     summariesMultiParentCollapsed: 0,
@@ -192,22 +232,26 @@ export function importLosslessClaw(
     "INSERT INTO lcm_messages_fts (rowid, content) VALUES (?, ?)",
   );
   const existingScanStmt = destDb.prepare(
-    "SELECT turn_index, " +
+    "SELECT id, turn_index, " +
       "json_extract(metadata, '$.conversation_id') AS conv, " +
       "json_extract(metadata, '$.source_seq') AS source_seq " +
       "FROM lcm_messages WHERE session_id = ?",
   );
 
-  // session → "convId|seq" → turn_index of the existing row. Lookup is
+  // session → "convId|seq" → destination row identity. Lookup is
   // O(1) Map membership instead of a per-row JSON-extract scan.
-  const existingBySession = new Map<string, Map<string, number>>();
+  const existingBySession = new Map<
+    string,
+    Map<string, { turnIndex: number; rowId: number }>
+  >();
   // session → max(turn_index) currently in dest (so new rows append).
   const maxTurnBySession = new Map<string, number>();
   for (const session of sessionMessages.keys()) {
     if (sessionFilter && !sessionFilter.has(session)) continue;
-    const map = new Map<string, number>();
+    const map = new Map<string, { turnIndex: number; rowId: number }>();
     let max = -1;
     const rows = existingScanStmt.iterate(session) as Iterable<{
+      id: number;
       turn_index: number;
       conv: string | null;
       source_seq: number | null;
@@ -215,7 +259,10 @@ export function importLosslessClaw(
     for (const row of rows) {
       if (row.turn_index > max) max = row.turn_index;
       if (row.conv != null && row.source_seq != null) {
-        map.set(`${row.conv}|${row.source_seq}`, row.turn_index);
+        map.set(`${row.conv}|${row.source_seq}`, {
+          turnIndex: row.turn_index,
+          rowId: row.id,
+        });
       }
     }
     existingBySession.set(session, map);
@@ -227,19 +274,22 @@ export function importLosslessClaw(
   // turn_index. Populated for both inserted rows and dedup-skipped rows
   // so summary mapping (msg_start/msg_end) reflects real turn indices.
   const turnIndexByMessageId = new Map<string, number>();
+  const destRowIdByMessageId = new Map<string, number>();
 
   function assignTurnIndices(forWrite: boolean): void {
     for (const session of sessionOrder) {
       if (sessionFilter && !sessionFilter.has(session)) continue;
       const entries = sessionMessages.get(session) ?? [];
       const existing =
-        existingBySession.get(session) ?? new Map<string, number>();
+        existingBySession.get(session) ??
+        new Map<string, { turnIndex: number; rowId: number }>();
       let nextTurn = (maxTurnBySession.get(session) ?? -1) + 1;
       for (const { conv, msg } of entries) {
         const key = `${conv.conversation_id}|${msg.seq}`;
         const existingTurn = existing.get(key);
         if (existingTurn !== undefined) {
-          turnIndexByMessageId.set(msg.message_id, existingTurn);
+          turnIndexByMessageId.set(msg.message_id, existingTurn.turnIndex);
+          destRowIdByMessageId.set(msg.message_id, existingTurn.rowId);
           result.messagesSkipped += 1;
           continue;
         }
@@ -248,7 +298,7 @@ export function importLosslessClaw(
         // Update the in-memory dedup map so duplicates within this
         // run also count as skips on subsequent passes (defensive;
         // shouldn't happen with valid source data).
-        existing.set(key, ti);
+        existing.set(key, { turnIndex: ti, rowId: -1 });
         if (forWrite) {
           const mapped = mapMessage(conv, msg, ti);
           const info = insertMessageStmt.run(
@@ -264,6 +314,9 @@ export function importLosslessClaw(
             Number(info.lastInsertRowid),
             mapped.content,
           );
+          const rowId = Number(info.lastInsertRowid);
+          destRowIdByMessageId.set(msg.message_id, rowId);
+          existing.set(key, { turnIndex: ti, rowId });
         }
         result.messagesInserted += 1;
         sessionsTouched.add(session);
@@ -278,6 +331,78 @@ export function importLosslessClaw(
     // Dry run: walk the same iteration to populate counters and
     // turnIndexByMessageId without mutating either DB.
     assignTurnIndices(false);
+  }
+
+  // ── Insert message parts ────────────────────────────────────────────────
+  const messageParts = listMessageParts(sourceDb);
+  const destHasMessageParts = sqliteTableExists(destDb, "lcm_message_parts");
+  const existingPartsStmt = destHasMessageParts
+    ? destDb.prepare(
+      "SELECT COUNT(*) AS cnt FROM lcm_message_parts WHERE message_id = ?",
+    )
+    : undefined;
+  const insertPartStmt = destHasMessageParts
+    ? destDb.prepare(
+      "INSERT INTO lcm_message_parts (message_id, ordinal, kind, payload, tool_name, file_path, created_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    : undefined;
+
+  function processMessageParts(forWrite: boolean): void {
+    const seenDestMessages = new Set<number>();
+    const blockedDestMessages = new Set<number>();
+    for (const sourcePart of messageParts) {
+      if (!turnIndexByMessageId.has(sourcePart.message_id)) {
+        result.messagePartsSkipped += 1;
+        continue;
+      }
+      const destMessageId = destRowIdByMessageId.get(sourcePart.message_id);
+      if (destMessageId !== undefined && destMessageId >= 0) {
+        if (blockedDestMessages.has(destMessageId)) {
+          result.messagePartsSkipped += 1;
+          continue;
+        }
+        if (existingPartsStmt && !seenDestMessages.has(destMessageId)) {
+          const existing = existingPartsStmt.get(destMessageId) as { cnt: number };
+          if (existing.cnt > 0) {
+            seenDestMessages.add(destMessageId);
+            blockedDestMessages.add(destMessageId);
+            result.messagePartsSkipped += 1;
+            continue;
+          }
+          seenDestMessages.add(destMessageId);
+        }
+      } else if (forWrite) {
+        result.messagePartsSkipped += 1;
+        continue;
+      }
+      if (forWrite && !insertPartStmt) {
+        result.messagePartsSkipped += 1;
+        continue;
+      }
+      if (forWrite) {
+        const mapped = mapLosslessMessagePart(sourcePart);
+        insertPartStmt!.run(
+          destMessageId,
+          mapped.ordinal ?? sourcePart.ordinal,
+          mapped.kind,
+          JSON.stringify(mapped.payload),
+          mapped.toolName ?? null,
+          mapped.filePath ?? null,
+          mapped.createdAt ?? sourcePart.created_at ?? new Date().toISOString(),
+        );
+      }
+      result.messagePartsInserted += 1;
+      const session = sessionByMessageId.get(sourcePart.message_id);
+      if (session) sessionsTouched.add(session);
+    }
+  }
+
+  if (!dryRun) {
+    const writeParts = destDb.transaction(() => processMessageParts(true));
+    writeParts();
+  } else {
+    processMessageParts(false);
   }
 
   // ── Insert summaries ───────────────────────────────────────────────────
@@ -444,4 +569,39 @@ export function importLosslessClaw(
 
   result.sessionsTouched = [...sessionsTouched].sort();
   return result;
+}
+
+function sqliteTableExists(db: Database.Database, tableName: string): boolean {
+  const row = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+    )
+    .get(tableName) as { name: string } | undefined;
+  return row !== undefined;
+}
+
+function mapLosslessMessagePart(
+  part: LosslessClawMessagePart,
+): LcmMessagePartInput {
+  const kind = LCM_MESSAGE_PART_KINDS.has(part.kind)
+    ? (part.kind as LcmMessagePartKind)
+    : "tool_call";
+  let payload: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(part.payload);
+    payload =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : { value: parsed };
+  } catch {
+    payload = { value: part.payload };
+  }
+  return {
+    ordinal: part.ordinal,
+    kind,
+    payload,
+    toolName: part.tool_name,
+    filePath: part.file_path,
+    createdAt: part.created_at,
+  };
 }

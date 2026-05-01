@@ -177,6 +177,21 @@ export {
   type BoostableResult,
 } from "./reasoning-trace-recall.js";
 
+export {
+  parseMessageParts,
+  parseOpenAiMessageParts,
+  parseAnthropicMessageParts,
+  parseOpenClawMessageParts,
+  normalizeExplicitParts,
+  partsFromRenderedText,
+  isLcmMessagePartKind,
+  type LcmMessagePartInput,
+  type LcmMessagePartKind,
+  type LcmMessagePartRow,
+  type MessagePartSourceFormat,
+  type ParseMessagePartsOptions,
+} from "./message-parts/index.js";
+
 // ---------------------------------------------------------------------------
 // Inline source attribution (issue #369)
 // ---------------------------------------------------------------------------

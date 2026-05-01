@@ -1,6 +1,9 @@
 export interface LcmObserveMessage {
   role: string;
   content: string;
+  parts?: import("../message-parts/index.js").LcmMessagePartInput[];
+  rawContent?: unknown;
+  sourceFormat?: import("../message-parts/index.js").MessagePartSourceFormat;
 }
 
 export interface LcmWorkQueueHooks {

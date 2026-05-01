@@ -126,12 +126,13 @@ rather than replace.
 - **Conversation titles**: stored in the message `metadata` JSON blob
   (`{ "title": "...", "source": "lossless-claw" }`) since Remnic LCM
   has no per-conversation table.
+- **Message parts**: imported into `lcm_message_parts` when the source
+  database includes `message_parts`. Tool names and file paths are kept
+  in indexed columns so file-aware and tool-history recall can find them
+  without relying on rendered transcript text.
 
 ### Does not migrate (no Remnic LCM analog)
 
-- `message_parts` — fine-grained tool I/O, patches, file references,
-  step-start/finish markers. Only the rendered `messages.content`
-  carries forward.
 - `large_files` — spilled blobs and their `exploration_summary`. If you
   rely on these for recall, run the importer after first round-tripping
   the relevant exploration summaries through Remnic's normal extraction

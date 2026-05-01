@@ -21,6 +21,9 @@ export interface ImportTurn {
   participantId?: string;
   participantName?: string;
   replyToId?: string;
+  parts?: import("../message-parts/index.js").LcmMessagePartInput[];
+  rawContent?: unknown;
+  sourceFormat?: import("../message-parts/index.js").MessagePartSourceFormat;
 }
 
 export interface BulkImportOptions {

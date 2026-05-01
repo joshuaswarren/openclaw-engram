@@ -137,6 +137,38 @@ export const setCodingContextRequestSchema = z.object({
 const messageSchema = z.object({
   role: z.enum(["user", "assistant"]),
   content: z.string().min(1, "message content must be non-empty"),
+  sourceFormat: z
+    .enum(["openai", "anthropic", "openclaw", "lossless-claw", "remnic"])
+    .nullable()
+    .optional(),
+  rawContent: z.unknown().nullable().optional(),
+  parts: z
+    .array(
+      z.object({
+        ordinal: z.number().int().min(0).nullable().optional(),
+        kind: z.enum([
+          "text",
+          "tool_call",
+          "tool_result",
+          "patch",
+          "file_read",
+          "file_write",
+          "step_start",
+          "step_finish",
+          "snapshot",
+          "retry",
+        ]),
+        payload: z.record(z.string(), z.unknown()),
+        toolName: z.string().nullable().optional(),
+        tool_name: z.string().nullable().optional(),
+        filePath: z.string().nullable().optional(),
+        file_path: z.string().nullable().optional(),
+        createdAt: z.string().nullable().optional(),
+        created_at: z.string().nullable().optional(),
+      }),
+    )
+    .nullable()
+    .optional(),
 });
 
 export const observeRequestSchema = z.object({

@@ -6,7 +6,7 @@ import {
   type BetterSqlite3Database,
 } from "../runtime/better-sqlite.js";
 
-const LCM_SCHEMA_VERSION = 1;
+const LCM_SCHEMA_VERSION = 2;
 
 export function openLcmDatabase(memoryDir: string): BetterSqlite3Database {
   const dbPath = path.join(memoryDir, "state", "lcm.sqlite");
@@ -50,9 +50,6 @@ function applySchema(db: BetterSqlite3Database): void {
   const currentVersion = meta ? parseInt(meta.value, 10) : 0;
 
   if (currentVersion < LCM_SCHEMA_VERSION) {
-    // TODO: When v2 is needed, add explicit ALTER TABLE migrations here
-    // instead of relying on CREATE TABLE IF NOT EXISTS (which won't add
-    // new columns to existing tables).
     log.info(`LCM schema upgrade: v${currentVersion} → v${LCM_SCHEMA_VERSION}`);
     createTables(db);
   }
@@ -77,6 +74,23 @@ function createTables(db: BetterSqlite3Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_lcm_messages_session
       ON lcm_messages(session_id, turn_index);
+
+    CREATE TABLE IF NOT EXISTS lcm_message_parts (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id  INTEGER NOT NULL REFERENCES lcm_messages(id) ON DELETE CASCADE,
+      ordinal     INTEGER NOT NULL,
+      kind        TEXT NOT NULL,
+      payload     TEXT NOT NULL,
+      tool_name   TEXT,
+      file_path   TEXT,
+      created_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_lcm_message_parts_msg
+      ON lcm_message_parts(message_id, ordinal);
+    CREATE INDEX IF NOT EXISTS idx_lcm_message_parts_tool
+      ON lcm_message_parts(tool_name);
+    CREATE INDEX IF NOT EXISTS idx_lcm_message_parts_file
+      ON lcm_message_parts(file_path);
 
     CREATE TABLE IF NOT EXISTS lcm_summary_nodes (
       id            TEXT PRIMARY KEY,

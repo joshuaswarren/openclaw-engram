@@ -6052,6 +6052,7 @@ export class Orchestrator {
     // per-result explain data (e.g. reinforcementBoost) from the result that
     // was actually served.
     let xrayRecalledResults: QmdSearchResult[] = [];
+    const lcmStructuredXrayResults: RecallXrayResult[] = [];
     // Per-branch pre-limit candidate pool size for the X-ray filter
     // trace (issue #570 PR 1).  `recalledMemoryCount` is assigned
     // AFTER MMR + truncation so using it alone would make the
@@ -8505,6 +8506,32 @@ export class Orchestrator {
       (recallMode as RecallPlanMode) !== "no_recall"
     ) {
       try {
+        const structuredMatches = await this.lcmEngine.searchStructuredParts(
+          sessionKey ?? "default",
+          retrievalQuery,
+        );
+        const structuredSection = this.lcmEngine.formatStructuredRecall(
+          structuredMatches,
+          Math.ceil(this.config.recallBudgetChars * 0.08),
+        );
+        if (structuredSection) {
+          const structuredAppended = this.appendRecallSection(
+            sectionBuckets,
+            "lcm-message-parts",
+            structuredSection,
+          );
+          if (structuredAppended) {
+            for (const match of structuredMatches) {
+              lcmStructuredXrayResults.push({
+                memoryId: `lcm-message-part-${match.part_id}`,
+                path: `lcm://${match.session_id}/turn/${match.turn_index}/part/${match.part_id}`,
+                servedBy: match.file_path ? "lcm-file-parts" : "lcm-tool-parts",
+                scoreDecomposition: { final: match.score },
+                admittedBy: ["lcm-message-parts"],
+              });
+            }
+          }
+        }
         const lcmSection = await this.lcmEngine.assembleRecall(
           sessionKey ?? "default",
           this.config.recallBudgetChars,
@@ -9651,10 +9678,17 @@ export class Orchestrator {
             admitted: recalledMemoryIds.length,
           },
         ];
+        if (lcmStructuredXrayResults.length > 0) {
+          filters.push({
+            name: "lcm-message-parts",
+            considered: lcmStructuredXrayResults.length,
+            admitted: lcmStructuredXrayResults.length,
+          });
+        }
         this.lastXraySnapshot = buildXraySnapshot({
           query: retrievalQuery,
           tierExplain: null,
-          results,
+          results: [...results, ...lcmStructuredXrayResults],
           filters,
           budget: {
             chars: this.getRecallBudgetChars(options.budgetCharsOverride),
@@ -9864,7 +9898,7 @@ export class Orchestrator {
 
   async ingestReplayBatch(
     turns: ReplayTurn[],
-    options: { deadlineMs?: number } = {},
+    options: { deadlineMs?: number; archiveLcm?: boolean } = {},
   ): Promise<void> {
     if (!Array.isArray(turns) || turns.length === 0) return;
     if (shouldSkipImplicitExtraction(this.config)) {
@@ -9884,6 +9918,9 @@ export class Orchestrator {
         content: turn.content,
         timestamp: turn.timestamp,
         sessionKey: key,
+        parts: turn.parts,
+        rawContent: turn.rawContent,
+        sourceFormat: turn.sourceFormat,
       });
       bySession.set(key, list);
     }
@@ -9891,6 +9928,18 @@ export class Orchestrator {
     const replayTasks: Array<Promise<void>> = [];
     for (const [key, sessionTurns] of bySession.entries()) {
       if (sessionTurns.length === 0) continue;
+      if (options.archiveLcm !== false && this.lcmEngine?.enabled) {
+        await this.lcmEngine.observeMessages(
+          key,
+          sessionTurns.map((turn) => ({
+            role: turn.role,
+            content: turn.content,
+            parts: turn.parts,
+            rawContent: turn.rawContent,
+            sourceFormat: turn.sourceFormat,
+          })),
+        );
+      }
       replayTasks.push(
         new Promise<void>((resolve, reject) => {
           void this.queueBufferedExtraction(sessionTurns, "trigger_mode", {
@@ -9999,9 +10048,25 @@ export class Orchestrator {
         content: turn.content,
         timestamp: turn.timestamp,
         sessionKey,
+        parts: turn.parts,
+        rawContent: turn.rawContent,
+        sourceFormat: turn.sourceFormat,
       });
     }
     if (sessionTurns.length === 0) return;
+
+    if (this.lcmEngine?.enabled) {
+      await this.lcmEngine.observeMessages(
+        sessionKey,
+        sessionTurns.map((turn) => ({
+          role: turn.role,
+          content: turn.content,
+          parts: turn.parts,
+          rawContent: turn.rawContent,
+          sourceFormat: turn.sourceFormat,
+        })),
+      );
+    }
 
     await new Promise<void>((resolve, reject) => {
       void this.queueBufferedExtraction(sessionTurns, "trigger_mode", {

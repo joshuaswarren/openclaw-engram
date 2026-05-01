@@ -1,5 +1,10 @@
 import type Database from "better-sqlite3";
 import { log } from "../logger.js";
+import {
+  parseMessageParts,
+  type LcmMessagePartInput,
+  type MessagePartSourceFormat,
+} from "../message-parts/index.js";
 
 export interface LcmMessage {
   id: number;
@@ -29,6 +34,20 @@ export interface LcmSearchWithContentResult {
   score: number;
 }
 
+export interface LcmStructuredRecallMatch {
+  part_id: number;
+  message_id: number;
+  turn_index: number;
+  role: string;
+  content: string;
+  session_id: string;
+  kind: string;
+  tool_name: string | null;
+  file_path: string | null;
+  payload: string;
+  score: number;
+}
+
 /** Rough token count: ~4 chars per token. */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -44,6 +63,7 @@ export class LcmArchive {
     role: string,
     content: string,
     metadata?: Record<string, unknown>,
+    parts?: LcmMessagePartInput[],
   ): number {
     const tokenCount = estimateTokens(content);
     const now = new Date().toISOString();
@@ -61,22 +81,82 @@ export class LcmArchive {
       .prepare("INSERT INTO lcm_messages_fts (rowid, content) VALUES (?, ?)")
       .run(rowId, content);
 
+    if (parts && parts.length > 0) {
+      this.insertMessageParts(rowId, parts, now);
+    }
+
     return rowId;
   }
 
   /** Append multiple messages in a single transaction. */
   appendMessages(
     sessionId: string,
-    messages: Array<{ turnIndex: number; role: string; content: string; metadata?: Record<string, unknown> }>,
+    messages: Array<{
+      turnIndex: number;
+      role: string;
+      content: string;
+      metadata?: Record<string, unknown>;
+      parts?: LcmMessagePartInput[];
+      rawContent?: unknown;
+      sourceFormat?: MessagePartSourceFormat;
+    }>,
+    options: { messagePartsEnabled?: boolean } = {},
   ): void {
     if (messages.length === 0) return;
+    const captureMessageParts = options.messagePartsEnabled !== false;
 
     const txn = this.db.transaction(() => {
       for (const msg of messages) {
-        this.appendMessage(sessionId, msg.turnIndex, msg.role, msg.content, msg.metadata);
+        const explicitParts =
+          msg.parts && msg.parts.length > 0 ? msg.parts : undefined;
+        const rawContent = msg.rawContent ?? msg.content;
+        const parts =
+          captureMessageParts
+            ? explicitParts ??
+              parseMessageParts(rawContent, {
+                sourceFormat: msg.sourceFormat,
+                renderedContent: msg.content,
+              })
+            : undefined;
+        this.appendMessage(
+          sessionId,
+          msg.turnIndex,
+          msg.role,
+          msg.content,
+          msg.metadata,
+          parts,
+        );
       }
     });
     txn();
+  }
+
+  insertMessageParts(
+    messageId: number,
+    parts: LcmMessagePartInput[],
+    fallbackCreatedAt: string,
+  ): void {
+    if (parts.length === 0) return;
+    const stmt = this.db.prepare(`
+      INSERT INTO lcm_message_parts (message_id, ordinal, kind, payload, tool_name, file_path, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (let index = 0; index < parts.length; index += 1) {
+      const part = parts[index]!;
+      const rawPart = part as unknown as Record<string, unknown>;
+      const toolName = part.toolName ?? asNullableString(rawPart.tool_name);
+      const filePath = part.filePath ?? asNullableString(rawPart.file_path);
+      const createdAt = part.createdAt ?? asNullableString(rawPart.created_at);
+      stmt.run(
+        messageId,
+        part.ordinal ?? index,
+        part.kind,
+        JSON.stringify(part.payload ?? {}),
+        toolName ?? null,
+        filePath ?? null,
+        createdAt ?? fallbackCreatedAt,
+      );
+    }
   }
 
   /** Get the highest turn_index for a session, or -1 if none. */
@@ -241,6 +321,64 @@ export class LcmArchive {
     }
   }
 
+  searchStructuredParts(
+    query: string,
+    limit: number,
+    sessionId?: string,
+  ): LcmStructuredRecallMatch[] {
+    const cappedLimit = Math.max(0, Math.min(20, Math.floor(limit)));
+    if (cappedLimit === 0) return [];
+
+    const fileTerms = extractStructuredFileTerms(query);
+    const toolTerms = extractStructuredToolTerms(query);
+    if (fileTerms.length === 0 && toolTerms.length === 0) return [];
+
+    const matchWhere: string[] = [];
+    const whereParams: unknown[] = [];
+    for (const term of fileTerms) {
+      matchWhere.push("(p.file_path = ? OR p.file_path LIKE ? ESCAPE '\\')");
+      whereParams.push(term, `%${escapeLike(term)}%`);
+    }
+    for (const term of toolTerms) {
+      matchWhere.push("p.tool_name LIKE ? ESCAPE '\\'");
+      whereParams.push(`%${escapeLike(term)}%`);
+    }
+    const where = [`(${matchWhere.join(" OR ")})`];
+    if (sessionId) {
+      where.push("m.session_id = ?");
+      whereParams.push(sessionId);
+    }
+    const exactFileScoreParams = [...fileTerms];
+    const sqlParams = [...exactFileScoreParams, ...whereParams, cappedLimit];
+
+    const rows = this.db.prepare(`
+      SELECT
+        p.id AS part_id,
+        p.message_id AS message_id,
+        m.turn_index AS turn_index,
+        m.role AS role,
+        m.content AS content,
+        m.session_id AS session_id,
+        p.kind AS kind,
+        p.tool_name AS tool_name,
+        p.file_path AS file_path,
+        p.payload AS payload,
+        CASE
+          WHEN p.file_path IN (${fileTerms.map(() => "?").join(",") || "NULL"}) THEN 3
+          WHEN p.file_path IS NOT NULL THEN 2
+          WHEN p.tool_name IS NOT NULL THEN 1
+          ELSE 0
+        END AS score
+      FROM lcm_message_parts p
+      JOIN lcm_messages m ON m.id = p.message_id
+      WHERE ${where.join(" AND ")}
+      ORDER BY score DESC, m.turn_index DESC, p.ordinal ASC
+      LIMIT ?
+    `).all(...sqlParams) as LcmStructuredRecallMatch[];
+
+    return rows;
+  }
+
   /** Get total message count for a session. */
   getMessageCount(sessionId: string): number {
     const row = this.db
@@ -340,6 +478,92 @@ const STOPWORDS = new Set([
   "my", "your", "his", "her", "our", "their", "me", "him", "us", "them",
   "i", "you", "he", "she", "we", "they",
 ]);
+
+function extractStructuredFileTerms(query: string): string[] {
+  const terms = new Set<string>();
+  for (const raw of splitQueryTerms(query)) {
+    const cleaned = trimStructuredQueryTerm(raw);
+    if (
+      cleaned.includes("/") ||
+      hasStructuredFileExtension(cleaned)
+    ) {
+      terms.add(cleaned);
+      const basename = cleaned.split("/").pop();
+      if (basename && basename !== cleaned) terms.add(basename);
+    }
+  }
+  return [...terms].filter((term) => term.length > 1).slice(0, 12);
+}
+
+function splitQueryTerms(query: string): string[] {
+  const terms: string[] = [];
+  let term = "";
+  for (const char of query.slice(0, 20_000)) {
+    if (char === " " || char === "\n" || char === "\r" || char === "\t") {
+      if (term.length > 0) terms.push(term);
+      term = "";
+      continue;
+    }
+    term += char;
+    if (term.length > 512) {
+      terms.push(term);
+      term = "";
+    }
+  }
+  if (term.length > 0) terms.push(term);
+  return terms;
+}
+
+function trimStructuredQueryTerm(raw: string): string {
+  const leading = new Set(["`", "'", "\"", "(", "[", "{"]);
+  const trailing = new Set(["`", "'", "\"", ",", ".", "?", "!", ":", ";", ")", "]", "}"]);
+  let start = 0;
+  let end = raw.length;
+  while (start < end && leading.has(raw[start]!)) start += 1;
+  while (end > start && trailing.has(raw[end - 1]!)) end -= 1;
+  return raw.slice(start, end);
+}
+
+function hasStructuredFileExtension(value: string): boolean {
+  const slash = value.lastIndexOf("/");
+  const basename = value.slice(slash + 1);
+  const dot = basename.lastIndexOf(".");
+  if (dot <= 0 || dot === basename.length - 1) return false;
+  const ext = basename.slice(dot + 1);
+  if (ext.length < 1 || ext.length > 12) return false;
+  for (const char of ext) {
+    const code = char.charCodeAt(0);
+    const valid =
+      (code >= 48 && code <= 57) ||
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      char === "_" ||
+      char === "+" ||
+      char === "-";
+    if (!valid) return false;
+  }
+  return true;
+}
+
+function extractStructuredToolTerms(query: string): string[] {
+  const lower = query.toLowerCase();
+  if (!/\b(tool|command|invocation|called|used|ran|read|write|patch|edit|grep|search)\b/.test(lower)) {
+    return [];
+  }
+  return query
+    .replace(/[^\w.-]/g, " ")
+    .split(/\s+/)
+    .filter((term) => term.length > 2 && !STOPWORDS.has(term.toLowerCase()))
+    .slice(0, 8);
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
+function asNullableString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
 
 /**
  * Sanitize a query for FTS5 MATCH.

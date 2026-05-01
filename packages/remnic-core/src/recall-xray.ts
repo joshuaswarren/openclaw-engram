@@ -63,7 +63,9 @@ export type RecallXrayServedBy =
   | "graph"
   | "recent-scan"
   | "procedural"
-  | "review-context";
+  | "review-context"
+  | "lcm-file-parts"
+  | "lcm-tool-parts";
 
 export const RECALL_XRAY_SERVED_BY_VALUES: readonly RecallXrayServedBy[] = [
   "direct-answer",
@@ -72,6 +74,8 @@ export const RECALL_XRAY_SERVED_BY_VALUES: readonly RecallXrayServedBy[] = [
   "recent-scan",
   "procedural",
   "review-context",
+  "lcm-file-parts",
+  "lcm-tool-parts",
 ] as const;
 
 export function isRecallXrayServedBy(
