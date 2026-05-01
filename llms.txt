@@ -160,6 +160,9 @@ DOCUMENTATION
   docs/api.md                  HTTP, MCP, and CLI reference
   docs/architecture/           Per-feature architecture docs
   docs/guides/                 Standalone, Codex, Claude Code, local LLM, etc.
+  docs/guides/openclaw-engram-to-remnic.md
+                               Legacy OpenClaw Engram -> Remnic migration:
+                               package rename, config keys, backups, patches
   docs/getting-started.md      Quick start
   docs/operations.md           Operations guide
   docs/search-backends.md      Search backend comparison
@@ -189,6 +192,21 @@ QUICK START (OPENCLAW)
   remnic openclaw install
   launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
   remnic doctor
+
+LEGACY OPENCLAW ENGRAM MIGRATION
+
+  Use this for @joshuaswarren/openclaw-engram 9.2.x -> @remnic/plugin-openclaw.
+  Canonical OpenClaw plugin id: openclaw-remnic.
+  Legacy plugin id: openclaw-engram.
+  Do not use remnic-workspace as an OpenClaw plugin id; it is the npm workspace
+  root package name, not the OpenClaw runtime id.
+
+  remnic openclaw migrate-engram --yes
+
+  This backs up openclaw.json, backs up the legacy openclaw-engram extension
+  directory, installs @remnic/plugin-openclaw into openclaw-remnic, writes
+  plugins.entries["openclaw-remnic"], sets plugins.slots.memory to
+  "openclaw-remnic", and preserves the memoryDir.
 
 CONNECTING OTHER AGENTS
 

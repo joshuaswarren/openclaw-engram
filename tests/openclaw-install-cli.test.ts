@@ -74,6 +74,14 @@ test("CLI has cmdOpenclawUpgrade function", async () => {
   );
 });
 
+test("CLI has cmdOpenclawMigrateEngram function", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("cmdOpenclawMigrateEngram"),
+    "CLI must define explicit legacy Engram migration tooling",
+  );
+});
+
 test("CLI --yes / -y / --force flags are supported", async () => {
   const src = await readCli();
   assert.ok(
@@ -143,6 +151,20 @@ test("CLI openclaw upgrade supports release and restart flags", async () => {
   assert.ok(
     src.includes("--no-restart") || src.includes("restartGateway"),
     "CLI upgrade must handle restart control",
+  );
+});
+
+test("CLI openclaw migrate-engram backs up legacy extension dir", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes('subAction === "migrate-engram"'),
+    "CLI must wire remnic openclaw migrate-engram",
+  );
+  assert.ok(
+    src.includes("--legacy-plugin-dir") &&
+      src.includes("legacyPluginDirForBackup") &&
+      src.includes("Backed up legacy plugin dir"),
+    "migrate-engram must support and report legacy extension backup",
   );
 });
 
