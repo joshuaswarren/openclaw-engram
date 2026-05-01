@@ -86,6 +86,8 @@ const DATASET_BUNDLE_CANDIDATES = [
   "MemoryAgentBench.jsonl",
 ] as const;
 
+const VISIBLE_CUE_ANCHOR_PREFIX = "MemoryAgentBench visible anchors:";
+
 type MemoryAgentBenchProtocol =
   | "ruler_qa"
   | "longmemeval"
@@ -170,9 +172,10 @@ export async function runMemoryAgentBenchBenchmark(
           );
           return recalledSessions.filter(Boolean).join("\n\n");
         });
+        const answerRecalledText = stripVisibleCueAnchors(recalledText);
         const answered = await answerBenchmarkQuestion({
           question: officialQuestion,
-          recalledText,
+          recalledText: answerRecalledText,
           responder: options.system.responder,
           answerMode: "strict",
         });
@@ -234,9 +237,9 @@ export async function runMemoryAgentBenchBenchmark(
           parsedOfficialAnswer: officialScoring.parsedAnswer,
           sessionIds,
           storedSessionCount: sessionIds.length,
-          recalledLength: recalledText.length,
+          recalledLength: answerRecalledText.length,
           answeredLength: answered.finalAnswer.length,
-          recalledText,
+          recalledText: answerRecalledText,
           answeredText: answered.finalAnswer,
           responderModel: answered.model,
           judgeModel: judgeResult.model,
@@ -1362,10 +1365,15 @@ async function storeBenchmarkContext(
   if (item.metadata.haystack_sessions && item.metadata.haystack_sessions.length > 0) {
     for (const [sessionIndex, turns] of item.metadata.haystack_sessions.entries()) {
       const sessionId = `${baseSessionId}-session-${sessionIndex}`;
-      const messages = turns.map<Message>((turn) => ({
-        role: turn.role,
-        content: turn.content,
-      }));
+      const messages = turns.map<Message>((turn, turnIndex) =>
+        buildVisibleCueMessage(
+          {
+            role: turn.role,
+            content: turn.content,
+          },
+          turnIndex,
+        ),
+      );
       if (messages.length > 0) {
         await storeMessagesInChunks(options, sessionId, messages);
         storedSessionIds.push(sessionId);
@@ -1383,10 +1391,68 @@ async function storeBenchmarkContext(
     await storeMessagesInChunks(
       options,
       sessionId,
-      chunkedContext.map<Message>((content) => ({ role: "user", content })),
+      chunkedContext.map<Message>((content, chunkIndex) =>
+        buildVisibleCueMessage({ role: "user", content }, chunkIndex),
+      ),
     );
   }
   return [sessionId];
+}
+
+function buildVisibleCueMessage(message: Message, index: number): Message {
+  const anchors = collectVisibleCueAnchors(message.content, index);
+  if (anchors.length === 0) {
+    return message;
+  }
+  return {
+    ...message,
+    content: [
+      message.content,
+      `${VISIBLE_CUE_ANCHOR_PREFIX} ${anchors.join("; ")}.`,
+    ].join("\n"),
+  };
+}
+
+function collectVisibleCueAnchors(content: string, index: number): string[] {
+  const anchors = new Set<string>([
+    `chunk ${index}`,
+    `chunk_id=${index}`,
+    `memoryagentbench_chunk=${index}`,
+  ]);
+
+  for (const match of content.matchAll(/\b\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?Z?)?\b/g)) {
+    const date = match[0];
+    anchors.add(date);
+    anchors.add(`date=${date}`);
+  }
+  for (const match of content.matchAll(/\b(?:event|episode|fact|keypoint|clue|case)\s*#?\s*([A-Za-z0-9_.:-]{1,40})\b/gi)) {
+    const label = match[0].replace(/\s+/g, " ").trim();
+    const id = match[1]?.trim();
+    if (!id) {
+      continue;
+    }
+    anchors.add(label);
+    anchors.add(`${match[0].split(/\s+/)[0]!.toLowerCase()}_id=${id}`);
+  }
+  for (const match of content.matchAll(/(?:^|\n)\s*(\d{1,6})[\.)]\s+/g)) {
+    const serial = match[1];
+    if (!serial) {
+      continue;
+    }
+    anchors.add(`fact ${serial}`);
+    anchors.add(`fact_id=${serial}`);
+    anchors.add(`serial=${serial}`);
+  }
+
+  return [...anchors].sort((left, right) => left.localeCompare(right));
+}
+
+function stripVisibleCueAnchors(content: string): string {
+  return content
+    .split("\n")
+    .filter((line) => !line.startsWith(VISIBLE_CUE_ANCHOR_PREFIX))
+    .join("\n")
+    .trim();
 }
 
 async function storeMessagesInChunks(
