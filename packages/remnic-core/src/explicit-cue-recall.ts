@@ -594,13 +594,7 @@ function addBenchmarkAnchorCues(
 
 function isBenchmarkAnchorValue(token: string): boolean {
   for (const char of token) {
-    if (
-      isAsciiDigitChar(char) ||
-      char === "_" ||
-      char === "-" ||
-      char === "." ||
-      char === ":"
-    ) {
+    if (isAsciiDigitChar(char)) {
       return true;
     }
   }

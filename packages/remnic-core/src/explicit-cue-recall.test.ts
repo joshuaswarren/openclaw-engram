@@ -151,6 +151,10 @@ test("collectLexicalCues extracts visible ids, dates, and bracket labels", () =>
     ["chat_id=27", "chat-27"].sort((left, right) => left.localeCompare(right)),
   );
   assert.deepEqual(
+    collectBenchmarkAnchorCues("Using chat id 27 late-arriving evidence, who owns it?"),
+    ["chat_id=27", "chat-27"].sort((left, right) => left.localeCompare(right)),
+  );
+  assert.deepEqual(
     collectLexicalCues("What city does the user live in now?"),
     ["city", "now"],
   );
