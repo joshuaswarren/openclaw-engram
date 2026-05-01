@@ -518,21 +518,8 @@ export function collectTemporalLexicalCues(query: string): string[] {
   const cues = new Set<string>();
   const normalizedQuery = query.toLowerCase().replace(/\s+/g, " ");
   for (const cue of RELATIVE_TEMPORAL_CUES) {
-    let searchFrom = 0;
-    while (searchFrom < normalizedQuery.length) {
-      const index = normalizedQuery.indexOf(cue, searchFrom);
-      if (index < 0) {
-        break;
-      }
-      const afterIndex = index + cue.length;
-      if (
-        isTemporalCueBoundary(normalizedQuery[index - 1]) &&
-        isTemporalCueBoundary(normalizedQuery[afterIndex])
-      ) {
-        cues.add(cue);
-        break;
-      }
-      searchFrom = afterIndex;
+    if (containsBoundedPhrase(normalizedQuery, cue)) {
+      cues.add(cue);
     }
   }
   return [...cues].sort((left, right) => left.localeCompare(right));
