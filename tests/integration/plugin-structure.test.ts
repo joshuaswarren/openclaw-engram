@@ -121,8 +121,12 @@ test("plugin-hermes provider implements MemoryProvider protocol", () => {
   const provider = path.join(PACKAGES, "plugin-hermes", "remnic_hermes", "provider.py");
   assert.ok(fs.existsSync(provider));
   const content = fs.readFileSync(provider, "utf-8");
-  const requiredMethods = ["pre_llm_call", "sync_turn", "extract_memories", "shutdown", "initialize"];
-  for (const method of requiredMethods) {
+  const requiredSyncMethods = ["prefetch", "sync_turn", "shutdown", "initialize", "get_tool_schemas", "handle_tool_call"];
+  for (const method of requiredSyncMethods) {
+    assert.ok(content.includes(`def ${method}`), `Must implement ${method}()`);
+  }
+  const legacyAsyncMethods = ["pre_llm_call", "extract_memories"];
+  for (const method of legacyAsyncMethods) {
     assert.ok(content.includes(`async def ${method}`), `Must implement ${method}()`);
   }
 });
