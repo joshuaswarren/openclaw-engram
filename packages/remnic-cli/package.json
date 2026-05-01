@@ -1,6 +1,6 @@
 {
   "name": "@remnic/cli",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "CLI for Remnic memory — init, query, doctor, daemon management",
   "type": "module",
   "main": "dist/index.js",
@@ -41,7 +41,7 @@
     "@remnic/import-chatgpt": "^0.1.0",
     "@remnic/import-claude": "^0.1.0",
     "@remnic/import-gemini": "^0.1.0",
-    "@remnic/import-lossless-claw": "^0.1.0",
+    "@remnic/import-lossless-claw": "^0.1.1",
     "@remnic/import-mem0": "^0.1.0"
   },
   "peerDependenciesMeta": {
