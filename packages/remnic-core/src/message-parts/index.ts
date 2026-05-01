@@ -282,7 +282,9 @@ function inferSourceFormat(input: unknown): MessagePartSourceFormat | undefined 
     if (Array.isArray(obj.content)) return "anthropic";
   }
   if (Array.isArray(input)) {
-    return input.some((item) => isRecord(item) && isOpenAiResponseItem(item))
+    return input.some((item) =>
+      isRecord(item) && (isOpenAiResponseItem(item) || isOpenAiContentBlock(item))
+    )
       ? "openai"
       : "anthropic";
   }

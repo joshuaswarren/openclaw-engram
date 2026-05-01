@@ -66,14 +66,11 @@ describe("message-parts parsers", () => {
     assert.equal(parts[1]!.toolName, "apply_patch");
   });
 
-  it("parses top-level OpenAI content-block arrays", () => {
-    const parts = parseMessageParts(
-      [
-        { type: "output_text", text: "Updated src/auth.ts." },
-        { type: "output_text", text: "Read src/session.ts" },
-      ],
-      { sourceFormat: "openai" },
-    );
+  it("infers top-level OpenAI content-block arrays", () => {
+    const parts = parseMessageParts([
+      { type: "output_text", text: "Updated src/auth.ts." },
+      { type: "output_text", text: "Read src/session.ts" },
+    ]);
 
     assert.equal(parts.length, 2);
     assert.equal(parts[0]!.kind, "text");
