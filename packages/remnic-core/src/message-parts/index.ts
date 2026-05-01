@@ -508,12 +508,24 @@ function addFilePathCandidate(out: Set<string>, raw: string): void {
 function trimFilePathPunctuation(raw: string): string {
   let start = 0;
   let end = raw.length;
-  while (start < end && isTrimmedFilePathPunctuation(raw[start]!)) start += 1;
-  while (end > start && isTrimmedFilePathPunctuation(raw[end - 1]!)) end -= 1;
+  while (start < end && isLeadingFilePathPunctuation(raw[start]!)) start += 1;
+  while (end > start && isTrailingFilePathPunctuation(raw[end - 1]!)) end -= 1;
   return raw.slice(start, end);
 }
 
-function isTrimmedFilePathPunctuation(char: string): boolean {
+function isLeadingFilePathPunctuation(char: string): boolean {
+  return (
+    char === ":" ||
+    char === ";" ||
+    char === "!" ||
+    char === "?" ||
+    char === "|" ||
+    char === "*" ||
+    char === "="
+  );
+}
+
+function isTrailingFilePathPunctuation(char: string): boolean {
   return (
     char === "." ||
     char === ":" ||

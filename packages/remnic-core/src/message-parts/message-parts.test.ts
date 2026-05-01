@@ -78,6 +78,19 @@ describe("message-parts parsers", () => {
     assert.equal(parts[1]!.filePath, "src/session.ts");
   });
 
+  it("preserves leading dots in extracted file paths", () => {
+    const parts = parseMessageParts([
+      { type: "output_text", text: "Touched ./src/auth.ts." },
+      { type: "output_text", text: "Read ../src/session.ts." },
+      { type: "output_text", text: "Updated .github/workflows/ci.yml." },
+    ]);
+
+    assert.equal(parts.length, 3);
+    assert.equal(parts[0]!.filePath, "./src/auth.ts");
+    assert.equal(parts[1]!.filePath, "../src/session.ts");
+    assert.equal(parts[2]!.filePath, ".github/workflows/ci.yml");
+  });
+
   it("extracts Anthropic tool_use blocks as structured file writes", () => {
     const parts = parseAnthropicMessageParts({
       content: [
