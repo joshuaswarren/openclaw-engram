@@ -715,7 +715,13 @@ export class EngramAccessHttpServer {
       this.ensureWriteRateLimitAvailable();
       const response = await this.service.observe({
         sessionKey: body.sessionKey,
-        messages: body.messages,
+        messages: body.messages.map((message) => ({
+          role: message.role,
+          content: message.content,
+          sourceFormat: message.sourceFormat ?? undefined,
+          rawContent: message.rawContent ?? undefined,
+          parts: message.parts ?? undefined,
+        })),
         namespace: this.resolveNamespace(req, body.namespace),
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
         skipExtraction: body.skipExtraction === true,

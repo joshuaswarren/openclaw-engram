@@ -352,11 +352,7 @@ export function importLosslessClaw(
         continue;
       }
       const destMessageId = destRowIdByMessageId.get(sourcePart.message_id);
-      if (forWrite) {
-        if (!destMessageId || destMessageId < 0) {
-          result.messagePartsSkipped += 1;
-          continue;
-        }
+      if (destMessageId !== undefined && destMessageId >= 0) {
         if (blockedDestMessages.has(destMessageId)) {
           result.messagePartsSkipped += 1;
           continue;
@@ -371,6 +367,11 @@ export function importLosslessClaw(
           }
           seenDestMessages.add(destMessageId);
         }
+      } else if (forWrite) {
+        result.messagePartsSkipped += 1;
+        continue;
+      }
+      if (forWrite) {
         const mapped = mapLosslessMessagePart(sourcePart);
         insertPartStmt.run(
           destMessageId,

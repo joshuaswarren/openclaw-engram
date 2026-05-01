@@ -415,6 +415,34 @@ describe("importLosslessClaw — idempotency", () => {
       .get() as { n: number };
     assert.equal(total.n, 3);
   });
+
+  it("dry-run skips message_parts that already exist on destination messages", () => {
+    const seed = TWO_CONVS();
+    seed.messageParts = [
+      {
+        message_id: "m-a-2",
+        ordinal: 0,
+        kind: "file_write",
+        payload: JSON.stringify({ path: "src/auth.ts" }),
+        tool_name: "Edit",
+        file_path: "src/auth.ts",
+        created_at: "2026-04-01T00:00:01.500Z",
+      },
+    ];
+    const src = buildSourceDb(seed);
+    const dst = buildDestDb();
+
+    const first = importLosslessClaw({ sourceDb: src, destDb: dst });
+    const dry = importLosslessClaw({
+      sourceDb: src,
+      destDb: dst,
+      dryRun: true,
+    });
+
+    assert.equal(first.messagePartsInserted, 1);
+    assert.equal(dry.messagePartsInserted, 0);
+    assert.equal(dry.messagePartsSkipped, 1);
+  });
 });
 
 describe("importLosslessClaw — FTS sync", () => {

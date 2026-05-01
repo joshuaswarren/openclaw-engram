@@ -139,8 +139,9 @@ const messageSchema = z.object({
   content: z.string().min(1, "message content must be non-empty"),
   sourceFormat: z
     .enum(["openai", "anthropic", "openclaw", "lossless-claw", "remnic"])
+    .nullable()
     .optional(),
-  rawContent: z.unknown().optional(),
+  rawContent: z.unknown().nullable().optional(),
   parts: z
     .array(
       z.object({
@@ -166,6 +167,7 @@ const messageSchema = z.object({
         created_at: z.string().nullable().optional(),
       }),
     )
+    .nullable()
     .optional(),
 });
 
