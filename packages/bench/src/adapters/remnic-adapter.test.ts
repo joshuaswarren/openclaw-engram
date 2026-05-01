@@ -178,11 +178,11 @@ test("adapter recall front-loads exact step references from the session trace", 
       24_000,
     );
 
-    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /## Explicit Cue Evidence/);
     assert.match(recalled, /\[Action 8\]: move-8/);
     assert.match(recalled, /\[Observation 8\]: state-8/);
     assert.ok(
-      recalled.indexOf("## Exact session reference evidence") <
+      recalled.indexOf("## Explicit Cue Evidence") <
         recalled.indexOf("[Action 8]: move-8"),
     );
   } finally {
@@ -214,7 +214,7 @@ test("adapter recall recognizes plural multi-step reference prompts", async () =
       24_000,
     );
 
-    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /## Explicit Cue Evidence/);
     assert.match(recalled, /\[Action 8\]: move-8/);
     assert.match(recalled, /\[Observation 8\]: state-8/);
     assert.match(recalled, /\[Action 9\]: move-9/);
@@ -248,7 +248,7 @@ test("adapter recall preserves trailing references after a parsed step range", a
       24_000,
     );
 
-    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /## Explicit Cue Evidence/);
     assert.match(recalled, /\[Action 8\]: move-8/);
     assert.match(recalled, /\[Observation 10\]: state-10/);
     assert.match(recalled, /\[Action 12\]: move-12/);
@@ -282,7 +282,7 @@ test("adapter recall expands only the explicit range segment in mixed prompts", 
       24_000,
     );
 
-    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /## Explicit Cue Evidence/);
     assert.match(recalled, /\[Action 8\]: move-8/);
     assert.match(recalled, /\[Action 10\]: move-10/);
     assert.match(recalled, /\[Observation 13\]: state-13/);
@@ -316,7 +316,7 @@ test("adapter recall treats unicode dashes as step range separators", async () =
       24_000,
     );
 
-    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /## Explicit Cue Evidence/);
     assert.match(recalled, /\[Action 8\]: move-8/);
     assert.match(recalled, /\[Observation 9\]: state-9/);
     assert.match(recalled, /\[Action 10\]: move-10/);
@@ -349,7 +349,7 @@ test("adapter recall does not let stray labels consume later reference numbers",
       24_000,
     );
 
-    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /## Explicit Cue Evidence/);
     assert.match(recalled, /\[Action 8\]: move-8/);
     assert.match(recalled, /\[Observation 8\]: state-8/);
   } finally {
@@ -381,7 +381,7 @@ test("adapter recall maps turn references to direct and paired turn candidates",
       24_000,
     );
 
-    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /## Explicit Cue Evidence/);
     assert.match(recalled, /\[Action 4\]: move-4/);
     assert.match(recalled, /\[Action 8\]: move-8/);
     assert.match(recalled, /\[Observation 8\]: state-8/);
@@ -414,7 +414,7 @@ test("adapter recall preserves long explicit reference lists", async () => {
       24_000,
     );
 
-    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /## Explicit Cue Evidence/);
     assert.match(recalled, /\[Action 1\]: move-1/);
     assert.match(recalled, /\[Observation 8\]: state-8/);
     assert.match(recalled, /\[Action 12\]: move-12/);
@@ -448,7 +448,7 @@ test("adapter recall expands ranges up to the configured reference cap", async (
       32_000,
     );
 
-    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /## Explicit Cue Evidence/);
     assert.match(recalled, /\[Action 1\]: move-1/);
     assert.match(recalled, /\[Observation 12\]: state-12/);
     assert.match(recalled, /\[Action 20\]: move-20/);

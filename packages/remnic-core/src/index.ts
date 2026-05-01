@@ -50,6 +50,14 @@ export {
   type EvidencePackItem,
   type EvidencePackOptions,
 } from "./evidence-pack.js";
+export {
+  buildExplicitCueRecallSection,
+  collectExplicitTurnReferences,
+  collectLexicalCues,
+  type ExplicitCueRecallEngine,
+  type ExplicitCueRecallOptions,
+  type ExplicitTurnReference,
+} from "./explicit-cue-recall.js";
 
 // ---------------------------------------------------------------------------
 // Storage

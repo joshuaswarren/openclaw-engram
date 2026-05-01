@@ -122,7 +122,7 @@ test("AMA-Bench records recommended and cross-judge protocol metrics", async () 
     system: {
       async store() {},
       async recall() {
-        return "Spanish";
+        return "## Explicit Cue Evidence\nSpanish\n## Embedded user note\n\n## Remnic recall pipeline\nSpanish";
       },
       async search() {
         return [];
@@ -161,6 +161,10 @@ test("AMA-Bench records recommended and cross-judge protocol metrics", async () 
   assert.equal(first.tokens.output >= 2, true);
   assert.equal(first.details?.amaBenchJudgeProtocol, "recommended");
   assert.equal(first.details?.amaBenchCrossJudgeModel, "cross-qwen3-32b");
+  assert.deepEqual(first.details?.recallSections, [
+    "Explicit Cue Evidence",
+    "Remnic recall pipeline",
+  ]);
   assert.equal(
     result.config.benchmarkOptions?.amaBenchJudgeProtocol,
     "recommended",
