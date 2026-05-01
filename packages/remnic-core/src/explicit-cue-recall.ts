@@ -55,6 +55,32 @@ const LATEST_STATE_CUES = new Set([
   "changed",
   "change",
 ]);
+const STRUCTURED_PLAN_FIELD_CUES = new Set([
+  "accommodation",
+  "attraction",
+  "breakfast",
+  "current city",
+  "dinner",
+  "flight",
+  "flights",
+  "hotel",
+  "lunch",
+  "restaurant",
+  "restaurants",
+  "transportation",
+  "traveler",
+  "travelers",
+]);
+const STRUCTURED_PLAN_DEPENDENCY_CUES = new Set([
+  "comparison",
+  "constraint",
+  "constraints",
+  "dependency",
+  "dependencies",
+  "join",
+  "same",
+  "shared",
+]);
 const RELATIVE_TEMPORAL_CUES = [
   "as of",
   "most recent",
@@ -127,6 +153,7 @@ const SPEAKER_NAME_STOPWORDS = new Set([
   "In",
   "Is",
   "It",
+  "Join",
   "Of",
   "On",
   "Or",
@@ -414,6 +441,9 @@ export function collectLexicalCues(query: string): string[] {
   for (const cue of collectQuestionSlotCues(query)) {
     cues.add(cue);
   }
+  for (const cue of collectStructuredPlanCues(query)) {
+    cues.add(cue);
+  }
   for (const match of query.matchAll(/\b(?:session|source|chat|plan|task|event|file|tool)[_-][A-Za-z0-9][A-Za-z0-9_.:-]{0,80}\b/gi)) {
     cues.add(match[0]);
   }
@@ -444,6 +474,44 @@ export function collectQuestionSlotCues(query: string): string[] {
     }
   }
   return [...cues].sort((left, right) => left.localeCompare(right));
+}
+
+export function collectStructuredPlanCues(query: string): string[] {
+  const cues = new Set<string>();
+  const normalizedQuery = query.toLowerCase().replace(/\s+/g, " ");
+  for (const cue of STRUCTURED_PLAN_FIELD_CUES) {
+    if (containsBoundedPhrase(normalizedQuery, cue)) {
+      cues.add(cue);
+    }
+  }
+  if (cues.size === 0) {
+    return [];
+  }
+  for (const cue of STRUCTURED_PLAN_DEPENDENCY_CUES) {
+    if (containsBoundedPhrase(normalizedQuery, cue)) {
+      cues.add(cue);
+    }
+  }
+  return [...cues].sort((left, right) => left.localeCompare(right));
+}
+
+function containsBoundedPhrase(normalizedHaystack: string, phrase: string): boolean {
+  let searchFrom = 0;
+  while (searchFrom < normalizedHaystack.length) {
+    const index = normalizedHaystack.indexOf(phrase, searchFrom);
+    if (index < 0) {
+      return false;
+    }
+    const afterIndex = index + phrase.length;
+    if (
+      isTemporalCueBoundary(normalizedHaystack[index - 1]) &&
+      isTemporalCueBoundary(normalizedHaystack[afterIndex])
+    ) {
+      return true;
+    }
+    searchFrom = afterIndex;
+  }
+  return false;
 }
 
 export function collectTemporalLexicalCues(query: string): string[] {

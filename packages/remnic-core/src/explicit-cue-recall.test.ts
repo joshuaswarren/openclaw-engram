@@ -6,6 +6,7 @@ import {
   collectExplicitTurnReferences,
   collectLexicalCues,
   collectQuestionSlotCues,
+  collectStructuredPlanCues,
   collectTemporalLexicalCues,
   type ExplicitCueRecallEngine,
 } from "./explicit-cue-recall.js";
@@ -124,6 +125,18 @@ test("collectLexicalCues extracts visible ids, dates, and bracket labels", () =>
   assert.deepEqual(
     collectLexicalCues("What city does the user live in now?"),
     ["city", "now"],
+  );
+  assert.deepEqual(
+    collectStructuredPlanCues("Join Jennifer for the same dinner and accommodation."),
+    ["accommodation", "dinner", "join", "same"],
+  );
+  assert.deepEqual(
+    collectStructuredPlanCues("Join the same team meeting."),
+    [],
+  );
+  assert.deepEqual(
+    collectLexicalCues("Join Jennifer for the same dinner and accommodation."),
+    ["accommodation", "dinner", "Jennifer", "join", "same"],
   );
 });
 
@@ -265,6 +278,31 @@ test("buildExplicitCueRecallSection prioritizes latest state updates for current
     section.indexOf("city: Denver") < section.indexOf("city: Austin"),
     "latest matching state should appear before superseded history",
   );
+});
+
+test("buildExplicitCueRecallSection searches structured plan field cues", async () => {
+  const engine = new FakeCueEngine({
+    arena: [
+      {
+        role: "assistant",
+        content: [
+          "MemoryArena structured plan field anchors:",
+          "Day 1 dinner: Coco Bambu, Dallas",
+          "Day 1 accommodation: Central Stay, Dallas",
+        ].join("\n"),
+      },
+    ],
+  });
+
+  const section = await buildExplicitCueRecallSection({
+    engine,
+    sessionId: "arena",
+    query: "Join Jennifer for the same dinner and accommodation.",
+    maxChars: 2000,
+  });
+
+  assert.match(section, /Coco Bambu, Dallas/);
+  assert.match(section, /Central Stay, Dallas/);
 });
 
 test("buildExplicitCueRecallSection stays silent when disabled by budget or no cues", async () => {

@@ -255,11 +255,75 @@ test("runBenchmark seeds memory-arena group travel with the base traveler plan",
 
   const task = result.results.tasks[0]!;
   assert.match(task.actual, /initial finalized plan for Jennifer/);
+  assert.match(task.actual, /MemoryArena structured plan field anchors:/);
+  assert.match(task.actual, /Day 1 dinner: Coco Bambu, Dallas/);
+  assert.match(task.actual, /Day 1 accommodation: Central Stay, Dallas/);
   assert.match(String(task.details?.promptQuestion), /complete finalized plan/);
   assert.equal(task.scores.plan_field_recall, 1);
   assert.equal(task.scores.soft_process_score, 1);
   assert.equal(task.scores.process_score, 1);
   assert.equal(task.scores.task_success_rate, 1);
+});
+
+test("runBenchmark stores completed group-travel subtasks as structured dependency evidence", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-dependency-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("Day 1 Dinner: Coco Bambu, Dallas"),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: [
+        "I am Jennifer. Generate my finalized plan.",
+        "I am Eric. Join Jennifer for the same dinner.",
+      ],
+      answers: [
+        [
+          {
+            days: 1,
+            current_city: "-",
+            transportation: "-",
+            breakfast: "-",
+            attraction: "-",
+            lunch: "-",
+            dinner: "Coco Bambu, Dallas",
+            accommodation: "-",
+          },
+        ],
+        [
+          {
+            days: 1,
+            current_city: "-",
+            transportation: "-",
+            breakfast: "-",
+            attraction: "-",
+            lunch: "-",
+            dinner: "Coco Bambu, Dallas",
+            accommodation: "-",
+          },
+        ],
+      ],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.match(String(task.details?.recalledText), /completed subtask 1/);
+  assert.match(
+    String(task.details?.recalledText),
+    /MemoryArena structured plan field anchors:/,
+  );
+  assert.match(String(task.details?.recalledText), /Day 1 dinner: Coco Bambu, Dallas/);
+  assert.equal(task.scores.plan_field_recall, 1);
 });
 
 test("runBenchmark treats null memory-arena base traveler plans as absent", async () => {
