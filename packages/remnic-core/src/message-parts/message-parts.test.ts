@@ -44,6 +44,28 @@ describe("message-parts parsers", () => {
     assert.equal(parts[0]!.filePath, "src/config.ts");
   });
 
+  it("infers top-level OpenAI response item arrays before Anthropic arrays", () => {
+    const parts = parseMessageParts([
+      {
+        type: "message",
+        content: [{ type: "output_text", text: "Updated src/router.ts" }],
+      },
+      {
+        type: "function_call",
+        name: "apply_patch",
+        arguments: JSON.stringify({
+          patch: "*** Begin Patch\n*** Update File: src/router.ts\n*** End Patch",
+        }),
+      },
+    ]);
+
+    assert.equal(parts.length, 2);
+    assert.equal(parts[0]!.kind, "text");
+    assert.equal(parts[0]!.filePath, "src/router.ts");
+    assert.equal(parts[1]!.kind, "patch");
+    assert.equal(parts[1]!.toolName, "apply_patch");
+  });
+
   it("extracts Anthropic tool_use blocks as structured file writes", () => {
     const parts = parseAnthropicMessageParts({
       content: [
