@@ -54,6 +54,7 @@ export {
   buildExplicitCueRecallSection,
   collectExplicitTurnReferences,
   collectLexicalCues,
+  collectTemporalLexicalCues,
   type ExplicitCueRecallEngine,
   type ExplicitCueRecallOptions,
   type ExplicitTurnReference,

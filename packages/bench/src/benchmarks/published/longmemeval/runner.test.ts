@@ -43,14 +43,20 @@ test("LongMemEval runner wires the shared harness with per-item postAnswerHook",
     );
 
     let searchCalls = 0;
+    const storedSessions = new Map<string, string[]>();
     const result = await runLongMemEvalBenchmark({
       benchmark: longMemEvalDefinition,
       mode: "full",
       datasetDir: tempDir,
       system: {
-        async store() {},
-        async recall(_sessionId, _question) {
-          return "I live in Paris.";
+        async store(sessionId, messages) {
+          storedSessions.set(
+            sessionId,
+            messages.map((message) => message.content),
+          );
+        },
+        async recall(sessionId, _question) {
+          return (storedSessions.get(sessionId) ?? []).join("\n");
         },
         async search(_query, _limit) {
           searchCalls += 1;
@@ -102,6 +108,128 @@ test("LongMemEval runner wires the shared harness with per-item postAnswerHook",
       (task.details as Record<string, unknown>).questionType,
       "single-session-user",
     );
+    assert.equal(
+      storedSessions.get("s-1")?.[0],
+      "I live in Paris.",
+      "non-temporal questions should keep the original answer surface",
+    );
+    const audit = (task.details as Record<string, unknown>)
+      .temporalRecallAudit as Record<string, unknown>;
+    assert.deepEqual(audit.matchedSourceDates, []);
+    assert.equal(audit.answerSessionIdsUsedForRecall, false);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("LongMemEval runner preserves temporal source metadata without narrowing recall to gold sessions", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "remnic-lme-temporal-"));
+  try {
+    await writeFile(
+      path.join(tempDir, "longmemeval_oracle.json"),
+      JSON.stringify([
+        {
+          question_id: "temporal-1",
+          question_type: "multi-session-update",
+          question:
+            "As of 2025-02-01, what was the latest allergy update?",
+          answer: "shellfish",
+          question_date: "2025-02-02",
+          haystack_sessions: [
+            [
+              { role: "user", content: "My allergy is pollen." },
+              { role: "assistant", content: "I will remember pollen." },
+            ],
+            [
+              { role: "user", content: "Latest allergy update: shellfish." },
+              { role: "assistant", content: "I will remember shellfish." },
+            ],
+          ],
+          haystack_session_ids: ["old-session", "latest-session"],
+          haystack_dates: ["2025-01-01", "2025-02-01"],
+          answer_session_ids: ["latest-session"],
+        },
+      ]),
+      "utf8",
+    );
+
+    const storedSessions = new Map<string, string[]>();
+    const recallSessionIds: string[] = [];
+    const result = await runLongMemEvalBenchmark({
+      benchmark: longMemEvalDefinition,
+      mode: "full",
+      datasetDir: tempDir,
+      system: {
+        async store(sessionId, messages) {
+          storedSessions.set(
+            sessionId,
+            messages.map((message) => message.content),
+          );
+        },
+        async recall(sessionId, _question) {
+          recallSessionIds.push(sessionId);
+          return (storedSessions.get(sessionId) ?? []).join("\n");
+        },
+        async search(_query, _limit) {
+          return [
+            {
+              id: "latest",
+              text: storedSessions.get("latest-session")?.join("\n") ?? "",
+            },
+          ];
+        },
+        async reset() {},
+        async destroy() {},
+        async getStats() {
+          return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: 0 };
+        },
+        responder: {
+          async respond() {
+            return {
+              text: "shellfish",
+              tokens: { input: 1, output: 1 },
+              latencyMs: 1,
+              model: "smoke-responder",
+            };
+          },
+        },
+        judge: {
+          async score() {
+            return 1;
+          },
+          async scoreWithMetrics() {
+            return {
+              score: 1,
+              tokens: { input: 0, output: 0 },
+              latencyMs: 0,
+              model: "smoke-judge",
+            };
+          },
+        },
+      },
+    });
+
+    assert.deepEqual(recallSessionIds, ["old-session", "latest-session"]);
+    assert.match(
+      storedSessions.get("latest-session")?.[0] ?? "",
+      /^\[source_session: latest-session\] \[source_date: 2025-02-01\]/,
+    );
+
+    const task = result.results.tasks[0]!;
+    const audit = (task.details as Record<string, unknown>)
+      .temporalRecallAudit as Record<string, unknown>;
+    assert.deepEqual(audit.questionDates, ["2025-02-01"]);
+    assert.deepEqual(audit.temporalCues, ["as of", "latest"]);
+    assert.deepEqual(audit.matchedQuestionDates, ["2025-02-01"]);
+    assert.deepEqual(audit.matchedSourceDates, [
+      "2025-01-01",
+      "2025-02-01",
+    ]);
+    assert.deepEqual(audit.matchedSourceSessionIds, [
+      "old-session",
+      "latest-session",
+    ]);
+    assert.equal(audit.answerSessionIdsUsedForRecall, false);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

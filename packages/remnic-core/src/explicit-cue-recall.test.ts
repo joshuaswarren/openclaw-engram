@@ -5,6 +5,7 @@ import {
   buildExplicitCueRecallSection,
   collectExplicitTurnReferences,
   collectLexicalCues,
+  collectTemporalLexicalCues,
   type ExplicitCueRecallEngine,
 } from "./explicit-cue-recall.js";
 
@@ -107,6 +108,14 @@ test("collectLexicalCues extracts visible ids, dates, and bracket labels", () =>
     collectLexicalCues("Were Maya Chen and Jordan aligned?"),
     ["Jordan", "Maya Chen"],
   );
+  assert.deepEqual(
+    collectTemporalLexicalCues("As of 2025-02-01, what changed yesterday?"),
+    ["as of", "changed", "yesterday"],
+  );
+  assert.deepEqual(
+    collectLexicalCues("As of 2025-02-01, what changed yesterday?"),
+    ["2025-02-01", "as of", "changed", "yesterday"],
+  );
 });
 
 test("buildExplicitCueRecallSection expands paired action and observation references", async () => {
@@ -202,6 +211,27 @@ test("buildExplicitCueRecallSection searches query-visible speaker names", async
 
   assert.match(section, /Maya Chen/);
   assert.match(section, /2022/);
+});
+
+test("buildExplicitCueRecallSection searches explicit temporal cues", async () => {
+  const engine = new FakeCueEngine({
+    old: [{ role: "user", content: "[date: 2025-01-01] allergy: pollen" }],
+    latest: [
+      {
+        role: "user",
+        content: "[date: 2025-02-01] latest allergy update: shellfish",
+      },
+    ],
+  });
+
+  const section = await buildExplicitCueRecallSection({
+    engine,
+    query: "As of 2025-02-01, what was the latest allergy update?",
+    maxChars: 2000,
+  });
+
+  assert.match(section, /2025-02-01/);
+  assert.match(section, /shellfish/);
 });
 
 test("buildExplicitCueRecallSection stays silent when disabled by budget or no cues", async () => {
