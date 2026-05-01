@@ -96,6 +96,26 @@ type OrchestratorTeardownView = {
 };
 
 const BENCH_TEARDOWN_DEFERRED_READY_WAIT_MS = 500;
+const EXACT_REFERENCE_MAX_CHARS = 18_000;
+const EXACT_REFERENCE_MAX_ITEM_CHARS = 2_400;
+const EXACT_REFERENCE_MAX_NUMBERS = 24;
+const EXACT_REFERENCE_SCAN_TOKEN_LIMIT = EXACT_REFERENCE_MAX_NUMBERS * 3;
+const EXACT_REFERENCE_WINDOW_RADIUS = 0;
+
+type BenchLcmExpansionEngine = {
+  getStats(sessionId?: string): Promise<{ totalMessages: number }>;
+  expandContext(
+    sessionId: string,
+    fromTurn: number,
+    toTurn: number,
+    maxTokens: number,
+  ): Promise<Array<{ turn_index: number; role: string; content: string }>>;
+};
+
+type ExplicitSessionReference = {
+  number: number;
+  includeDirectTurn: boolean;
+};
 
 function cloneBenchConfig(config: Record<string, unknown>): Record<string, unknown> {
   return cloneBenchConfigValue(config) as Record<string, unknown>;
@@ -306,8 +326,25 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
         const sections: string[] = [];
         let usedChars = 0;
 
+        const exactReferenceEvidence = await buildExactSessionReferenceEvidence(
+          engine,
+          sessionId,
+          query,
+          Math.min(EXACT_REFERENCE_MAX_CHARS, Math.floor(budget * 0.4)),
+        );
+        if (exactReferenceEvidence) {
+          sections.push(exactReferenceEvidence);
+          usedChars += exactReferenceEvidence.length;
+        }
+
         if (useCoreMemoryPipeline) {
-          const coreBudget = Math.max(0, Math.floor(budget * 0.55));
+          const coreBudget = Math.max(
+            0,
+            Math.min(
+              Math.floor(budget * 0.55),
+              Math.floor((budget - usedChars) * 0.7),
+            ),
+          );
           const coreRecall = await state.orchestrator.recall(query, sessionId, {
             budgetCharsOverride: coreBudget,
             mode: "full",
@@ -323,7 +360,7 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
           const remainingAfterCore = Math.max(0, budget - usedChars);
           const searchBudget = useCoreMemoryPipeline
             ? Math.max(0, Math.floor(remainingAfterCore * 0.75))
-            : Math.max(0, Math.floor(budget * 0.7));
+            : Math.max(0, Math.floor(remainingAfterCore * 0.7));
           const searchLimit = Math.max(6, Math.min(18, Math.floor(budget / 2_000)));
           const searchResults = await engine.searchContextFull(
             query,
@@ -548,4 +585,299 @@ function nextBenchTranscriptTurnId(
     .digest("hex")
     .slice(0, 16);
   return `bench-${index}-${digest}`;
+}
+
+async function buildExactSessionReferenceEvidence(
+  engine: BenchLcmExpansionEngine,
+  sessionId: string,
+  query: string,
+  maxChars: number,
+): Promise<string> {
+  if (maxChars <= 0 || !query.trim()) {
+    return "";
+  }
+
+  const references = collectExplicitSessionReferences(query);
+  if (references.length === 0) {
+    return "";
+  }
+
+  const stats = await engine.getStats(sessionId);
+  if (stats.totalMessages <= 0) {
+    return "";
+  }
+
+  const windows = new Map<string, { fromTurn: number; toTurn: number }>();
+  for (const reference of references.slice(0, EXACT_REFERENCE_MAX_NUMBERS)) {
+    for (const center of candidateTurnIndexesForReference(reference)) {
+      if (center < 0 || center >= stats.totalMessages) {
+        continue;
+      }
+
+      const fromTurn = Math.max(0, center - EXACT_REFERENCE_WINDOW_RADIUS);
+      const toTurn = Math.min(
+        stats.totalMessages - 1,
+        center + EXACT_REFERENCE_WINDOW_RADIUS,
+      );
+      windows.set(`${fromTurn}:${toTurn}`, { fromTurn, toTurn });
+    }
+  }
+
+  const evidenceItems: Array<{
+    id: string;
+    sessionId: string;
+    turnIndex: number;
+    role: string;
+    content: string;
+  }> = [];
+  const seenTurns = new Set<string>();
+
+  for (const window of [...windows.values()].sort(
+    (left, right) => left.fromTurn - right.fromTurn || left.toTurn - right.toTurn,
+  )) {
+    const expanded = await engine.expandContext(
+      sessionId,
+      window.fromTurn,
+      window.toTurn,
+      2_000,
+    );
+
+    for (const message of expanded) {
+      const id = `${sessionId}:${message.turn_index}`;
+      if (seenTurns.has(id)) {
+        continue;
+      }
+      seenTurns.add(id);
+      evidenceItems.push({
+        id,
+        sessionId,
+        turnIndex: message.turn_index,
+        role: message.role,
+        content: message.content,
+      });
+    }
+  }
+
+  return buildEvidencePack(evidenceItems, {
+    title: "Exact session reference evidence",
+    maxChars,
+    maxItemChars: EXACT_REFERENCE_MAX_ITEM_CHARS,
+  });
+}
+
+function collectExplicitSessionReferences(query: string): ExplicitSessionReference[] {
+  const references = new Map<string, ExplicitSessionReference>();
+  const addReference = (value: string | undefined, label: string) => {
+    if (value === undefined) return;
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isInteger(parsed) && parsed >= 0) {
+      const existing = references.get(String(parsed));
+      references.set(String(parsed), {
+        number: parsed,
+        includeDirectTurn:
+          (existing?.includeDirectTurn ?? false) || label === "turn",
+      });
+    }
+  };
+
+  const tokens = tokenizeReferenceQuery(query);
+  for (let index = 0; index < tokens.length; index += 1) {
+    const label = normalizeReferenceLabel(tokens[index]);
+    if (!label) {
+      continue;
+    }
+
+    const parsed = parseReferenceNumbers(tokens, index + 1);
+    for (const number of parsed.numbers) {
+      addReference(String(number), label);
+    }
+    index = Math.max(index, parsed.nextIndex - 1);
+  }
+
+  return [...references.values()].sort((left, right) => left.number - right.number);
+}
+
+function tokenizeReferenceQuery(query: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+
+  const flushCurrent = () => {
+    if (current) {
+      tokens.push(current);
+      current = "";
+    }
+  };
+
+  for (const char of query) {
+    if (isAsciiLetterOrDigit(char)) {
+      current += char;
+    } else {
+      flushCurrent();
+      if (char === "#" || char === ",") {
+        tokens.push(char);
+      } else if (isReferenceDash(char)) {
+        tokens.push("-");
+      }
+    }
+  }
+  flushCurrent();
+
+  return tokens;
+}
+
+function parseReferenceNumbers(
+  tokens: readonly string[],
+  startIndex: number,
+): { numbers: number[]; nextIndex: number } {
+  const numbers: number[] = [];
+  let lastNumber: number | undefined;
+  let pendingRangeStart: number | undefined;
+  let index = startIndex;
+  const scanEnd = Math.min(
+    tokens.length,
+    startIndex + EXACT_REFERENCE_SCAN_TOKEN_LIMIT,
+  );
+
+  for (; index < scanEnd; index += 1) {
+    const token = tokens[index]!;
+    const normalized = token.toLowerCase();
+    const value = parseNonNegativeIntegerToken(token);
+    if (value !== undefined) {
+      if (pendingRangeStart !== undefined) {
+        numbers.push(...expandReferenceRange(pendingRangeStart, value));
+        pendingRangeStart = undefined;
+      } else {
+        numbers.push(value);
+      }
+      lastNumber = value;
+      continue;
+    }
+
+    if (normalized === "#" || normalized === "number" || normalized === ",") {
+      continue;
+    }
+
+    if (
+      normalized === "-" ||
+      normalized === "to" ||
+      normalized === "through" ||
+      normalized === "thru"
+    ) {
+      if (lastNumber !== undefined) {
+        if (numbers[numbers.length - 1] === lastNumber) {
+          numbers.pop();
+        }
+        pendingRangeStart = lastNumber;
+      }
+      continue;
+    }
+
+    if (normalized === "and" && numbers.length > 0) {
+      continue;
+    }
+
+    if (normalizeReferenceLabel(token)) {
+      break;
+    }
+
+    break;
+  }
+
+  if (pendingRangeStart !== undefined) {
+    numbers.push(pendingRangeStart);
+  }
+
+  return {
+    numbers: dedupeReferenceNumbers(numbers),
+    nextIndex: index,
+  };
+}
+
+function dedupeReferenceNumbers(numbers: readonly number[]): number[] {
+  return [...new Set(numbers)];
+}
+
+function expandReferenceRange(start: number, end: number): number[] {
+  const low = Math.min(start, end);
+  const high = Math.max(start, end);
+  if (high - low + 1 > EXACT_REFERENCE_MAX_NUMBERS) {
+    return [start, end];
+  }
+
+  const values: number[] = [];
+  for (let value = low; value <= high; value += 1) {
+    values.push(value);
+  }
+  return values;
+}
+
+function normalizeReferenceLabel(token: string | undefined): string | undefined {
+  const normalized = token?.toLowerCase();
+  switch (normalized) {
+    case "step":
+    case "steps":
+      return "step";
+    case "turn":
+    case "turns":
+      return "turn";
+    case "action":
+    case "actions":
+      return "action";
+    case "observation":
+    case "observations":
+      return "observation";
+    default:
+      return undefined;
+  }
+}
+
+function parseNonNegativeIntegerToken(token: string): number | undefined {
+  if (token.length === 0) {
+    return undefined;
+  }
+
+  let value = 0;
+  for (const char of token) {
+    const code = char.charCodeAt(0);
+    if (code < 48 || code > 57) {
+      return undefined;
+    }
+    value = value * 10 + (code - 48);
+  }
+  return value;
+}
+
+function isAsciiLetterOrDigit(char: string): boolean {
+  const code = char.charCodeAt(0);
+  return (code >= 48 && code <= 57)
+    || (code >= 65 && code <= 90)
+    || (code >= 97 && code <= 122);
+}
+
+function isReferenceDash(char: string): boolean {
+  return char === "-"
+    || char === "\u2010"
+    || char === "\u2011"
+    || char === "\u2012"
+    || char === "\u2013"
+    || char === "\u2014"
+    || char === "\u2015";
+}
+
+function candidateTurnIndexesForReference(
+  reference: ExplicitSessionReference,
+): number[] {
+  const candidates = new Set<number>();
+  if (reference.includeDirectTurn) {
+    for (let offset = -1; offset <= 1; offset += 1) {
+      candidates.add(reference.number + offset);
+    }
+  }
+
+  const pairedBase = reference.number * 2;
+  for (let offset = -2; offset <= 3; offset += 1) {
+    candidates.add(pairedBase + offset);
+  }
+
+  return [...candidates].sort((left, right) => left - right);
 }

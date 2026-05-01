@@ -154,6 +154,309 @@ test("direct adapter recall expands search hits with adjacent stored results", a
   }
 });
 
+test("adapter recall front-loads exact step references from the session trace", async () => {
+  const adapter = await createRemnicAdapter();
+
+  try {
+    const messages = Array.from({ length: 12 }, (_, index) => [
+      {
+        role: "user" as const,
+        content: `[Action ${index}]: move-${index}`,
+      },
+      {
+        role: "assistant" as const,
+        content: `[Observation ${index}]: state-${index}`,
+      },
+    ]).flat();
+
+    await adapter.store("ama-session", messages);
+    await adapter.drain?.();
+
+    const recalled = await adapter.recall(
+      "ama-session",
+      "At Step 8, why did the agent's action matter?",
+      24_000,
+    );
+
+    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /\[Action 8\]: move-8/);
+    assert.match(recalled, /\[Observation 8\]: state-8/);
+    assert.ok(
+      recalled.indexOf("## Exact session reference evidence") <
+        recalled.indexOf("[Action 8]: move-8"),
+    );
+  } finally {
+    await adapter.destroy();
+  }
+});
+
+test("adapter recall recognizes plural multi-step reference prompts", async () => {
+  const adapter = await createRemnicAdapter();
+
+  try {
+    const messages = Array.from({ length: 12 }, (_, index) => [
+      {
+        role: "user" as const,
+        content: `[Action ${index}]: move-${index}`,
+      },
+      {
+        role: "assistant" as const,
+        content: `[Observation ${index}]: state-${index}`,
+      },
+    ]).flat();
+
+    await adapter.store("ama-session", messages);
+    await adapter.drain?.();
+
+    const recalled = await adapter.recall(
+      "ama-session",
+      "Compare steps 8 and 9 before answering.",
+      24_000,
+    );
+
+    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /\[Action 8\]: move-8/);
+    assert.match(recalled, /\[Observation 8\]: state-8/);
+    assert.match(recalled, /\[Action 9\]: move-9/);
+    assert.match(recalled, /\[Observation 9\]: state-9/);
+  } finally {
+    await adapter.destroy();
+  }
+});
+
+test("adapter recall preserves trailing references after a parsed step range", async () => {
+  const adapter = await createRemnicAdapter();
+
+  try {
+    const messages = Array.from({ length: 14 }, (_, index) => [
+      {
+        role: "user" as const,
+        content: `[Action ${index}]: move-${index}`,
+      },
+      {
+        role: "assistant" as const,
+        content: `[Observation ${index}]: state-${index}`,
+      },
+    ]).flat();
+
+    await adapter.store("ama-session", messages);
+    await adapter.drain?.();
+
+    const recalled = await adapter.recall(
+      "ama-session",
+      "Compare steps 8-10 and 12 before answering.",
+      24_000,
+    );
+
+    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /\[Action 8\]: move-8/);
+    assert.match(recalled, /\[Observation 10\]: state-10/);
+    assert.match(recalled, /\[Action 12\]: move-12/);
+    assert.match(recalled, /\[Observation 12\]: state-12/);
+  } finally {
+    await adapter.destroy();
+  }
+});
+
+test("adapter recall expands only the explicit range segment in mixed prompts", async () => {
+  const adapter = await createRemnicAdapter();
+
+  try {
+    const messages = Array.from({ length: 16 }, (_, index) => [
+      {
+        role: "user" as const,
+        content: `[Action ${index}]: move-${index}`,
+      },
+      {
+        role: "assistant" as const,
+        content: `[Observation ${index}]: state-${index}`,
+      },
+    ]).flat();
+
+    await adapter.store("ama-session", messages);
+    await adapter.drain?.();
+
+    const recalled = await adapter.recall(
+      "ama-session",
+      "Compare steps 8 and 10-15 before answering.",
+      24_000,
+    );
+
+    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /\[Action 8\]: move-8/);
+    assert.match(recalled, /\[Action 10\]: move-10/);
+    assert.match(recalled, /\[Observation 13\]: state-13/);
+    assert.match(recalled, /\[Observation 15\]: state-15/);
+  } finally {
+    await adapter.destroy();
+  }
+});
+
+test("adapter recall treats unicode dashes as step range separators", async () => {
+  const adapter = await createRemnicAdapter();
+
+  try {
+    const messages = Array.from({ length: 12 }, (_, index) => [
+      {
+        role: "user" as const,
+        content: `[Action ${index}]: move-${index}`,
+      },
+      {
+        role: "assistant" as const,
+        content: `[Observation ${index}]: state-${index}`,
+      },
+    ]).flat();
+
+    await adapter.store("ama-session", messages);
+    await adapter.drain?.();
+
+    const recalled = await adapter.recall(
+      "ama-session",
+      "Compare steps 8\u201310 before answering.",
+      24_000,
+    );
+
+    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /\[Action 8\]: move-8/);
+    assert.match(recalled, /\[Observation 9\]: state-9/);
+    assert.match(recalled, /\[Action 10\]: move-10/);
+  } finally {
+    await adapter.destroy();
+  }
+});
+
+test("adapter recall does not let stray labels consume later reference numbers", async () => {
+  const adapter = await createRemnicAdapter();
+
+  try {
+    const messages = Array.from({ length: 10 }, (_, index) => [
+      {
+        role: "user" as const,
+        content: `[Action ${index}]: move-${index}`,
+      },
+      {
+        role: "assistant" as const,
+        content: `[Observation ${index}]: state-${index}`,
+      },
+    ]).flat();
+
+    await adapter.store("ama-session", messages);
+    await adapter.drain?.();
+
+    const recalled = await adapter.recall(
+      "ama-session",
+      "Think step by step. Turn 8 is relevant.",
+      24_000,
+    );
+
+    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /\[Action 8\]: move-8/);
+    assert.match(recalled, /\[Observation 8\]: state-8/);
+  } finally {
+    await adapter.destroy();
+  }
+});
+
+test("adapter recall maps turn references to direct and paired turn candidates", async () => {
+  const adapter = await createRemnicAdapter();
+
+  try {
+    const messages = Array.from({ length: 10 }, (_, index) => [
+      {
+        role: "user" as const,
+        content: `[Action ${index}]: move-${index}`,
+      },
+      {
+        role: "assistant" as const,
+        content: `[Observation ${index}]: state-${index}`,
+      },
+    ]).flat();
+
+    await adapter.store("ama-session", messages);
+    await adapter.drain?.();
+
+    const recalled = await adapter.recall(
+      "ama-session",
+      "Turn 8 is relevant.",
+      24_000,
+    );
+
+    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /\[Action 4\]: move-4/);
+    assert.match(recalled, /\[Action 8\]: move-8/);
+    assert.match(recalled, /\[Observation 8\]: state-8/);
+  } finally {
+    await adapter.destroy();
+  }
+});
+
+test("adapter recall preserves long explicit reference lists", async () => {
+  const adapter = await createRemnicAdapter();
+
+  try {
+    const messages = Array.from({ length: 18 }, (_, index) => [
+      {
+        role: "user" as const,
+        content: `[Action ${index}]: move-${index}`,
+      },
+      {
+        role: "assistant" as const,
+        content: `[Observation ${index}]: state-${index}`,
+      },
+    ]).flat();
+
+    await adapter.store("ama-session", messages);
+    await adapter.drain?.();
+
+    const recalled = await adapter.recall(
+      "ama-session",
+      "Compare steps 1,2,3,4,5,6,7,8,9,10,11,12 before answering.",
+      24_000,
+    );
+
+    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /\[Action 1\]: move-1/);
+    assert.match(recalled, /\[Observation 8\]: state-8/);
+    assert.match(recalled, /\[Action 12\]: move-12/);
+    assert.match(recalled, /\[Observation 12\]: state-12/);
+  } finally {
+    await adapter.destroy();
+  }
+});
+
+test("adapter recall expands ranges up to the configured reference cap", async () => {
+  const adapter = await createRemnicAdapter();
+
+  try {
+    const messages = Array.from({ length: 22 }, (_, index) => [
+      {
+        role: "user" as const,
+        content: `[Action ${index}]: move-${index}`,
+      },
+      {
+        role: "assistant" as const,
+        content: `[Observation ${index}]: state-${index}`,
+      },
+    ]).flat();
+
+    await adapter.store("ama-session", messages);
+    await adapter.drain?.();
+
+    const recalled = await adapter.recall(
+      "ama-session",
+      "Compare steps 1-20 before answering.",
+      32_000,
+    );
+
+    assert.match(recalled, /## Exact session reference evidence/);
+    assert.match(recalled, /\[Action 1\]: move-1/);
+    assert.match(recalled, /\[Observation 12\]: state-12/);
+    assert.match(recalled, /\[Action 20\]: move-20/);
+  } finally {
+    await adapter.destroy();
+  }
+});
+
 test("runtime-backed adapter stores benchmark turns into Remnic recall surfaces", async () => {
   const adapter = await createRemnicAdapter({
     configOverrides: {
