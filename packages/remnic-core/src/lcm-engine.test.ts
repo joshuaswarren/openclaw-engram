@@ -338,7 +338,7 @@ test("observeMessages stores structured message parts and file-aware recall find
 
     const matches = await engine.searchStructuredParts(
       "session-1",
-      "what changed in src/auth.ts",
+      "what changed in src/auth.ts.",
     );
 
     assert.equal(matches.length, 1);

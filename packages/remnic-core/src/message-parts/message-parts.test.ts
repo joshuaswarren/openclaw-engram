@@ -66,6 +66,21 @@ describe("message-parts parsers", () => {
     assert.equal(parts[1]!.toolName, "apply_patch");
   });
 
+  it("parses top-level OpenAI content-block arrays", () => {
+    const parts = parseMessageParts(
+      [
+        { type: "output_text", text: "Updated src/auth.ts." },
+        { type: "output_text", text: "Read src/session.ts" },
+      ],
+      { sourceFormat: "openai" },
+    );
+
+    assert.equal(parts.length, 2);
+    assert.equal(parts[0]!.kind, "text");
+    assert.equal(parts[0]!.filePath, "src/auth.ts");
+    assert.equal(parts[1]!.filePath, "src/session.ts");
+  });
+
   it("extracts Anthropic tool_use blocks as structured file writes", () => {
     const parts = parseAnthropicMessageParts({
       content: [

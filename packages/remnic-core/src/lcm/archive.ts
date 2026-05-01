@@ -507,8 +507,8 @@ function splitQueryTerms(query: string): string[] {
 }
 
 function trimStructuredQueryTerm(raw: string): string {
-  const leading = new Set(["`", "'", "\""]);
-  const trailing = new Set(["`", "'", "\"", ",", "?", ":", ";", ")"]);
+  const leading = new Set(["`", "'", "\"", "(", "[", "{"]);
+  const trailing = new Set(["`", "'", "\"", ",", ".", "?", "!", ":", ";", ")", "]", "}"]);
   let start = 0;
   let end = raw.length;
   while (start < end && leading.has(raw[start]!)) start += 1;

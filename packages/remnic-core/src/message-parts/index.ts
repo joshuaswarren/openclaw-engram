@@ -132,6 +132,11 @@ export function parseOpenAiMessageParts(
   for (const item of items) {
     const type = asNonEmptyString(item.type) ?? asNonEmptyString(item.kind);
     if (!type) continue;
+    if (isOpenAiContentBlock(item)) {
+      const text = asNonEmptyString(item.text ?? item.content);
+      if (text) parts.push(makePart("text", { type, text }, { filePath: firstFilePath(text) }));
+      continue;
+    }
     if (type === "message") {
       for (const block of gatherContentBlocks(item.content)) {
         const text = asNonEmptyString(block.text ?? block.content);
