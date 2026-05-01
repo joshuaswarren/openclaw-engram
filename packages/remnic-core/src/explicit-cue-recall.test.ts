@@ -136,6 +136,12 @@ test("collectLexicalCues extracts visible ids, dates, and bracket labels", () =>
   );
   assert.deepEqual(
     collectLexicalCues("Join Jennifer for the same dinner and accommodation."),
+    ["Jennifer"],
+  );
+  assert.deepEqual(
+    collectLexicalCues("Join Jennifer for the same dinner and accommodation.", {
+      includeStructuredPlanCues: true,
+    }),
     ["accommodation", "dinner", "Jennifer", "join", "same"],
   );
 });
@@ -299,6 +305,7 @@ test("buildExplicitCueRecallSection searches structured plan field cues", async 
     sessionId: "arena",
     query: "Join Jennifer for the same dinner and accommodation.",
     maxChars: 2000,
+    includeStructuredPlanCues: true,
   });
 
   assert.match(section, /Coco Bambu, Dallas/);

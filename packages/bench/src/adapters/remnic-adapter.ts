@@ -321,6 +321,7 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
           maxChars: Math.min(CORE_EXPLICIT_CUE_MAX_CHARS, Math.floor(budget * 0.4)),
           maxItemChars: CORE_EXPLICIT_CUE_MAX_ITEM_CHARS,
           maxReferences: CORE_EXPLICIT_CUE_MAX_REFERENCES,
+          includeStructuredPlanCues: sessionId.startsWith("arena-"),
         });
         if (exactReferenceEvidence) {
           sections.push(exactReferenceEvidence);

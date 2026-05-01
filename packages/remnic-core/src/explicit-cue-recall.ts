@@ -29,6 +29,7 @@ export interface ExplicitCueRecallOptions {
   maxChars: number;
   maxItemChars?: number;
   maxReferences?: number;
+  includeStructuredPlanCues?: boolean;
 }
 
 export type ExplicitTurnReference = {
@@ -233,6 +234,7 @@ export async function buildExplicitCueRecallSection(
     sessionId: options.sessionId,
     query,
     maxReferences,
+    includeStructuredPlanCues: options.includeStructuredPlanCues,
     evidenceItems,
     seenTurns,
   });
@@ -309,6 +311,7 @@ async function collectLexicalCueEvidence(options: {
   sessionId?: string;
   query: string;
   maxReferences: number;
+  includeStructuredPlanCues?: boolean;
   evidenceItems: Array<{
     id: string;
     sessionId: string;
@@ -319,7 +322,9 @@ async function collectLexicalCueEvidence(options: {
   }>;
   seenTurns: Set<string>;
 }): Promise<void> {
-  const cues = collectLexicalCues(options.query).slice(0, options.maxReferences);
+  const cues = collectLexicalCues(options.query, {
+    includeStructuredPlanCues: options.includeStructuredPlanCues,
+  }).slice(0, options.maxReferences);
   const preferLatest = hasLatestStateIntent(options.query);
   for (const cue of cues) {
     const results = sortLexicalCueResults(
@@ -426,7 +431,10 @@ export function collectExplicitTurnReferences(
   return [...references.values()].sort((left, right) => left.number - right.number);
 }
 
-export function collectLexicalCues(query: string): string[] {
+export function collectLexicalCues(
+  query: string,
+  options: { includeStructuredPlanCues?: boolean } = {},
+): string[] {
   const cues = new Set<string>();
 
   for (const match of query.matchAll(/\b[A-Za-z][A-Za-z0-9]{0,12}\d+:\d+\b/g)) {
@@ -441,8 +449,10 @@ export function collectLexicalCues(query: string): string[] {
   for (const cue of collectQuestionSlotCues(query)) {
     cues.add(cue);
   }
-  for (const cue of collectStructuredPlanCues(query)) {
-    cues.add(cue);
+  if (options.includeStructuredPlanCues) {
+    for (const cue of collectStructuredPlanCues(query)) {
+      cues.add(cue);
+    }
   }
   for (const match of query.matchAll(/\b(?:session|source|chat|plan|task|event|file|tool)[_-][A-Za-z0-9][A-Za-z0-9_.:-]{0,80}\b/gi)) {
     cues.add(match[0]);
