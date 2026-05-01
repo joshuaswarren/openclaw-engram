@@ -1,35 +1,35 @@
 # Remnic published-benchmark runbook
 
-This runbook documents how to produce the LongMemEval-S + LoCoMo-10 numbers
-published at <https://remnic.ai/benchmarks>. It is the human-executable
-companion to issue #566 slice 6. Every step must be runnable from a fresh
-clone on a machine with appropriate API keys; nothing auto-runs on CI.
+This runbook documents how to produce full published benchmark numbers
+for Remnic and publish them to <https://remnic.ai/benchmarks>. It covers
+the full `@remnic/bench` published registry: `ama-bench`,
+`memory-arena`, `amemgym`, `longmemeval`, `locomo`, `beam`,
+`personamem`, `memoryagentbench`, and `membench`.
+
+Every step must be runnable from a fresh clone on a machine with
+appropriate API keys; nothing auto-runs on CI.
 
 > **Do not commit real user data.** The repository is public. Only the
 > runner aggregates + per-task scores land in `docs/benchmarks/results/`.
 > Never commit raw dataset files, API keys, or intermediate LLM traces.
 
-> **Dependencies on sibling slices of #566.** The helper scripts
-> referenced below
-> (`scripts/bench/fetch-datasets.sh`,
-> `scripts/bench/verify-artifact.ts`) land in
-> [PR 1 (#580)](https://github.com/joshuaswarren/remnic/pull/580) and
-> [PR 3 (#581)](https://github.com/joshuaswarren/remnic/pull/581)
-> respectively. A dedicated `remnic bench published` subcommand with
-> `--name` / `--dataset` / `--model` / `--seed` / `--limit` is planned
-> for PR 4 (#566 slice 4) and is not shipped yet. Until then, drive
-> the runners via the current `remnic bench run <id>` + `--dataset-dir`
-> CLI surface as shown below.
+> **Leaderboard safety.** Issues #841 through #850 hardened the
+> published runners so exact cue recall uses user-visible or
+> stored-in-memory evidence only. Hidden gold metadata remains reserved
+> for scoring and reporting.
 
 ## 1. Prerequisites
 
 - Node.js ≥ 22.12.0 and `pnpm` 10+.
-- `huggingface-cli` (install via `pipx install "huggingface_hub[cli]"` or
-  `brew install huggingface-cli`). LongMemEval and LoCoMo download from
-  HuggingFace datasets.
-- An OpenAI API key for the cloud run, exposed as `OPENAI_API_KEY`.
-- For the local-LLM parity run (slice 5, future): a local llama.cpp or
-  vLLM server already serving a model at an `http(s)://...` URL.
+- Dataset access for every benchmark you plan to run. Some datasets are
+  script-managed through `remnic bench datasets download`; others are
+  manual because their upstream projects require separate acceptance or
+  credentials.
+- A provider key or endpoint for the system model and judge model.
+  Supported provider flags include OpenAI-compatible, Ollama, and
+  local-LLM endpoints depending on the runtime profile.
+- A dedicated benchmark memory directory. Do not point full benchmark
+  runs at a production Remnic memory store.
 
 ## 2. One-time setup
 
@@ -44,77 +44,82 @@ pnpm --filter @remnic/cli run build
 # `packages/remnic-cli/bin` to your PATH for the duration of the run.
 alias remnic='pnpm --filter @remnic/cli exec remnic'
 
-# Print the HuggingFace download commands for the published datasets.
-# The script does NOT auto-download; copy-paste the commands it prints.
-scripts/bench/fetch-datasets.sh --target ./bench-datasets
+# Inspect available benchmark ids and managed dataset status.
+pnpm --filter @remnic/cli exec remnic bench list
+pnpm --filter @remnic/cli exec remnic bench datasets status
 ```
 
-Expected layout after following the printed commands:
+Suggested local dataset layout:
 
 ```
 bench-datasets/
+  ama-bench/
+  memory-arena/
+  amemgym/
   longmemeval/
     longmemeval_oracle.json          # preferred
     longmemeval_s_cleaned.json       # optional alternate
   locomo/
     locomo10.json                    # preferred
+  beam/
+  personamem/
+  memoryagentbench/
+  membench/
 ```
 
 `bench-datasets/` is gitignored. Never commit it.
 
-## 3. Run LongMemEval-S on gpt-4o-mini
+## 3. Run One Published Benchmark
 
 ```bash
-OPENAI_API_KEY=... \
 pnpm --filter @remnic/cli exec remnic bench run longmemeval \
+  --runtime-profile real \
   --dataset-dir ./bench-datasets/longmemeval \
-  --system-provider openai \
-  --system-model gpt-4o-mini \
-  --judge-provider openai \
-  --judge-model gpt-4o-mini
+  --system-provider ollama \
+  --system-model <model-id> \
+  --judge-provider ollama \
+  --judge-model <judge-model-id> \
+  --seed 1
 ```
 
-`--system-provider` + `--system-model` pin the responder to
-gpt-4o-mini; `--judge-provider` + `--judge-model` pin the LLM judge.
-Without these flags, `remnic bench run` falls back to whatever
-default provider the local config/env point at — your published
-numbers would not be reproducibly "on gpt-4o-mini", so set these
-every time.
+`--system-provider` + `--system-model` pin the responder;
+`--judge-provider` + `--judge-model` pin the LLM judge. Without these
+flags, `remnic bench run` falls back to the default provider from local
+configuration, which makes published numbers harder to reproduce.
 
 The runner:
 
-1. Loads LongMemEval-S via `loadLongMemEvalS()` (slice 1 of #566).
+1. Loads the selected full dataset.
 2. Resets the Remnic orchestrator for each item.
-3. Ingests every haystack session.
-4. Recalls + answers each question via gpt-4o-mini.
-5. Scores via `f1`, `contains_answer`, and the gpt-4o-mini judge.
+3. Ingests the benchmark's memory sessions into the isolated benchmark
+   adapter.
+4. Recalls + answers each question with the pinned system model.
+5. Scores via benchmark-specific metrics and the pinned judge.
 6. Writes a `BenchmarkResult` JSON under the default results store
-   (`~/.remnic/bench/results/` — override via environment or config;
-   the `--results-dir` flag is planned but not wired on the current
-   `bench run` subcommand). Slice 6 (this PR) + slice 3 wire the
-   `BenchmarkArtifact v1` export as an additional, flatter payload
-   for public leaderboard consumption — copy the internal run JSON
-   into `docs/benchmarks/results/` through
-   `buildBenchmarkArtifact()` before publishing, then run
-   `scripts/bench/verify-artifact.ts` (step 5).
+   unless `--results-dir` is supplied.
 
-> Sample limit + seed are set via runtime options in the CLI today.
-> The planned `remnic bench published` subcommand (issue #566 slice 4)
-> will surface them as top-level `--limit` / `--seed` flags.
+## 4. Run The Published Suite
 
-## 4. Run LoCoMo-10 on gpt-4o-mini
+Run each published benchmark one at a time for easier monitoring and
+retry. A shell loop is acceptable, but keep the results directory and
+status file for post-run audit.
 
 ```bash
-OPENAI_API_KEY=... \
-pnpm --filter @remnic/cli exec remnic bench run locomo \
-  --dataset-dir ./bench-datasets/locomo \
-  --system-provider openai \
-  --system-model gpt-4o-mini \
-  --judge-provider openai \
-  --judge-model gpt-4o-mini
+for bench in ama-bench memory-arena amemgym longmemeval locomo beam personamem memoryagentbench membench; do
+  pnpm --filter @remnic/cli exec remnic bench run "$bench" \
+    --runtime-profile real \
+    --dataset-dir "./bench-datasets/$bench" \
+    --system-provider ollama \
+    --system-model <model-id> \
+    --judge-provider ollama \
+    --judge-model <judge-model-id> \
+    --seed 1
+done
 ```
 
-Metrics emitted: `f1`, `contains_answer`, `rouge_l`, optional `llm_judge`.
+For AMA-Bench recommended judge runs, use the AMA-specific judge flags
+documented by `remnic bench --help`, including the recommended protocol
+and cross-validation options when available.
 
 ## 5. Verify artifacts before publishing
 
@@ -132,19 +137,26 @@ OK <filename> <benchmark> model=<id> seed=<n> metrics=<k>=<v>,<k>=<v>,... sha256
 
 ## 6. Publish
 
-Artifacts live under `docs/benchmarks/results/`. That directory is
-gitignored by default — add the specific artifact you want to publish
-with `git add -f docs/benchmarks/results/<filename>.json` so nothing
-experimental leaks in. The site (`packages/remnic-site`) reads the
-directory at build time and renders the `/benchmarks` leaderboard
-page. A release of Remnic publishes the site + approved artifacts
-together.
+Generate the Remnic.ai feed from stored full runs:
+
+```bash
+pnpm --filter @remnic/cli exec remnic bench publish \
+  --target remnic-ai \
+  --results-dir <results-dir> \
+  --output <benchmarks.json>
+```
+
+Artifacts live under `docs/benchmarks/results/` when publishing from
+the monorepo. That directory is gitignored by default — add only the
+specific artifact you want to publish with `git add -f` so nothing
+experimental leaks in. The Remnic.ai site consumes the generated JSON
+feed for its `/benchmarks` page.
 
 If a future release promotes results to tracked-by-default, remove
 the `docs/benchmarks/results/` entry from `.gitignore` in the same
 commit that updates this section.
 
-## 7. Local-LLM parity run (slice 5, when shipped)
+## 7. Local-LLM Parity Run
 
 ```bash
 pnpm --filter @remnic/cli exec remnic bench run longmemeval \
@@ -158,9 +170,7 @@ pnpm --filter @remnic/cli exec remnic bench run longmemeval \
 ```
 
 The same runner + artifact schema as the cloud run. Only the responder
-/ judge provider differ. The `remnic bench published` subcommand
-planned in PR 4 will expose a cleaner `--provider local-llm --base-url
-... --model ...` shape.
+/ judge provider differ.
 
 ## 8. Troubleshooting
 

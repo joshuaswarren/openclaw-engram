@@ -27,6 +27,8 @@
 ## Operations
 
 - [Operations](operations.md) — Backup, export, hourly summaries, CLI, logs
+- [Published Benchmarks](benchmarks.md) — Full published benchmark suite, artifact expectations, and leaderboard safety
+- [Benchmark Readiness](benchmarks/sota-readiness.md) — #841-#850 cue-recall audit for published memory benchmarks
 - [Retention Policy](retention-policy.md) — Hot/cold tier substrate, value-score model, `remnic forget`, `remnic tier list/explain` (issue #686)
 - [Import / Export](import-export.md) — Portable backups and migration
 - [ops/pr-review-hardening-playbook.md](ops/pr-review-hardening-playbook.md) — Pre-push review checklist
