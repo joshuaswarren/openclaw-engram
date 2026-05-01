@@ -322,6 +322,7 @@ test("observeMessages stores structured message parts and file-aware recall find
       {
         role: "assistant",
         content: "Edited src/auth.ts to repair the login flow.",
+        parts: [],
         rawContent: {
           content: [
             {

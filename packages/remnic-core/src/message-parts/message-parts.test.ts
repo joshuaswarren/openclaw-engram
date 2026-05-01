@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   parseAnthropicMessageParts,
   parseMessageParts,
+  parseOpenClawMessageParts,
   parseOpenAiMessageParts,
 } from "./index.js";
 
@@ -89,6 +90,16 @@ describe("message-parts parsers", () => {
     assert.equal(parts[0]!.filePath, "./src/auth.ts");
     assert.equal(parts[1]!.filePath, "../src/session.ts");
     assert.equal(parts[2]!.filePath, ".github/workflows/ci.yml");
+  });
+
+  it("routes OpenClaw OpenAI-style typed content blocks through the OpenAI parser", () => {
+    const parts = parseOpenClawMessageParts({
+      content: [{ type: "output_text", text: "Updated src/openclaw.ts." }],
+    });
+
+    assert.equal(parts.length, 1);
+    assert.equal(parts[0]!.kind, "text");
+    assert.equal(parts[0]!.filePath, "src/openclaw.ts");
   });
 
   it("extracts Anthropic tool_use blocks as structured file writes", () => {

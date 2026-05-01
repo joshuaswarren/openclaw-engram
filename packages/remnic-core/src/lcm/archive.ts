@@ -105,8 +105,10 @@ export class LcmArchive {
 
     const txn = this.db.transaction(() => {
       for (const msg of messages) {
+        const explicitParts =
+          msg.parts && msg.parts.length > 0 ? msg.parts : undefined;
         const parts =
-          msg.parts ??
+          explicitParts ??
           parseMessageParts(msg.rawContent, {
             sourceFormat: msg.sourceFormat,
             renderedContent: msg.content,

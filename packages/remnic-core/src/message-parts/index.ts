@@ -230,6 +230,8 @@ export function parseOpenClawMessageParts(
 
   const content = obj.content;
   if (Array.isArray(content)) {
+    const hasOpenAiBlocks = content.some(isOpenAiContentBlock);
+    if (hasOpenAiBlocks) return parseOpenAiMessageParts(content, options);
     const hasAnthropicBlocks = content.some(
       (block) =>
         block &&

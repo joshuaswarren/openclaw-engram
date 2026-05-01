@@ -335,13 +335,18 @@ export function importLosslessClaw(
 
   // ── Insert message parts ────────────────────────────────────────────────
   const messageParts = listMessageParts(sourceDb);
-  const existingPartsStmt = destDb.prepare(
-    "SELECT COUNT(*) AS cnt FROM lcm_message_parts WHERE message_id = ?",
-  );
-  const insertPartStmt = destDb.prepare(
-    "INSERT INTO lcm_message_parts (message_id, ordinal, kind, payload, tool_name, file_path, created_at) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?)",
-  );
+  const destHasMessageParts = sqliteTableExists(destDb, "lcm_message_parts");
+  const existingPartsStmt = destHasMessageParts
+    ? destDb.prepare(
+      "SELECT COUNT(*) AS cnt FROM lcm_message_parts WHERE message_id = ?",
+    )
+    : undefined;
+  const insertPartStmt = destHasMessageParts
+    ? destDb.prepare(
+      "INSERT INTO lcm_message_parts (message_id, ordinal, kind, payload, tool_name, file_path, created_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    : undefined;
 
   function processMessageParts(forWrite: boolean): void {
     const seenDestMessages = new Set<number>();
@@ -357,7 +362,7 @@ export function importLosslessClaw(
           result.messagePartsSkipped += 1;
           continue;
         }
-        if (!seenDestMessages.has(destMessageId)) {
+        if (existingPartsStmt && !seenDestMessages.has(destMessageId)) {
           const existing = existingPartsStmt.get(destMessageId) as { cnt: number };
           if (existing.cnt > 0) {
             seenDestMessages.add(destMessageId);
@@ -371,9 +376,13 @@ export function importLosslessClaw(
         result.messagePartsSkipped += 1;
         continue;
       }
+      if (forWrite && !insertPartStmt) {
+        result.messagePartsSkipped += 1;
+        continue;
+      }
       if (forWrite) {
         const mapped = mapLosslessMessagePart(sourcePart);
-        insertPartStmt.run(
+        insertPartStmt!.run(
           destMessageId,
           mapped.ordinal ?? sourcePart.ordinal,
           mapped.kind,
@@ -560,6 +569,15 @@ export function importLosslessClaw(
 
   result.sessionsTouched = [...sessionsTouched].sort();
   return result;
+}
+
+function sqliteTableExists(db: Database.Database, tableName: string): boolean {
+  const row = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+    )
+    .get(tableName) as { name: string } | undefined;
+  return row !== undefined;
 }
 
 function mapLosslessMessagePart(

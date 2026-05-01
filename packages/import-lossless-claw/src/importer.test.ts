@@ -258,6 +258,12 @@ function buildDestDb(): DbHandle {
   return db;
 }
 
+function buildPreV2DestDb(): DbHandle {
+  const db = buildDestDb();
+  db.exec("DROP TABLE lcm_message_parts");
+  return db;
+}
+
 const TWO_CONVS = (): {
   conversations: SeedConversation[];
   messages: SeedMessage[];
@@ -442,6 +448,32 @@ describe("importLosslessClaw — idempotency", () => {
     assert.equal(first.messagePartsInserted, 1);
     assert.equal(dry.messagePartsInserted, 0);
     assert.equal(dry.messagePartsSkipped, 1);
+  });
+
+  it("dry-run treats missing destination message_parts table as zero existing parts", () => {
+    const seed = TWO_CONVS();
+    seed.messageParts = [
+      {
+        message_id: "m-a-2",
+        ordinal: 0,
+        kind: "file_write",
+        payload: JSON.stringify({ path: "src/auth.ts" }),
+        tool_name: "Edit",
+        file_path: "src/auth.ts",
+        created_at: "2026-04-01T00:00:01.500Z",
+      },
+    ];
+    const src = buildSourceDb(seed);
+    const dst = buildPreV2DestDb();
+
+    const result = importLosslessClaw({
+      sourceDb: src,
+      destDb: dst,
+      dryRun: true,
+    });
+
+    assert.equal(result.messagePartsInserted, 1);
+    assert.equal(result.messagePartsSkipped, 0);
   });
 });
 
