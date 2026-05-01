@@ -1,6 +1,6 @@
 {
   "name": "@remnic/plugin-openclaw",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "OpenClaw adapter for Remnic memory — thin wrapper delegating to @remnic/core",
   "type": "module",
   "main": "dist/index.js",
