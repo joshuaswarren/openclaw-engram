@@ -92,6 +92,15 @@ export interface HarnessTrial {
     extraDetails?: Record<string, unknown>;
   }>;
   /**
+   * Optional benchmark-specific redaction for prompt-visible recall context.
+   * This must not use gold answers to add evidence; it is only for removing
+   * benchmark-private labels from already-recalled text before answering.
+   */
+  recallTextTransform?: (args: {
+    question: string;
+    recalledText: string;
+  }) => string;
+  /**
    * Optional extra per-task metrics computed by the caller up-front
    * (not a function of recall state). Merged into the final
    * `TaskResult.scores`.
@@ -272,7 +281,13 @@ async function executeTrial(
         ctx.options.system.recall(sessionId, trial.question, recallBudget),
       ),
     );
-    return recalledSessions.filter(Boolean).join("\n\n");
+    const rawRecalledText = recalledSessions.filter(Boolean).join("\n\n");
+    return trial.recallTextTransform
+      ? trial.recallTextTransform({
+          question: trial.question,
+          recalledText: rawRecalledText,
+        })
+      : rawRecalledText;
   });
   const answered = await answerBenchmarkQuestion({
     question: trial.question,
