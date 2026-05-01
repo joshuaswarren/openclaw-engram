@@ -1,28 +1,60 @@
 # Remnic published-benchmark numbers
 
-Remnic evaluates against the same two benchmarks the 2026 memory-agent
-landscape converges on: **LongMemEval-S** and **LoCoMo-10**. Numbers
-below come from the `docs/benchmarks/results/` artifact directory,
-validated by `scripts/bench/verify-artifact.ts` before publication.
+Remnic evaluates against a broad published memory-agent suite, not just
+single-turn retrieval fixtures. The current `@remnic/bench` published
+registry includes:
 
-See [`docs/benchmarks/runbook.md`](./benchmarks/runbook.md) for the
-exact steps. The runner plumbing is in `@remnic/bench` — notably:
+| Benchmark | Capability measured | Current harness support |
+| --- | --- | --- |
+| AMA-Bench | Long-horizon agent trajectories | Action/observation trajectory cues, recommended judge protocol hooks |
+| MemoryArena | Interdependent multi-session planning | Structured plan-field and dependency cue recall |
+| AMemGym | Interactive personalization | Latest-state and supersession-safe recall |
+| LongMemEval | Long-term conversational memory | Temporal/session cue recall without gold-session routing |
+| LoCoMo | Long conversation memory | Dialogue, speaker, and session cue recall |
+| BEAM | Extreme-scale conversation memory | Query-visible plan/source/chat-id cue recall |
+| PersonaMem-v2 | Implicit preference learning | Preference/persona cue recall and latest preference resolution |
+| MemoryAgentBench | Event/date/keypoint memory | Event, date, keypoint, and conflict-resolution cue recall |
+| MemBench | Factual vs reflective recall | Step/time cue recall with target ids reserved for scoring |
 
-- Dataset loaders: `loadLongMemEvalS()` / `loadLoCoMo10()`
-  ([issue #566 slice 1](https://github.com/joshuaswarren/remnic/pull/580))
+The benchmark suite also includes Remnic-owned retrieval, ingestion, and
+assistant-quality benchmarks for regression testing. See
+[`docs/benchmarks/runbook.md`](./benchmarks/runbook.md) for the exact
+steps to run full published benchmarks and publish artifacts.
+
+The runner plumbing is in `@remnic/bench` — notably:
+
+- Published benchmark registry: `packages/bench/src/registry.ts`
+- Full-feature runtime profiles: `packages/bench/src/runtime-profiles.ts`
+- Dataset loaders and full-mode guards under
+  `packages/bench/src/benchmarks/published/`
 - Artifact schema: `BenchmarkArtifact` v1
   ([issue #566 slice 3](https://github.com/joshuaswarren/remnic/pull/581))
 - CI regression guard: `.github/workflows/bench-smoke.yml`
   ([issue #566 slice 7](https://github.com/joshuaswarren/remnic/pull/584))
+- Explicit cue recall hardening: issues #841 through #850
 
 ## What to expect
 
-The first publicly-cited numbers will land in a release tagged once
-slice 6 is executed end-to-end — until then, the
-`docs/benchmarks/results/` directory only contains **mock placeholder
-artifacts** (filename suffix `mock000`, `datasetVersion:
-"mock-fixture"`) so the pipeline can be verified on a fresh clone.
-**Do not cite the mock numbers publicly.**
+Quick mode is for smoke testing harness wiring. Full mode is the only
+mode intended for leaderboard-style claims. A leaderboard-ready run
+should:
+
+- Use full datasets, not bundled smoke fixtures.
+- Record dataset versions, seed, model id, judge id, runtime profile,
+  commit SHA, and artifact manifest.
+- Run in an isolated benchmark memory store, not a production Remnic
+  memory directory.
+- Enable the full Remnic recall stack, including QMD, graph/temporal
+  recall where configured, explicit cue recall, and benchmark-specific
+  visible cue formatting.
+- Keep hidden benchmark fields out of answering recall. Gold answers,
+  target ids, source ids, final state, and evidence labels are scoring
+  or reporting metadata unless they also appear in stored memory or the
+  user-visible question.
+
+The `docs/benchmarks/results/` directory may contain **mock placeholder
+artifacts** with `datasetVersion: "mock-fixture"` so the pipeline can be
+verified on a fresh clone. **Do not cite mock numbers publicly.**
 
 When real numbers land they will be:
 
@@ -41,6 +73,12 @@ Every artifact records:
 - `startedAt` + `finishedAt` + `durationMs`
 - `env.{node, os, arch?}`
 
+Full-suite benchmark directories should also include the run config,
+dataset manifest, artifact manifest, and provider/judge configuration
+with secrets redacted. This is what lets another operator re-run the
+same benchmark against the same Remnic commit and explain any score
+movement.
+
 To re-run a published number:
 
 ```bash
@@ -49,6 +87,20 @@ git checkout <artifact.system.gitSha>
 pnpm install && pnpm --filter @remnic/core run build
 # Follow docs/benchmarks/runbook.md with the same --seed and --model.
 ```
+
+## Cue Recall And Leaderboard Safety
+
+Issues #841 through #850 added a shared rule for all published
+benchmarks: Remnic may use exact cues only when those cues are visible in
+the user question or were stored in the memory transcript. Harnesses may
+add visible anchor text derived from stored messages, but they must strip
+those anchors before answer scoring when the anchor is not part of the
+real conversation.
+
+This keeps the benchmark closer to how Remnic is used in production:
+explicit dates, turn numbers, plan ids, speaker names, step labels,
+preference updates, and keypoint names help retrieve precise evidence,
+while hidden gold metadata remains unavailable to the answerer.
 
 ## Ethics
 
