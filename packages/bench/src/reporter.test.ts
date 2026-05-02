@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { redactBenchmarkResultSecrets, writeBenchmarkResult } from "./reporter.ts";
+import {
+  redactBenchmarkResultSecrets,
+  sanitizeBenchmarkResultForJson,
+  writeBenchmarkResult,
+} from "./reporter.ts";
 import type { BenchmarkResult } from "./types.js";
 
 function buildResult(): BenchmarkResult {
@@ -132,6 +136,49 @@ test("writeBenchmarkResult does not persist secret values", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("writeBenchmarkResult emits parseable JSON when model text contains lone surrogates", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-reporter-"));
+  try {
+    const result = buildResult();
+    result.results.tasks = [
+      {
+        taskId: "ama-q1",
+        question: "What happened?",
+        expected: "valid unicode",
+        actual: "orphan high surrogate: \uD83D and orphan low surrogate: \uDC4B",
+        scores: { llm_judge: 0 },
+        latencyMs: 1,
+        tokens: { input: 0, output: 0 },
+        details: {
+          "bad\uD83Dkey": "nested orphan \uD83D still parseable",
+          validPair: "wave \uD83D\uDC4B",
+        },
+      },
+    ];
+
+    const filePath = await writeBenchmarkResult(result, dir);
+    const raw = await readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as BenchmarkResult;
+
+    assert.doesNotMatch(raw, /\\ud83d(?!\\udc[0-9a-f]{2})/i);
+    assert.doesNotMatch(raw, /(?<!\\ud[89ab][0-9a-f]{2})\\udc[0-9a-f]{2}/i);
+    assert.match(parsed.results.tasks[0]?.actual ?? "", /�/);
+    assert.equal(parsed.results.tasks[0]?.details?.validPair, "wave 👋");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("sanitizeBenchmarkResultForJson preserves paired surrogate characters", () => {
+  const sanitized = sanitizeBenchmarkResultForJson({
+    text: "valid pair \uD83D\uDC4B",
+    bad: "invalid pair \uD83D",
+  });
+
+  assert.equal(sanitized.text, "valid pair 👋");
+  assert.equal(sanitized.bad, "invalid pair �");
 });
 
 test("writeBenchmarkResult preserves main result when leaderboard sidecar write fails", async () => {

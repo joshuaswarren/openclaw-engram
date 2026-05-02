@@ -22,6 +22,10 @@ export function redactBenchmarkResultSecrets<T>(value: T): T {
   return redactSecrets(value) as T;
 }
 
+export function sanitizeBenchmarkResultForJson<T>(value: T): T {
+  return sanitizeForJson(value) as T;
+}
+
 function redactSecrets(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => redactSecrets(item));
@@ -38,6 +42,52 @@ function redactSecrets(value: unknown): unknown {
       : redactSecrets(nestedValue);
   }
   return redacted;
+}
+
+function sanitizeForJson(value: unknown): unknown {
+  if (typeof value === "string") {
+    return replaceLoneSurrogates(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeForJson(item));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, nestedValue] of Object.entries(value)) {
+    sanitized[replaceLoneSurrogates(key)] = sanitizeForJson(nestedValue);
+  }
+  return sanitized;
+}
+
+function replaceLoneSurrogates(value: string): string {
+  let out = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        out += value[index] + value[index + 1];
+        index += 1;
+      } else {
+        out += "\uFFFD";
+      }
+      continue;
+    }
+
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      out += "\uFFFD";
+      continue;
+    }
+
+    out += value[index];
+  }
+  return out;
 }
 
 export async function writeBenchmarkResult(
@@ -76,7 +126,10 @@ export async function writeBenchmarkResult(
     },
   };
 
-  await writeFile(filePath, JSON.stringify(redactBenchmarkResultSecrets(resultWithArtifacts), null, 2) + "\n");
+  const publicResult = sanitizeBenchmarkResultForJson(
+    redactBenchmarkResultSecrets(resultWithArtifacts),
+  );
+  await writeFile(filePath, JSON.stringify(publicResult, null, 2) + "\n");
   return filePath;
 }
 

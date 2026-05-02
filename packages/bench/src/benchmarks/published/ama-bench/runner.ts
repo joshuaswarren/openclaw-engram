@@ -92,7 +92,7 @@ export async function runAmaBenchBenchmark(
           question: qa.question,
           recalledText,
           responder: options.system.responder,
-          answerMode: "strict",
+          answerMode: "agentic-memory",
         });
         const judgeResult = await llmJudgeScoreDetailed(
           options.system.judge,

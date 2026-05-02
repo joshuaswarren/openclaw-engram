@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   answerBenchmarkQuestion,
+  buildAgenticMemoryBenchmarkQuestion,
   buildStrictBenchmarkQuestion,
   inferAnswerFormat,
 } from "./answering.ts";
@@ -78,6 +79,34 @@ test("default answering preserves legacy exact questions", async () => {
   assert.equal(result.finalAnswer, "The generated answer.");
 });
 
+test("agentic-memory answering asks responders to synthesize grounded trajectory inferences", async () => {
+  const result = await answerBenchmarkQuestion({
+    question: "What strategic goal did the up/up/right/right maneuver accomplish?",
+    recalledText: "[Action 39]: up\n[Observation 39]: ball blocks the row",
+    answerMode: "agentic-memory",
+    responder: {
+      async respond(question, recalledText) {
+        assert.match(question, /Agentic trajectory protocol:/);
+        assert.match(question, /causal, strategic, and temporal reasoning/);
+        assert.match(question, /requires inference/);
+        assert.match(question, /step numbers, action names, object names/);
+        assert.equal(
+          recalledText,
+          "[Action 39]: up\n[Observation 39]: ball blocks the row",
+        );
+        return {
+          text: "It repositioned around the blocking ball.",
+          tokens: { input: 12, output: 7 },
+          latencyMs: 3,
+          model: "test-model",
+        };
+      },
+    },
+  });
+
+  assert.equal(result.finalAnswer, "It repositioned around the blocking ball.");
+});
+
 test("strict question builder preserves structured protocols", () => {
   assert.equal(
     inferAnswerFormat("Choices:\nA. Tea\nB. Coffee\nPlease output the correct option"),
@@ -91,6 +120,17 @@ test("strict question builder preserves structured protocols", () => {
     buildStrictBenchmarkQuestion("Final output format:\n=== Traveler Plan ==="),
     /Preserve the requested structured output format exactly/,
   );
+});
+
+test("agentic-memory question builder preserves strict safety while allowing trajectory inference", () => {
+  const prompt = buildAgenticMemoryBenchmarkQuestion(
+    "What would have happened if the agent moved down?",
+  );
+
+  assert.match(prompt, /Use only the supplied Remnic memory context as evidence/);
+  assert.match(prompt, /what would have happened/);
+  assert.match(prompt, /synthesize the best-supported explanation/);
+  assert.match(prompt, /Do not answer "unknown" merely because the answer requires inference/);
 });
 
 test("strict question builder preserves free-form summarization prompts", () => {
