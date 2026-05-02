@@ -1,6 +1,6 @@
 import type { BenchResponder } from "./adapters/types.js";
 
-export type BenchmarkAnswerMode = "default" | "strict";
+export type BenchmarkAnswerMode = "default" | "strict" | "agentic-memory";
 
 export type BenchmarkAnswerFormat =
   | "auto"
@@ -51,6 +51,8 @@ export async function answerBenchmarkQuestion(options: {
   const question =
     answerMode === "strict"
       ? buildStrictBenchmarkQuestion(options.question, answerFormat)
+      : answerMode === "agentic-memory"
+        ? buildAgenticMemoryBenchmarkQuestion(options.question, answerFormat)
       : options.question;
   const response = await options.responder.respond(
     question,
@@ -65,6 +67,23 @@ export async function answerBenchmarkQuestion(options: {
     tokens: response.tokens,
     model: response.model,
   };
+}
+
+export function buildAgenticMemoryBenchmarkQuestion(
+  question: string,
+  answerFormat: BenchmarkAnswerFormat = "auto",
+): string {
+  const prompt = buildStrictBenchmarkQuestion(question, answerFormat);
+  return [
+    prompt,
+    "",
+    "Agentic trajectory protocol:",
+    "- Treat action and observation sequences as evidence for causal, strategic, and temporal reasoning.",
+    "- When the question asks why an action mattered, what a maneuver accomplished, what would have happened, or what can be inferred, synthesize the best-supported explanation from the trajectory instead of looking only for an explicit quoted answer.",
+    "- Use step numbers, action names, object names, files, tools, commands, rewards, or state changes from the memory context when they support the answer.",
+    "- Do not answer \"unknown\" merely because the answer requires inference; reserve \"unknown\" for cases where the trajectory evidence is absent or contradictory.",
+    "- Keep the answer focused on the asked trajectory event and omit unrelated recalled history.",
+  ].join("\n");
 }
 
 export function buildStrictBenchmarkQuestion(
