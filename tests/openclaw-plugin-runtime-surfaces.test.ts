@@ -40,6 +40,17 @@ const REQUIRED_RUNTIME_SURFACE_KEYS = [
   "activeRecallAttachRecallExplain",
   "activeRecallAllowChainedActiveMemory",
 ];
+const OPENCLAW_MANIFEST_PATHS = [
+  "openclaw.plugin.json",
+  "packages/plugin-openclaw/openclaw.plugin.json",
+  "packages/shim-openclaw-engram/openclaw.plugin.json",
+];
+const TOOL_SOURCE_PATHS = [
+  "src/tools.ts",
+  "packages/plugin-openclaw/src/openclaw-tools/memory-search-tool.ts",
+  "packages/plugin-openclaw/src/openclaw-tools/memory-get-tool.ts",
+  "packages/remnic-core/src/lcm/tools.ts",
+];
 
 function readManifest(relativePath: string): Record<string, any> {
   const raw = fs.readFileSync(path.join(ROOT, relativePath), "utf-8");
@@ -51,10 +62,27 @@ function readRootPackageJson(): Record<string, any> {
   return JSON.parse(raw) as Record<string, any>;
 }
 
-for (const manifestPath of [
-  "openclaw.plugin.json",
-  "packages/plugin-openclaw/openclaw.plugin.json",
-]) {
+function readSourceToolNames(): string[] {
+  const names = new Set<string>();
+  for (const relativePath of TOOL_SOURCE_PATHS) {
+    const raw = fs.readFileSync(path.join(ROOT, relativePath), "utf-8");
+    for (const match of raw.matchAll(/name:\s*"([a-zA-Z0-9_-]+)"/g)) {
+      names.add(match[1]);
+    }
+    for (const match of raw.matchAll(
+      /registerAliasedTool\(\s*api,\s*"([a-zA-Z0-9_-]+)"/g,
+    )) {
+      const name = match[1];
+      names.add(name);
+      if (name.startsWith("engram_")) {
+        names.add(`remnic_${name.slice("engram_".length)}`);
+      }
+    }
+  }
+  return [...names].sort();
+}
+
+for (const manifestPath of OPENCLAW_MANIFEST_PATHS) {
   test(`${manifestPath} advertises the v2026.4.10 runtime capability surfaces`, () => {
     const manifest = readManifest(manifestPath);
 
@@ -66,6 +94,17 @@ for (const manifestPath of [
       commandsList: true,
       beforeReset: true,
     });
+  });
+
+  test(`${manifestPath} declares the OpenClaw 2026.5 tool contract`, () => {
+    const manifest = readManifest(manifestPath);
+    const declaredTools = [...(manifest.contracts?.tools ?? [])].sort();
+
+    assert.deepEqual(
+      declaredTools,
+      readSourceToolNames(),
+      "OpenClaw 2026.5 rejects plugin tools not declared in openclaw.plugin.json#contracts.tools",
+    );
   });
 
   test(`${manifestPath} accepts slot, reset, and codex compatibility config blocks`, () => {

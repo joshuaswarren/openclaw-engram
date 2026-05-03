@@ -193,6 +193,20 @@ QUICK START (OPENCLAW)
   launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
   remnic doctor
 
+OPENCLAW PLUGIN COMPATIBILITY
+
+  The OpenClaw adapter keeps both manifest compatibility surfaces:
+  supports: legacy/current slot, active-memory, heartbeat, command, and reset
+  routing for OpenClaw 2026.4-era runtimes.
+  contracts.tools: required by OpenClaw 2026.5+ plugin descriptor planning and
+  tool ownership validation. Add every Remnic-owned registerTool name here when
+  adding OpenClaw tools, including conditional LCM aliases.
+
+  Source of truth: packages/plugin-openclaw/openclaw.plugin.json.
+  Synced copies: openclaw.plugin.json and
+  packages/shim-openclaw-engram/openclaw.plugin.json.
+  Guard test: tests/openclaw-plugin-runtime-surfaces.test.ts.
+
 LEGACY OPENCLAW ENGRAM MIGRATION
 
   Use this for @joshuaswarren/openclaw-engram 9.2.x -> @remnic/plugin-openclaw.
