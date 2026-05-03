@@ -13,6 +13,33 @@ function fail(message) {
   process.exit(1);
 }
 
+function parsePackOutput(stdout) {
+  const candidates = [0];
+  for (let index = stdout.indexOf("["); index !== -1; index = stdout.indexOf("[", index + 1)) {
+    if (!candidates.includes(index)) {
+      candidates.push(index);
+    }
+  }
+
+  for (const index of candidates) {
+    const candidate = stdout.slice(index).trim();
+    if (candidate.length === 0) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // Lifecycle scripts can write logs before npm's JSON payload. Keep scanning.
+    }
+  }
+
+  throw new Error("could not find npm pack JSON array in stdout");
+}
+
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
 const pack = spawnSync("npm", ["pack", "--dry-run", "--json"], {
   cwd: packageDir,
@@ -27,7 +54,7 @@ if (pack.status !== 0) {
 
 let entries;
 try {
-  const parsed = JSON.parse(pack.stdout);
+  const parsed = parsePackOutput(pack.stdout);
   entries = parsed[0]?.files ?? [];
 } catch (error) {
   fail(`could not parse npm pack output: ${error instanceof Error ? error.message : String(error)}`);
