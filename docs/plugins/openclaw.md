@@ -105,9 +105,15 @@ OpenClaw runtime surfaces currently wired by the plugin:
 - `llm_output`
 - `subagent_spawning` / `subagent_ended`
 
-The plugin manifest now advertises these capabilities through its `supports`
-block so newer OpenClaw runtimes can route slot- and runtime-specific behavior
-without guessing.
+The plugin manifest advertises compatibility on two surfaces:
+
+- `supports` stays in place for OpenClaw 2026.4-era slot and lifecycle routing.
+- `contracts.tools` declares every Remnic-owned tool name for OpenClaw 2026.5+
+  descriptor planning and tool ownership validation.
+
+Keep both blocks. `contracts.tools` is additive for older OpenClaw runtimes, but
+OpenClaw 2026.5 rejects plugin tool registration when a runtime tool is missing
+from the manifest contract.
 
 ## Reset Flush Contract
 
