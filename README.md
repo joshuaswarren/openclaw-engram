@@ -70,7 +70,7 @@ If you have OpenClaw installed, the fastest path to working Remnic memory is:
 
 ```bash
 # 1. Install the plugin package
-openclaw plugins install @remnic/plugin-openclaw --pin
+openclaw plugins install clawhub:@remnic/plugin-openclaw
 
 # 2. Wire up the memory slot automatically
 remnic openclaw install
@@ -95,7 +95,7 @@ OpenClaw memory slot to `openclaw-remnic`. See the
 ### Option 1: Install from the CLI
 
 ```bash
-openclaw plugins install @remnic/plugin-openclaw --pin
+openclaw plugins install clawhub:@remnic/plugin-openclaw
 ```
 
 ### Option 2: Ask your OpenClaw agent to install it

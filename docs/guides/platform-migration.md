@@ -256,7 +256,7 @@ If the upgrade causes issues:
 **OpenClaw plugin users** — pin to the previous version:
 
 ```bash
-openclaw plugins install @remnic/plugin-openclaw@<previous-version> --pin
+openclaw plugins install npm:@remnic/plugin-openclaw@<previous-version>
 ```
 
 **Standalone CLI users** — the legacy shim package (`@joshuaswarren/openclaw-engram`) only exposes `engram-access`, not the full CLI. Full CLI rollback requires building from source at the desired version tag:

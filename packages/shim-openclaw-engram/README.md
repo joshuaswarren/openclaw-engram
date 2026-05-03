@@ -7,7 +7,7 @@
 Replace this package with the canonical one:
 
 ```bash
-openclaw plugins install @remnic/plugin-openclaw --pin
+openclaw plugins install clawhub:@remnic/plugin-openclaw
 ```
 
 Your existing memories, configuration, and settings will continue to work. The rename only changes the package name -- all functionality is preserved.
