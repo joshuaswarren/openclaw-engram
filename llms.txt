@@ -24,6 +24,12 @@ Packages:
   @remnic/hermes-provider TypeScript HTTP client for remote Remnic instances.
   remnic-hermes           Python PyPI package, MemoryProvider for Hermes Agent.
 
+OpenClaw adapter note:
+  The OpenClaw plugin registers `before_prompt_build` with Remnic's
+  `initGateTimeoutMs` as the per-hook timeout on SDKs that support hook
+  options. The same config bounds Remnic's internal cold-start init gate for
+  recall and day summaries. Default: 30000ms; accepted range: 1000-120000ms.
+
 Three-phase flow:
   1. Recall   Before each agent turn, inject relevant memories into context.
   2. Buffer   After each turn, accumulate content until a trigger fires.

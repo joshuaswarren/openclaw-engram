@@ -170,7 +170,8 @@ Reset handling is configurable:
       "openclaw-remnic": {
         "config": {
           "flushOnResetEnabled": true,
-          "beforeResetTimeoutMs": 2000
+          "beforeResetTimeoutMs": 2000,
+          "initGateTimeoutMs": 30000
         }
       }
     }
@@ -181,6 +182,11 @@ Reset handling is configurable:
 The reset path clears per-session prompt caches and workspace override state.
 If `flushOnResetEnabled` is true, Remnic also attempts a bounded extraction
 flush before the reset completes.
+
+`initGateTimeoutMs` controls Remnic's cold-start init wait during recall and is
+registered as the `before_prompt_build` hook timeout on OpenClaw versions with
+per-hook timeout support. Raise it if first-turn recall is timing out during
+slow startup; older OpenClaw versions ignore the extra hook option safely.
 
 Session-scoped recall controls are exposed through OpenClaw's command
 discovery surface:

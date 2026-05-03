@@ -129,7 +129,7 @@ interface MockApi {
   registerTool: (spec: unknown) => void;
   registerCli: (spec: unknown) => void;
   registerService: (spec: { id: string; start: () => Promise<void>; stop: () => Promise<void> }) => void;
-  on: (event: string, handler: unknown) => void;
+  on: (event: string, handler: unknown, opts?: unknown) => void;
   registerHook?: (events: unknown, handler: unknown, opts?: unknown) => void;
   runtime?: { version: string; agent?: { id?: string; workspaceDir?: string } };
   registrationMode?: string;
@@ -138,6 +138,7 @@ interface MockApi {
   registerCommand?: (spec: unknown) => void;
   _registeredHooks: string[];
   _hookHandlers: Map<string, unknown>;
+  _hookOptions: Map<string, unknown>;
   _registeredToolCount: number;
   _registeredToolNames: string[];
   _registeredToolSpecs: unknown[];
@@ -172,6 +173,7 @@ function buildNewSdkApi(label: string): MockApi {
     config: {},
     _registeredHooks: [],
     _hookHandlers: new Map(),
+    _hookOptions: new Map(),
     _registeredToolCount: 0,
     _registeredToolNames: [],
     _registeredToolSpecs: [],
@@ -192,9 +194,10 @@ function buildNewSdkApi(label: string): MockApi {
     registerService(spec) {
       api._registeredServiceIds.push(spec.id);
     },
-    on(event: string, _handler: unknown) {
+    on(event: string, _handler: unknown, opts?: unknown) {
       api._registeredHooks.push(event);
       api._hookHandlers.set(event, _handler);
+      api._hookOptions.set(event, opts);
     },
     registerHook(_events: unknown, _handler: unknown, _opts?: unknown) {},
     runtime: { version: "2026.3.22" },
@@ -214,6 +217,7 @@ function buildLegacySdkApi(label: string): MockApi {
     config: {},
     _registeredHooks: [],
     _hookHandlers: new Map(),
+    _hookOptions: new Map(),
     _registeredToolCount: 0,
     _registeredToolNames: [],
     _registeredToolSpecs: [],
@@ -231,9 +235,10 @@ function buildLegacySdkApi(label: string): MockApi {
     registerService(spec) {
       api._registeredServiceIds.push(spec.id);
     },
-    on(event: string, _handler: unknown) {
+    on(event: string, _handler: unknown, opts?: unknown) {
       api._registeredHooks.push(event);
       api._hookHandlers.set(event, _handler);
+      api._hookOptions.set(event, opts);
     },
     // No runtime, no registrationMode, no registerMemoryPromptSection
   };
@@ -258,6 +263,11 @@ test("new SDK api gets all new hooks + memory section", async () => {
     assert.ok(
       api._registeredHooks.includes("before_prompt_build"),
       "before_prompt_build should be registered for async pre-compute when registerMemoryPromptSection is available",
+    );
+    assert.deepEqual(
+      api._hookOptions.get("before_prompt_build"),
+      { timeoutMs: 30_000 },
+      "before_prompt_build should register Remnic's init-gate timeout with OpenClaw",
     );
 
     // before_agent_start should NOT be registered (legacy path)
@@ -328,6 +338,28 @@ test("new SDK api gets all new hooks + memory section", async () => {
     assert.ok(
       api._registeredServiceIds.includes("openclaw-remnic"),
       "service should be registered",
+    );
+  } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
+test("new SDK before_prompt_build hook uses configured initGateTimeoutMs", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const api = buildNewSdkApi("new-sdk-timeout-config");
+    api.pluginConfig = { initGateTimeoutMs: "45000" };
+    plugin.register(api as any);
+
+    assert.deepEqual(
+      api._hookOptions.get("before_prompt_build"),
+      { timeoutMs: 45_000 },
+      "before_prompt_build should use the configured Remnic init-gate timeout",
     );
   } finally {
     await awaitPendingMigration();
@@ -849,6 +881,39 @@ test("capability-only SDK with allowPromptInjection=false skips recall hook regi
     assert.ok(
       cap.publicArtifacts,
       "publicArtifacts must still be registered — policy only gates prompt injection",
+    );
+  } finally {
+    await fixture.cleanup();
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
+test("capability-only before_prompt_build hook uses configured initGateTimeoutMs", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  const fixture = await makeMemoryFixture();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const api = buildNewSdkApi("capability-only-timeout-config");
+    api.pluginConfig = {
+      initGateTimeoutMs: 60_000,
+      memoryDir: fixture.memoryDir,
+      workspaceDir: fixture.workspaceDir,
+    };
+    delete api.registerMemoryPromptSection;
+    api.registerMemoryCapability = (spec: any) => {
+      api._registeredMemoryCapability = spec;
+    };
+
+    plugin.register(api as any);
+
+    assert.deepEqual(
+      api._hookOptions.get("before_prompt_build"),
+      { timeoutMs: 60_000 },
+      "capability-only before_prompt_build should pass the configured timeout to OpenClaw",
     );
   } finally {
     await fixture.cleanup();

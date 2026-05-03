@@ -48,6 +48,19 @@ const DEFAULT_WORKSPACE_DIR = path.join(
   "workspace",
 );
 
+const DEFAULT_INIT_GATE_TIMEOUT_MS = 30_000;
+
+function parseBoundedIntegerMs(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const coerced = coerceNumber(value);
+  if (coerced === undefined) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(coerced)));
+}
+
 // Coerce common string/number representations of a boolean to a real boolean.
 // Returns `undefined` when the value cannot be interpreted, so callers can
 // fall back to their own default. Guards against the "string `false` is
@@ -1493,6 +1506,12 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.beforeResetTimeoutMs === "number"
         ? Math.min(30_000, Math.max(100, Math.floor(cfg.beforeResetTimeoutMs)))
         : 2_000,
+    initGateTimeoutMs: parseBoundedIntegerMs(
+      cfg.initGateTimeoutMs,
+      DEFAULT_INIT_GATE_TIMEOUT_MS,
+      1_000,
+      120_000,
+    ),
     flushOnResetEnabled: cfg.flushOnResetEnabled !== false,
     commandsListEnabled: cfg.commandsListEnabled !== false,
     openclawToolsEnabled: cfg.openclawToolsEnabled !== false,

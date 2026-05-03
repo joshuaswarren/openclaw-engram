@@ -79,6 +79,22 @@ test("parseConfig activeRecallCacheTtlMs=500 preserves the explicit positive ttl
   assert.equal(result.activeRecallCacheTtlMs, 500);
 });
 
+test("parseConfig initGateTimeoutMs defaults to OpenClaw cold-start budget", () => {
+  const result = parseConfig({});
+  assert.equal(result.initGateTimeoutMs, 30_000);
+});
+
+test("parseConfig initGateTimeoutMs accepts CLI-style numeric strings", () => {
+  const result = parseConfig({ initGateTimeoutMs: "45000" });
+  assert.equal(result.initGateTimeoutMs, 45_000);
+});
+
+test("parseConfig initGateTimeoutMs clamps unsafe values", () => {
+  assert.equal(parseConfig({ initGateTimeoutMs: 0 }).initGateTimeoutMs, 1_000);
+  assert.equal(parseConfig({ initGateTimeoutMs: 300_000 }).initGateTimeoutMs, 120_000);
+  assert.equal(parseConfig({ initGateTimeoutMs: "abc" }).initGateTimeoutMs, 30_000);
+});
+
 test("parseConfig keeps explicit cue recall opt-in and budgets configurable", () => {
   const defaults = parseConfig({});
   assert.equal(defaults.explicitCueRecallEnabled, false);

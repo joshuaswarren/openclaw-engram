@@ -2155,7 +2155,11 @@ const pluginDefinition = {
 
       if (sdkCaps.hasBeforePromptBuild) {
         // New SDK path — literal string for compat checker detection
-        api.on(
+        (api.on as (
+          event: string,
+          handler: (event: Record<string, unknown>, ctx: Record<string, unknown>) => Promise<unknown>,
+          opts?: { timeoutMs?: number },
+        ) => void)(
           "before_prompt_build",
           async (
             event: Record<string, unknown>,
@@ -2192,6 +2196,7 @@ const pluginDefinition = {
             }
             return result;
           },
+          { timeoutMs: cfg.initGateTimeoutMs },
         );
       } else {
         // Legacy SDK path — literal string for compat checker detection.
@@ -2241,7 +2246,11 @@ const pluginDefinition = {
     if (useMemoryPromptSection && api.registerMemoryPromptSection) {
       // Async pre-compute: run recall in before_prompt_build and cache result.
       // The hook receives both event and ctx — session identity is in ctx.
-      api.on(
+      (api.on as (
+        event: string,
+        handler: (event: Record<string, unknown>, ctx: Record<string, unknown>) => Promise<unknown>,
+        opts?: { timeoutMs?: number },
+      ) => void)(
         "before_prompt_build",
         async (
           event: Record<string, unknown>,
@@ -2264,6 +2273,7 @@ const pluginDefinition = {
           }
           return result;
         },
+        { timeoutMs: cfg.initGateTimeoutMs },
       );
 
       // Synchronous builder: returns the pre-computed lines for the

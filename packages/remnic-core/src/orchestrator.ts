@@ -3612,7 +3612,10 @@ export class Orchestrator {
         await Promise.race([
           this.initPromise.catch(() => undefined),
           new Promise((resolve) => {
-            initGateTimeoutHandle = setTimeout(resolve, 15_000);
+            initGateTimeoutHandle = setTimeout(
+              resolve,
+              this.config.initGateTimeoutMs,
+            );
           }),
         ]);
       } finally {
@@ -4572,18 +4575,18 @@ export class Orchestrator {
       options.abortSignal?.addEventListener("abort", onAbort, { once: true });
     }
 
-    // Wait for initialization to complete before attempting recall.
-    // Timeout after 15s in case initialize() never fires (edge case).
+    // Wait for initialization to complete before attempting recall. The timeout
+    // is configurable so OpenClaw's per-hook budget and Remnic's internal init
+    // gate can stay aligned during cold starts.
     let initGateTimeoutHandle: NodeJS.Timeout | null = null;
     let onInitGateAbort: (() => void) | null = null;
     if (this.initPromise) {
-      const INIT_GATE_TIMEOUT_MS = 15_000;
       const gateResult = await Promise.race([
         this.initPromise.then(() => "ok" as const),
         new Promise<"timeout">((resolve) => {
           initGateTimeoutHandle = setTimeout(
             () => resolve("timeout"),
-            INIT_GATE_TIMEOUT_MS,
+            this.config.initGateTimeoutMs,
           );
         }),
         abortController.signal.aborted

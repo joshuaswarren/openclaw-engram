@@ -164,7 +164,8 @@ Relevant settings:
       "openclaw-remnic": {
         "config": {
           "flushOnResetEnabled": true,
-          "beforeResetTimeoutMs": 2000
+          "beforeResetTimeoutMs": 2000,
+          "initGateTimeoutMs": 30000
         }
       }
     }
@@ -177,6 +178,10 @@ Relevant settings:
 - `beforeResetTimeoutMs` bounds how long Remnic will wait before returning
   control to OpenClaw. Timeout is fail-open: reset continues even if the flush
   path is slow.
+- `initGateTimeoutMs` bounds Remnic's cold-start init wait during recall and is
+  also registered as the `before_prompt_build` hook timeout on OpenClaw versions
+  that support per-hook options. Increase it for slow first-turn startup on
+  OpenClaw 2026.5.2+; older OpenClaw builds ignore the hook option safely.
 
 Reset cleanup currently clears:
 

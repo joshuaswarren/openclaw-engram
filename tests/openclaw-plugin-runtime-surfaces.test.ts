@@ -11,6 +11,7 @@ const REQUIRED_RUNTIME_SURFACE_KEYS = [
   "openclawToolsEnabled",
   "openclawToolSnippetMaxChars",
   "sessionTogglesEnabled",
+  "initGateTimeoutMs",
   "verboseRecallVisibility",
   "recallTranscriptsEnabled",
   "recallTranscriptRetentionDays",
@@ -185,6 +186,7 @@ for (const manifestPath of OPENCLAW_MANIFEST_PATHS) {
     );
 
     assert.equal(properties.beforeResetTimeoutMs?.default, 2000);
+    assert.equal(properties.initGateTimeoutMs?.default, 30000);
     assert.equal(properties.flushOnResetEnabled?.default, true);
     assert.equal(properties.commandsListEnabled?.default, true);
     assert.deepEqual(
