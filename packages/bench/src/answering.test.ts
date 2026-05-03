@@ -90,6 +90,8 @@ test("agentic-memory answering asks responders to synthesize grounded trajectory
         assert.match(question, /causal, strategic, and temporal reasoning/);
         assert.match(question, /requires inference/);
         assert.match(question, /step numbers, action names, object names/);
+        assert.match(question, /anchor the answer to those exact numbers/);
+        assert.match(question, /Do not assume an object disappeared/);
         assert.equal(
           recalledText,
           "[Action 39]: up\n[Observation 39]: ball blocks the row",
@@ -130,6 +132,7 @@ test("agentic-memory question builder preserves strict safety while allowing tra
   assert.match(prompt, /Use only the supplied Remnic memory context as evidence/);
   assert.match(prompt, /what would have happened/);
   assert.match(prompt, /synthesize the best-supported explanation/);
+  assert.match(prompt, /do not name a later action outside the range/);
   assert.match(prompt, /Do not answer "unknown" merely because the answer requires inference/);
 });
 

@@ -80,7 +80,11 @@ export function buildAgenticMemoryBenchmarkQuestion(
     "Agentic trajectory protocol:",
     "- Treat action and observation sequences as evidence for causal, strategic, and temporal reasoning.",
     "- When the question asks why an action mattered, what a maneuver accomplished, what would have happened, or what can be inferred, synthesize the best-supported explanation from the trajectory instead of looking only for an explicit quoted answer.",
+    "- For explicit step, action, observation, or turn references, anchor the answer to those exact numbers. Do not shift the answer to a neighboring step unless the question explicitly asks for the next or previous step.",
+    "- For cited step ranges, identify the action or state change inside that range; do not name a later action outside the range as the answer.",
+    "- If a game or tool trajectory requires a strategic abstraction, name the concrete mechanism being prepared or avoided, such as pushing a rule block, breaking a rule, opening a path, collecting an object, or undoing a loop.",
     "- Use step numbers, action names, object names, files, tools, commands, rewards, or state changes from the memory context when they support the answer.",
+    "- Do not assume an object disappeared because it was collected, pushed, or overlapped unless the before/after observations or active rules support that mechanism.",
     "- Do not answer \"unknown\" merely because the answer requires inference; reserve \"unknown\" for cases where the trajectory evidence is absent or contradictory.",
     "- Keep the answer focused on the asked trajectory event and omit unrelated recalled history.",
   ].join("\n");

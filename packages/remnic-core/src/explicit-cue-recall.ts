@@ -907,7 +907,13 @@ function candidateTurnIndexesForReference(
   }
 
   const pairedBase = reference.number * 2;
-  for (let offset = -2; offset <= 3; offset += 1) {
+  // Action/observation traces are stored as paired turns:
+  //   turn 2N     => [Action N]
+  //   turn 2N + 1 => [Observation N]
+  // Include the preceding observation so transition questions can compare the
+  // state before and after the action, but avoid pulling in Action N+1. Future
+  // actions caused explicit step questions to drift to the next step.
+  for (let offset = -1; offset <= 1; offset += 1) {
     candidates.add(pairedBase + offset);
   }
 
