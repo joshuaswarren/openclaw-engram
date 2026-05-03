@@ -60,6 +60,14 @@ function findScannerModule(openclawPackageDir) {
 }
 
 function selectScannerFunction(moduleExports) {
+  if (typeof moduleExports.scanDirectoryWithSummary === "function") {
+    return moduleExports.scanDirectoryWithSummary;
+  }
+
+  if (typeof moduleExports.scanDirectory === "function") {
+    return moduleExports.scanDirectory;
+  }
+
   if (typeof moduleExports.t === "function") return moduleExports.t;
 
   const exportedFunctions = Object.values(moduleExports).filter((value) => typeof value === "function");

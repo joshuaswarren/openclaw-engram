@@ -1,7 +1,32 @@
 {
   "id": "openclaw-remnic",
+  "name": "Remnic OpenClaw Plugin",
+  "version": "1.0.19",
   "kind": "memory",
   "description": "Local semantic memory for OpenClaw. Requires plugins.slots.memory set to this plugin id for hooks to fire.",
+  "providerAuthEnvVars": {
+    "openai": [
+      "OPENAI_API_KEY"
+    ]
+  },
+  "providerAuthChoices": [
+    {
+      "provider": "openai",
+      "method": "api-key",
+      "choiceId": "remnic-openai-api-key",
+      "choiceLabel": "OpenAI API key for Remnic memory extraction",
+      "choiceHint": "Remnic sends memory extraction, consolidation, and embedding requests to OpenAI or the configured OpenAI-compatible endpoint unless you route those tasks through OpenClaw gateway/local LLM settings.",
+      "groupId": "remnic-memory",
+      "groupLabel": "Remnic memory",
+      "optionKey": "openaiApiKey",
+      "cliFlag": "--openai-api-key",
+      "cliOption": "--openai-api-key <key>",
+      "cliDescription": "OpenAI API key used by Remnic memory extraction, consolidation, and embedding flows.",
+      "onboardingScopes": [
+        "text-inference"
+      ]
+    }
+  ],
   "supports": {
     "memorySlot": true,
     "dreamingSlot": true,
@@ -68,7 +93,7 @@
     "properties": {
       "openaiApiKey": {
         "type": "string",
-        "description": "OpenAI API key (or set OPENAI_API_KEY env var)"
+        "description": "OpenAI API key (or set OPENAI_API_KEY env var). Remnic may send conversation and memory content to OpenAI or the configured OpenAI-compatible endpoint for extraction, consolidation, summarization, and embeddings."
       },
       "openaiBaseUrl": {
         "type": "string",

@@ -198,6 +198,12 @@ QUICK START (OPENCLAW)
   npm-only fallback or rollback versions, use the explicit npm source prefix
   npm:@remnic/plugin-openclaw@<version>.
 
+  ClawHub publish note: publish @remnic/plugin-openclaw from the built
+  ClawPack/npm tarball, not from the raw GitHub source folder. Run
+  pnpm --filter @remnic/plugin-openclaw build, pnpm run verify:openclaw-clawpack,
+  clawhub package pack packages/plugin-openclaw, then clawhub package publish
+  the generated remnic-plugin-openclaw-<version>.tgz with source metadata.
+
 OPENCLAW PLUGIN COMPATIBILITY
 
   The OpenClaw adapter keeps both manifest compatibility surfaces:

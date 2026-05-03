@@ -91,7 +91,7 @@ This plugin hooks into the OpenClaw gateway lifecycle:
 - **Tools** -- registers `memory_search`, `memory_get`, `memory_stats`, and other agent tools
 - **Commands** -- provides CLI commands for memory management
 
-All memory processing uses [`@remnic/core`](https://www.npmjs.com/package/@remnic/core). Data stays on your local filesystem as plain markdown files.
+All memory processing uses [`@remnic/core`](https://www.npmjs.com/package/@remnic/core). Memory files stay on your local filesystem as plain markdown files. When the plugin is configured to use OpenAI or an OpenAI-compatible endpoint, conversation and memory excerpts may be sent to that configured model provider for extraction, consolidation, summarization, and embeddings. Use `modelSource: "gateway"` or local LLM settings when those operations should stay on your own OpenClaw/local model path.
 
 ## Slot Selection
 

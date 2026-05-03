@@ -45,3 +45,29 @@ test("release workflow publish order matches the supported npm install surfaces"
     );
   }
 });
+
+test("release workflow verifies the OpenClaw ClawHub packlist after build", async () => {
+  const workflow = await readFile(".github/workflows/release-and-publish.yml", "utf8");
+  const verifyScript = await readFile("scripts/verify-openclaw-clawpack.mjs", "utf8");
+
+  assert.match(
+    workflow,
+    /Build all packages[\s\S]*Verify OpenClaw ClawHub artifact packlist[\s\S]*Publish root package to npm/,
+    "release workflow must verify the built OpenClaw package before any publish step",
+  );
+  assert.match(
+    workflow,
+    /pnpm run verify:openclaw-clawpack/,
+    "release workflow must call the OpenClaw ClawPack verifier",
+  );
+  assert.match(
+    verifyScript,
+    /dist\/index\.js/,
+    "ClawPack verifier must require the OpenClaw runtime entrypoint",
+  );
+  assert.match(
+    verifyScript,
+    /packageJson\.openclaw\?\.extensions/,
+    "ClawPack verifier must check every declared OpenClaw extension",
+  );
+});

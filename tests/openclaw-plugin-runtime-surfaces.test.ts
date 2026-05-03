@@ -62,6 +62,11 @@ function readRootPackageJson(): Record<string, any> {
   return JSON.parse(raw) as Record<string, any>;
 }
 
+function readPackageJson(relativePath: string): Record<string, any> {
+  const raw = fs.readFileSync(path.join(ROOT, relativePath), "utf-8");
+  return JSON.parse(raw) as Record<string, any>;
+}
+
 function readSourceToolNames(): string[] {
   const names = new Set<string>();
   for (const relativePath of TOOL_SOURCE_PATHS) {
@@ -104,6 +109,41 @@ for (const manifestPath of OPENCLAW_MANIFEST_PATHS) {
       declaredTools,
       readSourceToolNames(),
       "OpenClaw 2026.5 rejects plugin tools not declared in openclaw.plugin.json#contracts.tools",
+    );
+  });
+
+  test(`${manifestPath} declares pre-runtime auth metadata for OpenAI-backed memory extraction`, () => {
+    const manifest = readManifest(manifestPath);
+    const packageJsonPath = manifestPath === "packages/shim-openclaw-engram/openclaw.plugin.json"
+      ? "packages/shim-openclaw-engram/package.json"
+      : "packages/plugin-openclaw/package.json";
+    const packageJson = readPackageJson(packageJsonPath);
+
+    assert.equal(manifest.name, "Remnic OpenClaw Plugin");
+    assert.equal(manifest.version, packageJson.version);
+    assert.deepEqual(manifest.providerAuthEnvVars?.openai, ["OPENAI_API_KEY"]);
+    assert.deepEqual(manifest.providerAuthChoices, [
+      {
+        provider: "openai",
+        method: "api-key",
+        choiceId: "remnic-openai-api-key",
+        choiceLabel: "OpenAI API key for Remnic memory extraction",
+        choiceHint:
+          "Remnic sends memory extraction, consolidation, and embedding requests to OpenAI or the configured OpenAI-compatible endpoint unless you route those tasks through OpenClaw gateway/local LLM settings.",
+        groupId: "remnic-memory",
+        groupLabel: "Remnic memory",
+        optionKey: "openaiApiKey",
+        cliFlag: "--openai-api-key",
+        cliOption: "--openai-api-key <key>",
+        cliDescription:
+          "OpenAI API key used by Remnic memory extraction, consolidation, and embedding flows.",
+        onboardingScopes: ["text-inference"],
+      },
+    ]);
+    assert.match(
+      manifest.configSchema?.properties?.openaiApiKey?.description ?? "",
+      /conversation and memory content/,
+      "openaiApiKey schema should disclose that configured model providers may process memory content",
     );
   });
 

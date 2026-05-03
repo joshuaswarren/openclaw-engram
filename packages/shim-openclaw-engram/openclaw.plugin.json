@@ -1,7 +1,32 @@
 {
   "id": "openclaw-engram",
+  "name": "Remnic OpenClaw Plugin",
+  "version": "9.3.15",
   "kind": "memory",
   "description": "Local semantic memory for OpenClaw. Requires plugins.slots.memory set to this plugin id for hooks to fire.",
+  "providerAuthEnvVars": {
+    "openai": [
+      "OPENAI_API_KEY"
+    ]
+  },
+  "providerAuthChoices": [
+    {
+      "provider": "openai",
+      "method": "api-key",
+      "choiceId": "remnic-openai-api-key",
+      "choiceLabel": "OpenAI API key for Remnic memory extraction",
+      "choiceHint": "Remnic sends memory extraction, consolidation, and embedding requests to OpenAI or the configured OpenAI-compatible endpoint unless you route those tasks through OpenClaw gateway/local LLM settings.",
+      "groupId": "remnic-memory",
+      "groupLabel": "Remnic memory",
+      "optionKey": "openaiApiKey",
+      "cliFlag": "--openai-api-key",
+      "cliOption": "--openai-api-key <key>",
+      "cliDescription": "OpenAI API key used by Remnic memory extraction, consolidation, and embedding flows.",
+      "onboardingScopes": [
+        "text-inference"
+      ]
+    }
+  ],
   "supports": {
     "memorySlot": true,
     "dreamingSlot": true,
@@ -68,7 +93,7 @@
     "properties": {
       "openaiApiKey": {
         "type": "string",
-        "description": "OpenAI API key (or set OPENAI_API_KEY env var)"
+        "description": "OpenAI API key (or set OPENAI_API_KEY env var). Remnic may send conversation and memory content to OpenAI or the configured OpenAI-compatible endpoint for extraction, consolidation, summarization, and embeddings."
       },
       "openaiBaseUrl": {
         "type": "string",
@@ -543,6 +568,11 @@
             "type": "boolean",
             "default": false,
             "description": "When true, memory also overlays the current branch (project:<id>/branch:<name>). Opt-in — most development wants cross-branch recall. Wired in PR 3 of #569."
+          },
+          "globalFallback": {
+            "type": "boolean",
+            "default": true,
+            "description": "When true (default), project-scoped sessions include the root/default namespace in read fallbacks so globally useful memories remain visible. Set to false for strict project isolation."
           }
         }
       },
@@ -602,6 +632,16 @@
             "description": "When true, installer may register the nightly procedural mining cron job."
           }
         }
+      },
+      "secureStoreEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable at-rest AES-256-GCM encryption for memory files (issue #690). When true, the daemon reads and writes memory files through the secure-fs layer. The store must be unlocked via `remnic secure-store unlock` after each daemon start. Default false."
+      },
+      "secureStoreEncryptOnWrite": {
+        "type": "boolean",
+        "default": true,
+        "description": "When secureStoreEnabled is true, encrypt new memory writes. Set to false to pause new encryptions while still decrypting existing encrypted files (useful during incremental migration). Default true."
       },
       "slotBehavior": {
         "type": "object",
@@ -868,6 +908,178 @@
             ],
             "default": null,
             "description": "Optional Codex home directory override used for connector install and materialization."
+          }
+        }
+      },
+      "connectors": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "description": "Live-connector configuration (issue #683). Each child object maps to one concrete LiveConnector. Defaults are off; operators must opt in.",
+        "properties": {
+          "googleDrive": {
+            "type": "object",
+            "additionalProperties": false,
+            "default": {},
+            "description": "Google Drive live connector (issue #683 PR 2/N). Imports text content from a user's Drive into Remnic on a poll schedule.",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": false,
+                "description": "Master gate. Default off — set to true to enable Drive imports. The connector additionally requires clientId, clientSecret, and refreshToken to be populated before it will run."
+              },
+              "clientId": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 client id. Populate from your secret store (e.g. ${GOOGLE_DRIVE_CLIENT_ID}). Never commit a real value to source."
+              },
+              "clientSecret": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 client secret. Populate from your secret store (e.g. ${GOOGLE_DRIVE_CLIENT_SECRET}). Never commit a real value to source."
+              },
+              "refreshToken": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 refresh token issued for the user's Drive scope. Populate from your secret store (e.g. ${GOOGLE_DRIVE_REFRESH_TOKEN}). Never commit a real value to source."
+              },
+              "pollIntervalMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 86400000,
+                "default": 300000,
+                "description": "How often the scheduler should call the connector's syncIncremental, in milliseconds. Defaults to 5 minutes; max 24 hours."
+              },
+              "folderIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "Optional array of Google Drive folder ids to scope the import. Empty = all accessible files. Folder ids are validated for shape; nested folders are NOT auto-included."
+              }
+            }
+          },
+          "notion": {
+            "type": "object",
+            "additionalProperties": false,
+            "default": {},
+            "description": "Notion live connector (issue #683 PR 3/N). Imports text content from Notion database pages into Remnic on a poll schedule.",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": false,
+                "description": "Master gate. Default off — set to true to enable Notion imports. The connector additionally requires a token and at least one databaseId to be populated before it will run."
+              },
+              "token": {
+                "type": "string",
+                "default": "",
+                "description": "Notion integration token (starts with secret_). Populate from your secret store (e.g. ${NOTION_TOKEN}). Never commit a real value to source."
+              },
+              "databaseIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "Array of Notion database ids to import pages from. Accepts compact 32-hex-char ids or standard UUID format. Empty = connector is a no-op."
+              },
+              "pollIntervalMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 86400000,
+                "default": 300000,
+                "description": "How often the scheduler should call the connector's syncIncremental, in milliseconds. Defaults to 5 minutes; max 24 hours."
+              }
+            }
+          },
+          "gmail": {
+            "type": "object",
+            "additionalProperties": false,
+            "default": {},
+            "description": "Gmail live connector (issue #683 PR 4/6). Imports new inbox messages from Gmail into Remnic on a poll schedule.",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": false,
+                "description": "Master gate. Default off — set to true to enable Gmail imports. The connector additionally requires clientId, clientSecret, and refreshToken to be populated before it will run."
+              },
+              "clientId": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 client id. Populate from your secret store (e.g. ${GMAIL_CLIENT_ID}). Never commit a real value to source."
+              },
+              "clientSecret": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 client secret. Populate from your secret store (e.g. ${GMAIL_CLIENT_SECRET}). Never commit a real value to source."
+              },
+              "refreshToken": {
+                "type": "string",
+                "default": "",
+                "description": "OAuth2 refresh token issued for the Gmail scope. Populate from your secret store (e.g. ${GMAIL_REFRESH_TOKEN}). Never commit a real value to source."
+              },
+              "userId": {
+                "type": "string",
+                "default": "me",
+                "description": "Gmail userId. Defaults to 'me' (the authenticated user). Override only in delegated-access scenarios."
+              },
+              "query": {
+                "type": "string",
+                "default": "in:inbox",
+                "description": "Gmail search query applied in addition to the watermark after: filter. Default 'in:inbox'. Set to '' to import all mail."
+              },
+              "pollIntervalMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 86400000,
+                "default": 300000,
+                "description": "How often the scheduler should call the connector's syncIncremental, in milliseconds. Defaults to 5 minutes; max 24 hours."
+              }
+            }
+          },
+          "github": {
+            "type": "object",
+            "additionalProperties": false,
+            "default": {},
+            "description": "GitHub live connector (issue #683 PR 5/6). Imports issue comments, PR review comments, and optionally discussion posts authored by the configured user from watched repos into Remnic on a poll schedule.",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": false,
+                "description": "Master gate. Default off — set to true to enable GitHub imports. The connector additionally requires token, userLogin, and at least one repo to be populated before it will run."
+              },
+              "token": {
+                "type": "string",
+                "default": "",
+                "description": "GitHub personal access token. Populate from your secret store (e.g. ${GITHUB_TOKEN}). Never commit a real value to source."
+              },
+              "userLogin": {
+                "type": "string",
+                "default": "",
+                "description": "GitHub login of the user whose comments will be imported. Only comments authored by this login are ingested. Required when enabled."
+              },
+              "repos": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "Array of repos to poll in \"owner/repo\" format. Empty = connector is a no-op."
+              },
+              "pollIntervalMs": {
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 86400000,
+                "default": 300000,
+                "description": "How often the scheduler should call the connector's syncIncremental, in milliseconds. Defaults to 5 minutes; max 24 hours."
+              },
+              "includeDiscussions": {
+                "type": "boolean",
+                "default": false,
+                "description": "Whether to import GitHub Discussion comments in addition to issue and PR review comments. Default false."
+              }
+            }
           }
         }
       },
@@ -1455,14 +1667,25 @@
           "authToken": {
             "description": "Bearer token for the local Remnic HTTP API. Either a literal string (supports ${ENV_VAR} expansion) or an OpenClaw SecretRef object (e.g. {\"source\":\"exec\",\"provider\":\"kc_openclaw_remnic_token\",\"id\":\"value\"}) resolved at startup via the OpenClaw gateway secret resolver (issue #757). If omitted, OPENCLAW_REMNIC_ACCESS_TOKEN / OPENCLAW_ENGRAM_ACCESS_TOKEN is used.",
             "anyOf": [
-              { "type": "string" },
+              {
+                "type": "string"
+              },
               {
                 "type": "object",
-                "required": ["source"],
+                "required": [
+                  "source"
+                ],
                 "properties": {
-                  "source": { "type": "string", "minLength": 1 },
-                  "provider": { "type": "string" },
-                  "id": { "type": "string" },
+                  "source": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "provider": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
                   "command": {}
                 }
               }
@@ -2004,6 +2227,44 @@
         "default": 7,
         "description": "Number of top competing nodes considered for lateral inhibition"
       },
+      "graphEdgeDecayEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the periodic graph-edge confidence decay maintenance job (issue #681 PR 2/3). Opt-in."
+      },
+      "graphEdgeDecayCadenceMs": {
+        "type": "number",
+        "default": 604800000,
+        "minimum": 60000,
+        "description": "Cadence in milliseconds for the graph-edge decay cron. Default 7 days. Sub-day cadences map to a daily cron expression."
+      },
+      "graphEdgeDecayWindowMs": {
+        "type": "number",
+        "default": 7776000000,
+        "minimum": 60000,
+        "description": "Decay window in milliseconds passed to decayEdgeConfidence. Default 90 days."
+      },
+      "graphEdgeDecayPerWindow": {
+        "type": "number",
+        "default": 0.1,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Per-window confidence drop applied during decay. Default 0.1."
+      },
+      "graphEdgeDecayFloor": {
+        "type": "number",
+        "default": 0.1,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Floor confidence will not decay below. Default 0.1."
+      },
+      "graphEdgeDecayVisibilityThreshold": {
+        "type": "number",
+        "default": 0.2,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Confidence threshold used by the decay telemetry counter for low-visibility edges. Default 0.2."
+      },
       "temporalMemoryTreeEnabled": {
         "type": "boolean",
         "default": false,
@@ -2234,6 +2495,55 @@
           }
         }
       },
+      "patternReinforcementEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Run the pattern-reinforcement maintenance job (issue #687 PR 2/4): cluster duplicate non-procedural memories by normalized content, promote the most-recent member to canonical, and supersede the older duplicates. Off by default until bench validation lands."
+      },
+      "patternReinforcementCadenceMs": {
+        "type": "integer",
+        "minimum": 0,
+        "default": 604800000,
+        "description": "Minimum interval (ms) between pattern-reinforcement runs. Default 7 days. Set to 0 to disable cadence gating (manual / test invocation)."
+      },
+      "patternReinforcementMinCount": {
+        "type": "integer",
+        "minimum": 2,
+        "maximum": 1000,
+        "default": 3,
+        "description": "Minimum cluster size before pattern reinforcement promotes a canonical and supersedes duplicates. Default 3."
+      },
+      "patternReinforcementCategories": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "preference",
+          "fact",
+          "decision"
+        ],
+        "description": "Memory categories the pattern-reinforcement job considers. Skips procedural memories so it stays disjoint from procedural mining. Default: preference, fact, decision."
+      },
+      "reinforcementRecallBoostEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, memories with reinforcement_count frontmatter receive an additive recall score boost (issue #687 PR 3/4). Default: false (opt-in)."
+      },
+      "reinforcementRecallBoostWeight": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.05,
+        "description": "Score bonus per unit of reinforcement_count (weight * count, capped at max). Range [0, 1]. Default: 0.05."
+      },
+      "reinforcementRecallBoostMax": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.3,
+        "description": "Maximum additive reinforcement boost per result. Range [0, 1]. Default: 0.3."
+      },
       "temporalSupersessionEnabled": {
         "type": "boolean",
         "default": true,
@@ -2251,7 +2561,10 @@
       },
       "recallDisclosureEscalation": {
         "type": "string",
-        "enum": ["manual", "auto"],
+        "enum": [
+          "manual",
+          "auto"
+        ],
         "default": "manual",
         "description": "Disclosure auto-escalation policy (issue #677 PR 4/4). When 'auto', recalls without an explicit caller-supplied disclosure escalate from chunk to section if the top-K confidence falls below recallDisclosureEscalationThreshold. 'raw' is never auto-selected. Default 'manual' preserves pre-#677 behavior."
       },
@@ -2662,6 +2975,11 @@
         ],
         "default": "low",
         "description": "Minimum locally-scored importance level required to persist an extracted fact. Facts below this level are dropped before write and counted toward the importance_gated metric. Default \"low\" drops only trivial turn-level chatter (greetings, single-word replies); raise to \"normal\" or higher for a stricter gate."
+      },
+      "extractionScopeClassificationEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "When enabled, the extraction prompt instructs the LLM to classify each fact as 'project' (codebase-specific) or 'global' (cross-project knowledge). Global-scoped facts are promoted to the shared namespace so they are visible across all projects. Disable to restore pre-scope-classification behavior where all facts go to the session namespace."
       },
       "extractionJudgeEnabled": {
         "type": "boolean",
@@ -3123,6 +3441,39 @@
         "type": "boolean",
         "default": false,
         "description": "Opt in to operator-aware consolidation prompts so the LLM returns structured {operator, output} JSON and SPLIT/MERGE/UPDATE is recorded on derived_via. When disabled (default), derived_via still populates via the cluster-shape heuristic."
+      },
+      "peerProfileReasonerEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the async peer profile reasoner (issue #679). Runs after semantic consolidation in the REM phase and updates per-peer profile.md files with provenance-tagged field updates derived from the peer's interaction log. Default off (opt-in)."
+      },
+      "peerProfileReasonerModel": {
+        "type": "string",
+        "default": "auto",
+        "description": "Model identifier used by the peer profile reasoner. 'auto' inherits the gateway's primary chain (recommended). Logged for telemetry only — actual dispatch routes through the same FallbackLlmClient used by semantic consolidation."
+      },
+      "peerProfileReasonerMinInteractions": {
+        "type": "number",
+        "default": 5,
+        "minimum": 0,
+        "description": "Minimum new interaction-log entries a peer must accumulate since the previous reasoner run before being processed again. Set to 0 to consider every peer on every run."
+      },
+      "peerProfileReasonerMaxFieldsPerRun": {
+        "type": "number",
+        "default": 8,
+        "minimum": 0,
+        "description": "Hard cap on the total number of profile fields the reasoner will apply across all peers in a single run. Set to 0 to disable applying any fields."
+      },
+      "peerProfileRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, inject the active peer's profile fields into the recall context as a '## Peer Profile' section (issue #679 PR 3/5). Requires the session's peer ID to be registered before recall. Default off (opt-in)."
+      },
+      "peerProfileRecallMaxFields": {
+        "type": "number",
+        "default": 5,
+        "minimum": 0,
+        "description": "Maximum number of peer profile fields to inject per recall call. Only the most-recently-updated N fields are included. Set to 0 to disable field injection even when peerProfileRecallEnabled is true."
       },
       "creationMemoryEnabled": {
         "type": "boolean",
@@ -4019,6 +4370,16 @@
         "type": "number",
         "default": 90,
         "description": "Days to retain archived LCM summaries"
+      },
+      "messagePartsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Opt in to structured LCM message-part capture for tool calls, file references, patches, and reasoning markers."
+      },
+      "messagePartsRecallMaxResults": {
+        "type": "number",
+        "default": 6,
+        "description": "Maximum structured message-part matches to inject into recall when messagePartsEnabled is true."
       },
       "ircEnabled": {
         "type": "boolean",
@@ -4935,6 +5296,36 @@
       "label": "Operator-Aware Consolidation Prompt",
       "advanced": true,
       "help": "Opt in to operator-aware consolidation prompts (default off). When enabled, the LLM returns structured {operator, output} JSON and we record SPLIT/MERGE/UPDATE on derived_via. When disabled (default), derived_via still populates via the cluster-shape heuristic."
+    },
+    "peerProfileReasonerEnabled": {
+      "label": "Peer Profile Reasoner",
+      "advanced": true,
+      "help": "Enable the async peer profile reasoner (issue #679). Runs in the REM phase after semantic consolidation and updates per-peer profile.md files with provenance-tagged field updates derived from each peer's interaction log. Default off (opt-in)."
+    },
+    "peerProfileReasonerModel": {
+      "label": "Peer Profile Reasoner Model",
+      "advanced": true,
+      "help": "Model identifier the peer profile reasoner records on telemetry. Dispatch still routes through the FallbackLlmClient used by semantic consolidation."
+    },
+    "peerProfileReasonerMinInteractions": {
+      "label": "Peer Profile Reasoner Min Interactions",
+      "advanced": true,
+      "help": "Minimum new interaction-log entries a peer must accumulate since the previous reasoner run before being processed again. Set to 0 to consider every peer on every run."
+    },
+    "peerProfileReasonerMaxFieldsPerRun": {
+      "label": "Peer Profile Reasoner Max Fields Per Run",
+      "advanced": true,
+      "help": "Hard cap on the total number of profile fields the reasoner will apply across all peers in a single run. Set to 0 to disable applying any fields."
+    },
+    "peerProfileRecallEnabled": {
+      "label": "Peer Profile Recall Injection",
+      "advanced": true,
+      "help": "When enabled, injects the active peer's profile fields into recall context as a '## Peer Profile' section. Requires the session peer ID to be registered. Default off."
+    },
+    "peerProfileRecallMaxFields": {
+      "label": "Peer Profile Recall Max Fields",
+      "advanced": true,
+      "help": "Maximum number of peer profile fields to inject per recall. Only the most-recently-updated N fields are included. Set to 0 to disable injection."
     },
     "creationMemoryEnabled": {
       "label": "Creation Memory",
