@@ -9,6 +9,7 @@ import path from "node:path";
 import {
   buildEvidencePack,
   buildExplicitCueRecallSection,
+  collectExplicitTurnReferences,
   Orchestrator,
   parseConfig,
 } from "@remnic/core";
@@ -313,6 +314,10 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
 
         const sections: string[] = [];
         let usedChars = 0;
+        const hasExplicitReferences =
+          collectExplicitTurnReferences(query).length > 0;
+        const preferFocusedExplicitContext =
+          hasExplicitReferences && sessionId.startsWith("ama-");
 
         const exactReferenceEvidence = await buildExplicitCueRecallSection({
           engine,
@@ -333,8 +338,10 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
           const coreBudget = Math.max(
             0,
             Math.min(
-              Math.floor(budget * 0.55),
-              Math.floor((budget - usedChars) * 0.7),
+              Math.floor(budget * (preferFocusedExplicitContext ? 0.25 : 0.55)),
+              Math.floor(
+                (budget - usedChars) * (preferFocusedExplicitContext ? 0.35 : 0.7),
+              ),
             ),
           );
           const coreRecall = await state.orchestrator.recall(query, sessionId, {
@@ -346,6 +353,11 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
             sections.push(section);
             usedChars += section.length;
           }
+        }
+
+        if (preferFocusedExplicitContext && exactReferenceEvidence) {
+          const joined = sections.join("\n\n");
+          return joined.length > budget ? joined.slice(0, budget) : joined;
         }
 
         if (query) {
