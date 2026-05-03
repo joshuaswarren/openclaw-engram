@@ -42,6 +42,27 @@ remnic openclaw migrate-engram --yes
 See [OpenClaw Engram to Remnic migration](../guides/openclaw-engram-to-remnic.md)
 for config-key behavior, backup behavior, and local patch preservation notes.
 
+## Publish to ClawHub
+
+Publish ClawHub releases from the built npm/ClawPack tarball, not from the raw
+GitHub source folder. Source-folder publishing does not run the package build,
+so ClawHub can scan an incomplete three-file artifact with no `dist/index.js`.
+
+```bash
+pnpm --filter @remnic/plugin-openclaw build
+pnpm run verify:openclaw-clawpack
+clawhub package pack packages/plugin-openclaw --pack-destination /tmp/remnic-clawpack
+clawhub package publish /tmp/remnic-clawpack/remnic-plugin-openclaw-<version>.tgz \
+  --family code-plugin \
+  --name @remnic/plugin-openclaw \
+  --display-name "Remnic OpenClaw Plugin" \
+  --version <version> \
+  --source-repo joshuaswarren/remnic \
+  --source-ref v<release-version> \
+  --source-commit <release-commit> \
+  --source-path packages/plugin-openclaw
+```
+
 ## Configure
 
 Minimal configuration:
@@ -96,6 +117,13 @@ The behavior is controlled by `slotBehavior`:
 Passive mode still registers tools and the service surface, but it skips
 prompt-injection and extraction hooks so Remnic does not compete with the
 selected memory plugin.
+
+Memory files stay on your local filesystem as plain markdown files. If Remnic
+is configured to use OpenAI or an OpenAI-compatible endpoint, conversation and
+memory excerpts may be sent to that provider for extraction, consolidation,
+summarization, and embeddings. Use `modelSource: "gateway"` or local LLM
+settings when those operations should stay on your own OpenClaw/local model
+path.
 
 ## Runtime Surfaces
 
