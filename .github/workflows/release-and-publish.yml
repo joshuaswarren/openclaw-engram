@@ -445,3 +445,48 @@ jobs:
           trap 'rm -f ~/.ssh/release_deploy_key' EXIT
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/release_deploy_key -o StrictHostKeyChecking=no"
           git push "git@github.com:${{ github.repository }}.git" "${RELEASE_COMMIT}:refs/heads/main"
+
+      - name: Publish OpenClaw plugin to ClawHub
+        env:
+          CLAWHUB_TOKEN: ${{ secrets.CLAWHUB_TOKEN }}
+          CLAWHUB_PACKAGE_NAME: "@remnic/plugin-openclaw"
+        run: |
+          if [ -z "${CLAWHUB_TOKEN:-}" ]; then
+            echo "::notice title=ClawHub publish skipped::CLAWHUB_TOKEN secret is not configured."
+            exit 0
+          fi
+
+          npm install -g clawhub@0.12.2
+          clawhub login --token "${CLAWHUB_TOKEN}" --no-browser
+
+          package_version="$(node -p "require('./packages/plugin-openclaw/package.json').version")"
+          if clawhub package inspect "${CLAWHUB_PACKAGE_NAME}" --version "${package_version}" --json >/dev/null 2>&1; then
+            echo "::notice title=ClawHub publish skipped::${CLAWHUB_PACKAGE_NAME}@${package_version} is already published."
+            exit 0
+          fi
+
+          pack_dir="${RUNNER_TEMP}/clawhub-openclaw-pack"
+          rm -rf "${pack_dir}"
+          mkdir -p "${pack_dir}"
+          pnpm --filter "${CLAWHUB_PACKAGE_NAME}" pack --pack-destination "${pack_dir}"
+          tarball="$(find "${pack_dir}" -maxdepth 1 -name '*.tgz' -print -quit)"
+          if [ -z "${tarball}" ]; then
+            echo "No ${CLAWHUB_PACKAGE_NAME} tarball produced" >&2
+            exit 1
+          fi
+
+          source_commit="$(git rev-parse HEAD)"
+          clawhub package publish "${tarball}" \
+            --family code-plugin \
+            --name "${CLAWHUB_PACKAGE_NAME}" \
+            --display-name "Remnic OpenClaw Plugin" \
+            --version "${package_version}" \
+            --host-targets openclaw \
+            --source-repo "${GITHUB_REPOSITORY}" \
+            --source-ref "${{ steps.version.outputs.tag_name }}" \
+            --source-commit "${source_commit}" \
+            --source-path packages/plugin-openclaw \
+            --changelog "Publish ${CLAWHUB_PACKAGE_NAME}@${package_version} from the GitHub release workflow." \
+            --json
+
+          clawhub package rescan "${CLAWHUB_PACKAGE_NAME}" --yes --json || true
