@@ -144,6 +144,10 @@ The plugin manifest advertises compatibility on two surfaces:
 - `supports` stays in place for OpenClaw 2026.4-era slot and lifecycle routing.
 - `contracts.tools` declares every Remnic-owned tool name for OpenClaw 2026.5+
   descriptor planning and tool ownership validation.
+- `setup.providers` mirrors the OpenAI auth env metadata for OpenClaw 2026.5.3+
+  setup/status discovery.
+- `providerAuthEnvVars` remains for older OpenClaw builds during the upstream
+  deprecation window.
 
 Keep both blocks. `contracts.tools` is additive for older OpenClaw runtimes, but
 OpenClaw 2026.5 rejects plugin tool registration when a runtime tool is missing

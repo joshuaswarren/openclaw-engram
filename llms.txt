@@ -215,6 +215,10 @@ OPENCLAW PLUGIN COMPATIBILITY
   The OpenClaw adapter keeps both manifest compatibility surfaces:
   supports: legacy/current slot, active-memory, heartbeat, command, and reset
   routing for OpenClaw 2026.4-era runtimes.
+  setup.providers mirrors OpenAI env-var auth metadata for OpenClaw 2026.5.3+
+  setup/status discovery. providerAuthEnvVars remains for older OpenClaw builds
+  during the upstream deprecation window. Keep both synchronized with
+  providerAuthChoices and configSchema.openaiApiKey.
   contracts.tools: required by OpenClaw 2026.5+ plugin descriptor planning and
   tool ownership validation. Add every Remnic-owned registerTool name here when
   adding OpenClaw tools, including conditional LCM aliases.
