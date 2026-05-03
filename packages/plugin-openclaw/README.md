@@ -7,7 +7,7 @@ Part of [Remnic](https://github.com/joshuaswarren/remnic), the universal memory 
 ## Install
 
 ```bash
-openclaw plugins install @remnic/plugin-openclaw --pin
+openclaw plugins install clawhub:@remnic/plugin-openclaw
 ```
 
 Or ask your OpenClaw agent:

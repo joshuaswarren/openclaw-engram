@@ -17,8 +17,14 @@ Canonical upstream references for this adapter:
 ## Install
 
 ```bash
-openclaw plugins install @remnic/plugin-openclaw --pin
+openclaw plugins install clawhub:@remnic/plugin-openclaw
 ```
+
+OpenClaw 2026.5.2+ resolves bare plugin package names through ClawHub first and
+then falls back to npm. Remnic is published on ClawHub as
+`@remnic/plugin-openclaw`, so the explicit `clawhub:` prefix keeps fresh installs
+deterministic. For npm-only fallback or rollback versions, use the explicit
+`npm:` source prefix, such as `npm:@remnic/plugin-openclaw@<version>`.
 
 Or use the Remnic installer:
 

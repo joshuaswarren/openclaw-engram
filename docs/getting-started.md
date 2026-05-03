@@ -11,7 +11,7 @@
 ### Option A: npm (recommended)
 
 ```bash
-openclaw plugins install @remnic/plugin-openclaw --pin
+openclaw plugins install clawhub:@remnic/plugin-openclaw
 ```
 
 ### Option B: Developer install (from Git)

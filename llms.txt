@@ -188,10 +188,15 @@ QUICK START (STANDALONE)
 
 QUICK START (OPENCLAW)
 
-  openclaw plugins install @remnic/plugin-openclaw --pin
+  openclaw plugins install clawhub:@remnic/plugin-openclaw
   remnic openclaw install
   launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
   remnic doctor
+
+  OpenClaw 2026.5.2+ resolves bare plugin package names through ClawHub before
+  npm fallback. Remnic is published on ClawHub as @remnic/plugin-openclaw; for
+  npm-only fallback or rollback versions, use the explicit npm source prefix
+  npm:@remnic/plugin-openclaw@<version>.
 
 OPENCLAW PLUGIN COMPATIBILITY
 

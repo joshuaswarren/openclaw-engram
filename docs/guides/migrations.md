@@ -16,7 +16,7 @@ remnic doctor                    # standalone users
 npm test                         # 672 tests pass
 ```
 
-**Rollback:** `openclaw plugins install @remnic/plugin-openclaw@<previous-version> --pin`
+**Rollback:** `openclaw plugins install npm:@remnic/plugin-openclaw@<previous-version>`
 
 ---
 
