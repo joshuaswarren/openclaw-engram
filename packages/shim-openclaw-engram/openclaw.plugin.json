@@ -1,9 +1,23 @@
 {
   "id": "openclaw-engram",
   "name": "Remnic OpenClaw Plugin",
-  "version": "9.3.16",
+  "version": "9.3.17",
   "kind": "memory",
   "description": "Local semantic memory for OpenClaw. Requires plugins.slots.memory set to this plugin id for hooks to fire.",
+  "setup": {
+    "providers": [
+      {
+        "id": "openai",
+        "authMethods": [
+          "api-key"
+        ],
+        "envVars": [
+          "OPENAI_API_KEY"
+        ]
+      }
+    ],
+    "requiresRuntime": false
+  },
   "providerAuthEnvVars": {
     "openai": [
       "OPENAI_API_KEY"

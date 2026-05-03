@@ -122,6 +122,16 @@ for (const manifestPath of OPENCLAW_MANIFEST_PATHS) {
 
     assert.equal(manifest.name, "Remnic OpenClaw Plugin");
     assert.equal(manifest.version, packageJson.version);
+    assert.deepEqual(manifest.setup, {
+      providers: [
+        {
+          id: "openai",
+          authMethods: ["api-key"],
+          envVars: ["OPENAI_API_KEY"],
+        },
+      ],
+      requiresRuntime: false,
+    });
     assert.deepEqual(manifest.providerAuthEnvVars?.openai, ["OPENAI_API_KEY"]);
     assert.deepEqual(manifest.providerAuthChoices, [
       {
