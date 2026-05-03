@@ -670,6 +670,13 @@
         "default": 2000,
         "description": "Maximum time to wait for a reset-triggered flush before returning control to OpenClaw."
       },
+      "initGateTimeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 120000,
+        "default": 30000,
+        "description": "Maximum time Remnic waits for cold-start initialization during recall; also registered as the OpenClaw before_prompt_build hook timeout on SDKs that support per-hook options."
+      },
       "flushOnResetEnabled": {
         "type": "boolean",
         "default": true,

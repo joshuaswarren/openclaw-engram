@@ -789,6 +789,7 @@ export interface PluginConfig {
   // Requires OC fork with PR #29985 (api.resetSession).
   compactionResetEnabled: boolean;
   beforeResetTimeoutMs: number;
+  initGateTimeoutMs: number;
   flushOnResetEnabled: boolean;
   commandsListEnabled: boolean;
   openclawToolsEnabled: boolean;
