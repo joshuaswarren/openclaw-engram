@@ -135,8 +135,8 @@ async function resolveInstalledOpenClawRoot() {
   }
 
   const packageRoots = [
-    path.join(repoRoot, "node_modules", "openclaw"),
     path.join(repoRoot, "packages", "plugin-openclaw", "node_modules", "openclaw"),
+    path.join(repoRoot, "node_modules", "openclaw"),
   ];
   for (const packageRoot of packageRoots) {
     const packageInfo = await stat(path.join(packageRoot, "package.json")).catch(() => null);
