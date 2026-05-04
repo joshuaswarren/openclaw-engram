@@ -11,8 +11,7 @@
   },
   "files": [
     "dist",
-    "openclaw.plugin.json",
-    "plugin-inspector.config.json"
+    "openclaw.plugin.json"
   ],
   "publishConfig": {
     "access": "public",
