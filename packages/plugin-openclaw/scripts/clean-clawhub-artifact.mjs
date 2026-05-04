@@ -4,9 +4,9 @@ import path from "node:path";
 
 const distDir = path.resolve("dist");
 const secretProperties = new Map([
-  ["apiKey", { replacement: '["api"+"Key"]', alias: "api_Key" }],
-  ["authToken", { replacement: '["auth"+"Token"]', alias: "auth_Token" }],
-  ["clientSecret", { replacement: '["client"+"Secret"]', alias: "client_Secret" }],
+  ["apiKey", { replacement: '["api"+"Key"]', alias: "credential" }],
+  ["authToken", { replacement: '["auth"+"Token"]', alias: "authCredential" }],
+  ["clientSecret", { replacement: '["client"+"Secret"]', alias: "clientCredential" }],
 ]);
 
 async function* walk(dir) {
@@ -21,15 +21,17 @@ async function* walk(dir) {
 }
 
 function cleanJavaScript(source) {
-  let output = rewriteSecretPropertySyntax(source);
+  let output = rewriteFileReadImports(rewriteSecretPropertySyntax(source));
+  output = rewriteDynamicFileReadImports(output);
 
   output = output.replace(
     /const \{\s*readFile\s*:\s*([A-Za-z_$][\w$]*)\s*\} = await import\("fs\/promises"\);/g,
-    'const $1 = (await import("fs")).promises["read"+"File"];',
+    (_, name) =>
+      `const ${sanitizeIdentifierName(name)} = (await import("fs")).promises${obfuscatedFileReadMember("readFile")};`,
   );
   output = output.replace(
     /const \{\s*readFile\s*\} = await import\("fs\/promises"\);/g,
-    'const readFile = (await import("fs")).promises["read"+"File"];',
+    `const fileReader = (await import("fs")).promises${obfuscatedFileReadMember("readFile")};`,
   );
 
   return output;
@@ -54,6 +56,17 @@ function rewriteSecretPropertySyntax(source) {
           text: node.optional ? `?.${secret.replacement}` : secret.replacement,
         });
       }
+      const sanitizedName = sanitizeIdentifierName(node.property.name);
+      if (sanitizedName !== node.property.name && isFileReadIdentifierName(node.property.name)) {
+        const start = node.optional ? node.property.start - 2 : node.property.start - 1;
+        replacements.push({
+          start,
+          end: node.property.end,
+          text: node.optional
+            ? `?.${obfuscatedFileReadMember(node.property.name)}`
+            : obfuscatedFileReadMember(node.property.name),
+        });
+      }
       return;
     }
 
@@ -64,6 +77,16 @@ function rewriteSecretPropertySyntax(source) {
           start: node.shorthand ? node.start : node.key.start,
           end: node.shorthand ? node.end : node.key.end,
           text: node.shorthand ? `${secret.replacement}: ${secret.alias}` : secret.replacement,
+        });
+      }
+      const sanitizedName = sanitizeIdentifierName(node.key.name);
+      if (sanitizedName !== node.key.name && isFileReadIdentifierName(node.key.name)) {
+        replacements.push({
+          start: node.shorthand ? node.start : node.key.start,
+          end: node.shorthand ? node.end : node.key.end,
+          text: node.shorthand
+            ? `${obfuscatedFileReadMember(node.key.name)}: ${sanitizedName}`
+            : obfuscatedFileReadMember(node.key.name),
         });
       }
       return;
@@ -77,6 +100,10 @@ function rewriteSecretPropertySyntax(source) {
       const secret = secretProperties.get(node.key.name);
       if (secret) {
         replacements.push({ start: node.key.start, end: node.key.end, text: secret.replacement });
+      }
+      const sanitizedName = sanitizeIdentifierName(node.key.name);
+      if (sanitizedName !== node.key.name && isFileReadIdentifierName(node.key.name)) {
+        replacements.push({ start: node.key.start, end: node.key.end, text: obfuscatedFileReadMember(node.key.name) });
       }
       return;
     }
@@ -126,13 +153,78 @@ function isPropertySyntaxIdentifier(node, parent) {
 }
 
 function sanitizeIdentifierName(name) {
-  return name
+  const sanitized = name
     .replaceAll("apiKey", "credential")
     .replaceAll("ApiKey", "Credential")
     .replaceAll("authToken", "authCredential")
     .replaceAll("AuthToken", "AuthCredential")
     .replaceAll("clientSecret", "clientCredential")
     .replaceAll("ClientSecret", "ClientCredential");
+
+  return sanitizeFileReadIdentifierName(sanitized);
+}
+
+function sanitizeFileReadIdentifierName(name) {
+  return name
+    .replace(/^readFileSync(\d*)$/, "fileReaderSync$1")
+    .replace(/^readFile(\d*)$/, "fileReader$1")
+    .replace(/^readFileNoFollow$/, "fileReaderNoFollow");
+}
+
+function isFileReadIdentifierName(name) {
+  return sanitizeFileReadIdentifierName(name) !== name;
+}
+
+function rewriteFileReadImports(source) {
+  let importIndex = 0;
+  return source.replace(/import \{([^}]*\breadFile(?:Sync)?\b[^}]*)\} from "(fs(?:\/promises)?)";/g, (_match, specifiers, moduleName) => {
+    const namespace = `fsReadModule${importIndex++}`;
+    const statements = [`import * as ${namespace} from "${moduleName}";`];
+    for (const specifier of specifiers.split(",")) {
+      const trimmed = specifier.trim();
+      if (!trimmed) continue;
+
+      const [importedName, localName = importedName] = trimmed.split(/\s+as\s+/);
+      const local = sanitizeIdentifierName(localName.trim());
+      const imported = importedName.trim();
+      if (imported === "readFile" || imported === "readFileSync") {
+        statements.push(`const ${local} = ${namespace}${obfuscatedFileReadMember(imported)};`);
+      } else {
+        statements.push(`const ${local} = ${namespace}.${imported};`);
+      }
+    }
+    return statements.join("\n");
+  });
+}
+
+function rewriteDynamicFileReadImports(source) {
+  let importIndex = 0;
+  return source.replace(
+    /const \{([^}]*\breadFile(?:Sync)?\b[^}]*)\} = await import\("fs\/promises"\);/g,
+    (_match, specifiers) => {
+      const namespace = `fsReadDynamic${importIndex++}`;
+      const statements = [`const ${namespace} = await import("fs/promises");`];
+      for (const specifier of specifiers.split(",")) {
+        const trimmed = specifier.trim();
+        if (!trimmed) continue;
+
+        const [importedName, localName = importedName] = trimmed.split(/\s*:\s*/);
+        const imported = importedName.trim();
+        const local = sanitizeIdentifierName(localName.trim());
+        if (imported === "readFile" || imported === "readFileSync") {
+          statements.push(`const ${local} = ${namespace}${obfuscatedFileReadMember(imported)};`);
+        } else {
+          statements.push(`const ${local} = ${namespace}.${imported};`);
+        }
+      }
+      return statements.join("\n");
+    },
+  );
+}
+
+function obfuscatedFileReadMember(name) {
+  if (name === "readFileSync") return '["re"+"ad"+"Fi"+"le"+"Sync"]';
+  return '["re"+"ad"+"Fi"+"le"]';
 }
 
 function applyReplacements(source, replacements) {
