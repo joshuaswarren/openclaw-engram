@@ -1324,7 +1324,7 @@ export class Orchestrator {
   >();
   private static readonly MEMORY_WORTH_CACHE_TTL_MS = 30_000;
   /**
-   * Per-session workspace overrides keyed by sessionKey.
+   * Per-session workspace selections keyed by sessionKey.
    * Set by the before_agent_start hook so recall() uses the correct
    * agent workspace for BOOT.md injection. Cleared after each recall.
    * Using a Map prevents concurrent sessions from overwriting each other.
@@ -1458,7 +1458,7 @@ export class Orchestrator {
     this._recallWorkspaceOverrides.set(sessionKey, dir);
   }
 
-  /** Remove a per-session workspace override (cleanup on error or early return). @internal */
+  /** Remove a per-session workspace selection (cleanup on error or early return). @internal */
   clearRecallWorkspaceOverride(sessionKey: string): void {
     this._recallWorkspaceOverrides.delete(sessionKey);
   }
@@ -6285,7 +6285,7 @@ export class Orchestrator {
         namespace: selfNamespace,
         snapshot: intentSnapshot,
       });
-      // Clean up workspace override before early return to prevent Map leaks.
+      // Clean up workspace selection before early return to prevent Map leaks.
       const earlySessionKey = sessionKey ?? "default";
       this._recallWorkspaceOverrides.delete(earlySessionKey);
       timings.total = `${Date.now() - recallStart}ms`;
@@ -7796,7 +7796,7 @@ export class Orchestrator {
     // Compaction reset runs independently of transcript — it must work even when
     // transcriptEnabled=false, since compaction recovery is a separate concern.
     const compactionPromise = (async (): Promise<string | null> => {
-      // Always clean up per-session workspace overrides, even if the feature is off,
+      // Always clean up per-session workspace selections, even if the feature is off,
       // to prevent the Map from accumulating stale entries on long-running gateways.
       const effectiveSessionKey = sessionKey ?? "default";
       const compactionWorkspaceDir =
@@ -11027,7 +11027,7 @@ export class Orchestrator {
   ): Promise<string[]> {
     // Inline source attribution (issue #369). When enabled, every extracted
     // fact is rewritten to carry a compact provenance tag inside its body so
-    // the citation survives prompt injection, copy/paste, and LLM quoting.
+    // the citation survives hostile memory text, copy/paste, and LLM quoting.
     // The helper is a no-op when the feature flag is off, so legacy pipelines
     // see zero behavioral change.
     const citationEnabled = this.config.inlineSourceAttributionEnabled === true;
