@@ -152,7 +152,7 @@ test("CLI query does not wait for deferred QMD startup maintenance", async () =>
   );
 });
 
-test("CLI xray does not wait for deferred QMD startup maintenance", async () => {
+test("CLI xray waits for deferred QMD startup maintenance before diagnostic recall", async () => {
   const src = await readCli();
   const xrayStart = src.indexOf("async function cmdXray");
   const versionsStart = src.indexOf("async function cmdVersions");
@@ -160,12 +160,12 @@ test("CLI xray does not wait for deferred QMD startup maintenance", async () => 
   assert.ok(versionsStart > xrayStart, "cmdVersions should follow cmdXray in CLI source");
   const cmdXrayBody = src.slice(xrayStart, versionsStart);
   assert.ok(
-    !cmdXrayBody.includes("await orchestrator.deferredReady"),
-    "remnic xray should not block foreground recall on startup index maintenance",
+    cmdXrayBody.includes("await orchestrator.deferredReady"),
+    "remnic xray should diagnose recall after startup index maintenance refreshes disk-backed search state",
   );
   assert.ok(
     cmdXrayBody.includes("orchestrator.abortDeferredInit()"),
-    "remnic xray should cancel its own deferred startup maintenance before exit",
+    "remnic xray should retain the deferred startup abort guard before exit",
   );
 });
 

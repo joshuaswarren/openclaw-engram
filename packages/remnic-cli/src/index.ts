@@ -3409,6 +3409,7 @@ async function cmdXray(rest: string[]): Promise<void> {
   const config = parseConfig(remnicCfg);
   const orchestrator = new Orchestrator(config);
   await orchestrator.initialize();
+  await orchestrator.deferredReady;
   const service = new EngramAccessService(orchestrator);
 
   try {
@@ -3421,8 +3422,8 @@ async function cmdXray(rest: string[]): Promise<void> {
       stdout: (line) => console.log(line),
     });
   } finally {
-    // Keep xray responsive like query: run recall against initialized state,
-    // then cancel deferred startup sync/warmup owned by this short-lived CLI.
+    // Xray is diagnostic, so it waits for deferred startup sync before recall;
+    // abort remains a no-op guard if startup behavior changes later.
     orchestrator.abortDeferredInit();
   }
 }
