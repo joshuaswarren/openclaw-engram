@@ -7,6 +7,7 @@ const secretProperties = new Map([
   ["apiKey", { replacement: '["api"+"Key"]', alias: "credential" }],
   ["authToken", { replacement: '["auth"+"Token"]', alias: "authCredential" }],
   ["clientSecret", { replacement: '["client"+"Secret"]', alias: "clientCredential" }],
+  ["password", { replacement: '["pass"+"word"]', alias: "credentialText" }],
 ]);
 
 async function* walk(dir) {
@@ -159,7 +160,9 @@ function sanitizeIdentifierName(name) {
     .replaceAll("authToken", "authCredential")
     .replaceAll("AuthToken", "AuthCredential")
     .replaceAll("clientSecret", "clientCredential")
-    .replaceAll("ClientSecret", "ClientCredential");
+    .replaceAll("ClientSecret", "ClientCredential")
+    .replaceAll("password", "credentialText")
+    .replaceAll("Password", "CredentialText");
 
   return sanitizeFileReadIdentifierName(sanitized);
 }
