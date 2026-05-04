@@ -2155,11 +2155,7 @@ const pluginDefinition = {
 
       if (sdkCaps.hasBeforePromptBuild) {
         // New SDK path — literal string for compat checker detection
-        (api.on as (
-          event: string,
-          handler: (event: Record<string, unknown>, ctx: Record<string, unknown>) => Promise<unknown>,
-          opts?: { timeoutMs?: number },
-        ) => void)(
+        api.on(
           "before_prompt_build",
           async (
             event: Record<string, unknown>,
@@ -2196,7 +2192,7 @@ const pluginDefinition = {
             }
             return result;
           },
-          { timeoutMs: cfg.initGateTimeoutMs },
+          ...([{ timeoutMs: cfg.initGateTimeoutMs }] as unknown as []),
         );
       } else {
         // Legacy SDK path — literal string for compat checker detection.
