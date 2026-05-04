@@ -46,6 +46,22 @@ const OPENCLAW_MANIFEST_PATHS = [
   "packages/plugin-openclaw/openclaw.plugin.json",
   "packages/shim-openclaw-engram/openclaw.plugin.json",
 ];
+const EXPECTED_LIFECYCLE_HOOK_CONTRACTS = [
+  "after_compaction",
+  "after_tool_call",
+  "agent_end",
+  "before_agent_start",
+  "before_compaction",
+  "before_prompt_build",
+  "before_reset",
+  "before_tool_call",
+  "commands.list",
+  "llm_output",
+  "session_end",
+  "session_start",
+  "subagent_ended",
+  "subagent_spawning",
+];
 const TOOL_SOURCE_PATHS = [
   "src/tools.ts",
   "packages/plugin-openclaw/src/openclaw-tools/memory-search-tool.ts",
@@ -111,6 +127,29 @@ for (const manifestPath of OPENCLAW_MANIFEST_PATHS) {
       readSourceToolNames(),
       "OpenClaw 2026.5 rejects plugin tools not declared in openclaw.plugin.json#contracts.tools",
     );
+  });
+
+  test(`${manifestPath} declares OpenClaw adapter command, memory, service, and hook contracts`, () => {
+    const manifest = readManifest(manifestPath);
+
+    assert.deepEqual(manifest.commandAliases, [
+      {
+        command: "remnic",
+        pluginId: manifest.id,
+      },
+    ]);
+    assert.deepEqual(manifest.activation, {
+      onCommands: ["remnic"],
+      onCapabilities: ["memory", "tool", "hook"],
+    });
+    assert.deepEqual(manifest.contracts?.commands, ["remnic"]);
+    assert.deepEqual(
+      [...(manifest.contracts?.hooks ?? [])].sort(),
+      EXPECTED_LIFECYCLE_HOOK_CONTRACTS,
+    );
+    assert.deepEqual(manifest.contracts?.memoryCapabilities, [manifest.id]);
+    assert.deepEqual(manifest.contracts?.memoryPromptSections, ["engram-memory"]);
+    assert.deepEqual(manifest.contracts?.services, [manifest.id]);
   });
 
   test(`${manifestPath} declares pre-runtime auth metadata for OpenAI-backed memory extraction`, () => {

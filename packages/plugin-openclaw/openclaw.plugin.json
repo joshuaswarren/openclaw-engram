@@ -50,6 +50,34 @@
     "beforeReset": true
   },
   "contracts": {
+    "commands": [
+      "remnic"
+    ],
+    "hooks": [
+      "before_prompt_build",
+      "before_agent_start",
+      "agent_end",
+      "before_compaction",
+      "after_compaction",
+      "before_reset",
+      "session_start",
+      "session_end",
+      "before_tool_call",
+      "after_tool_call",
+      "llm_output",
+      "subagent_spawning",
+      "subagent_ended",
+      "commands.list"
+    ],
+    "memoryCapabilities": [
+      "openclaw-remnic"
+    ],
+    "memoryPromptSections": [
+      "engram-memory"
+    ],
+    "services": [
+      "openclaw-remnic"
+    ],
     "tools": [
       "compounding_promote_candidate",
       "compounding_weekly_synthesize",
@@ -1688,14 +1716,25 @@
           "authToken": {
             "description": "Bearer token for the local Remnic HTTP API. Either a literal string (supports ${ENV_VAR} expansion) or an OpenClaw SecretRef object (e.g. {\"source\":\"exec\",\"provider\":\"kc_openclaw_remnic_token\",\"id\":\"value\"}) resolved at startup via the OpenClaw gateway secret resolver (issue #757). If omitted, OPENCLAW_REMNIC_ACCESS_TOKEN / OPENCLAW_ENGRAM_ACCESS_TOKEN is used.",
             "anyOf": [
-              { "type": "string" },
+              {
+                "type": "string"
+              },
               {
                 "type": "object",
-                "required": ["source"],
+                "required": [
+                  "source"
+                ],
                 "properties": {
-                  "source": { "type": "string", "minLength": 1 },
-                  "provider": { "type": "string" },
-                  "id": { "type": "string" },
+                  "source": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "provider": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
                   "command": {}
                 }
               }
@@ -2525,8 +2564,14 @@
       },
       "patternReinforcementCategories": {
         "type": "array",
-        "items": { "type": "string" },
-        "default": ["preference", "fact", "decision"],
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "preference",
+          "fact",
+          "decision"
+        ],
         "description": "Memory categories the pattern-reinforcement job considers. Skips procedural memories so it stays disjoint from procedural mining. Default: preference, fact, decision."
       },
       "reinforcementRecallBoostEnabled": {
@@ -2853,12 +2898,12 @@
       },
       "modelSource": {
         "type": "string",
-      "enum": [
-        "plugin",
-        "gateway"
-      ],
-      "default": "gateway",
-      "description": "LLM source: 'gateway' delegates to a gateway agent's model chain (agents.list[]); 'plugin' uses Engram's own openai/localLlm config."
+        "enum": [
+          "plugin",
+          "gateway"
+        ],
+        "default": "gateway",
+        "description": "LLM source: 'gateway' delegates to a gateway agent's model chain (agents.list[]); 'plugin' uses Engram's own openai/localLlm config."
       },
       "gatewayAgentId": {
         "type": "string",
@@ -5647,5 +5692,21 @@
       "advanced": true,
       "help": "Promote stored reasoning_trace memories to the top of recall results when the incoming query reads like a problem-solving ask. Default off; enable after benchmarking (issue #564)."
     }
+  },
+  "commandAliases": [
+    {
+      "command": "remnic",
+      "pluginId": "openclaw-remnic"
+    }
+  ],
+  "activation": {
+    "onCommands": [
+      "remnic"
+    ],
+    "onCapabilities": [
+      "memory",
+      "tool",
+      "hook"
+    ]
   }
 }
