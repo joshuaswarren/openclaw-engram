@@ -35,6 +35,7 @@ const EXPECTED_HOOK_PREFIXES = [
   "agent_",
   "before_",
   "commands.",
+  "gateway_",
   "llm_",
   "session_",
 ];

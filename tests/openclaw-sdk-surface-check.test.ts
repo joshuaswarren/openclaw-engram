@@ -180,6 +180,8 @@ const expectedHooks = [
   "before_prompt_build",
   "before_reset",
   "before_tool_call",
+  "gateway_start",
+  "gateway_stop",
   "llm_input",
   "llm_output",
   "session_end",
@@ -250,6 +252,8 @@ export type HookName =
   | "before_prompt_build"
   | "before_reset"
   | "before_tool_call"
+  | "gateway_start"
+  | "gateway_stop"
   | "llm_input"
   | "llm_output"
   | "session_end"
