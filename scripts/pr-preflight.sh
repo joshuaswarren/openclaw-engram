@@ -54,6 +54,7 @@ if [[ "$MODE" == "quick" ]]; then
   run npm run check:openclaw-sdk-surface
   run pnpm exec tsx --test tests/openclaw-sdk-surface-check.test.ts
   run npm run test:openclaw-scenarios
+  run npm run test:openclaw-privacy
   run pnpm exec tsx --test tests/register-multi-registry.test.ts
   run pnpm exec tsx --test tests/intent.test.ts
   run pnpm exec tsx --test tests/runtime-input-guards.test.ts
