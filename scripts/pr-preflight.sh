@@ -40,6 +40,7 @@ needs_entity_hardening() {
 # Core mandatory gate from docs/ops/pr-review-hardening-playbook.md
 run npm run check-types
 run npm run check-config-contract
+run npm run plugin:inspect
 run bash scripts/check-review-patterns.sh
 
 if needs_entity_hardening; then

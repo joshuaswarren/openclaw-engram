@@ -36,6 +36,8 @@
   "scripts": {
     "build": "tsup --config tsup.config.ts",
     "check-types": "tsc --noEmit",
+    "plugin:inspect": "plugin-inspector check --config plugin-inspector.config.json --no-openclaw",
+    "plugin:inspect:runtime": "pnpm run build && PLUGIN_INSPECTOR_EXECUTE_ISOLATED=1 plugin-inspector check --config plugin-inspector.config.json --no-openclaw --runtime --mock-sdk",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -46,6 +48,7 @@
     "openclaw": ">=2026.4.8"
   },
   "devDependencies": {
+    "@openclaw/plugin-inspector": "0.3.10",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   },
