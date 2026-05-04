@@ -48,6 +48,7 @@
     "openclaw": ">=2026.4.8"
   },
   "devDependencies": {
+    "@openclaw/plugin-inspector": "0.3.10",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   },
