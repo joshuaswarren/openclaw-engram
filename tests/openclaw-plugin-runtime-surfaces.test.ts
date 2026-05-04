@@ -141,7 +141,7 @@ for (const manifestPath of OPENCLAW_MANIFEST_PATHS) {
     ]);
     assert.deepEqual(manifest.activation, {
       onCommands: ["remnic"],
-      onCapabilities: ["memory", "tool", "hook"],
+      onCapabilities: ["tool", "hook"],
     });
     assert.deepEqual(manifest.contracts?.commands, ["remnic"]);
     assert.deepEqual(
