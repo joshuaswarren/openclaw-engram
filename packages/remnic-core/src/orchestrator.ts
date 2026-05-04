@@ -1881,13 +1881,13 @@ export class Orchestrator {
         targetTokens: number,
         aggressive: boolean,
       ) => {
-        const systemPrompt = aggressive
+        const instructionText = aggressive
           ? `Compress the following into bullet points. One bullet per distinct fact or decision. Maximum ${targetTokens} tokens total. No prose.`
           : `Compress the following conversation segment into a dense summary. Preserve: decisions made, code artifacts mentioned, errors encountered, open questions, and any commitments or next-steps. Omit: pleasantries, restatements, and anything the agent would not need to recall later. Output a single paragraph, maximum ${targetTokens} tokens.`;
         try {
           const result = await this.localLlm.chatCompletion(
             [
-              { role: "system", content: systemPrompt },
+              { role: "system", content: instructionText },
               { role: "user", content: text.slice(0, 12000) },
             ],
             {
