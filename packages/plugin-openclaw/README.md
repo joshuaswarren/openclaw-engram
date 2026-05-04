@@ -1,6 +1,6 @@
 # @remnic/plugin-openclaw
 
-OpenClaw plugin for Remnic memory. Thin adapter that connects the OpenClaw gateway to [`@remnic/core`](https://www.npmjs.com/package/@remnic/core).
+OpenClaw plugin for Remnic memory. The package bundles the OpenClaw adapter plus the Remnic core runtime so it can run without a separate Remnic service; the adapter registers OpenClaw hooks/tools and delegates memory behavior to [`@remnic/core`](https://www.npmjs.com/package/@remnic/core).
 
 Part of [Remnic](https://github.com/joshuaswarren/remnic), the universal memory layer for AI agents.
 
@@ -79,7 +79,7 @@ runs from real runtime and OpenClaw chain runs.
 This plugin hooks into the OpenClaw gateway lifecycle:
 
 - **`gateway_start`** -- initializes the Remnic memory engine
-- **`before_agent_start`** / **`before_prompt_build`** -- injects relevant memories into the agent's context
+- **`before_agent_start`** / **`before_prompt_build`** -- adds relevant memories to the agent context through OpenClaw's memory context builders
 - **`agent_end`** -- buffers the conversation turn for extraction
 - **`before_compaction`** / **`after_compaction`** -- saves checkpoints and triggers session reset on context compaction
 - **`before_reset`** -- bounded flush of the in-flight buffer before OpenClaw discards a session
@@ -91,7 +91,13 @@ This plugin hooks into the OpenClaw gateway lifecycle:
 - **Tools** -- registers `memory_search`, `memory_get`, `memory_stats`, and other agent tools
 - **Commands** -- provides CLI commands for memory management
 
-All memory processing uses [`@remnic/core`](https://www.npmjs.com/package/@remnic/core). Memory files stay on your local filesystem as plain markdown files. When the plugin is configured to use OpenAI or an OpenAI-compatible endpoint, conversation and memory excerpts may be sent to that configured model provider for extraction, consolidation, summarization, and embeddings. Use `modelSource: "gateway"` or local LLM settings when those operations should stay on your own OpenClaw/local model path.
+All memory processing uses [`@remnic/core`](https://www.npmjs.com/package/@remnic/core). Memory files stay on your local filesystem as plain markdown files. When the plugin is configured to use OpenAI, an OpenAI-compatible endpoint, or provider credentials resolved from OpenClaw runtime auth, conversation and memory excerpts may be sent to that configured model provider for extraction, consolidation, summarization, embeddings, active recall, or benchmark judging. Use `modelSource: "gateway"` and route the gateway agent to local or otherwise approved models when those operations should stay on your own OpenClaw/local model path.
+
+Credential and model-provider behavior is explicit:
+
+- `modelSource: "gateway"` is the recommended OpenClaw mode and uses OpenClaw gateway agents instead of a Remnic-owned API key.
+- Plugin/provider modes may read configured model credentials from the OpenClaw auth resolver, OpenClaw's materialized provider config at `~/.openclaw/agents/main/agent/models.json`, or provider-specific environment variables such as `<PROVIDER>_API_KEY` and `<PROVIDER>_TOKEN`.
+- Do not set `openaiApiKey` or provider environment variables for Remnic if you want all LLM-backed memory work routed through the gateway.
 
 ## Plugin Inspection
 
@@ -143,14 +149,14 @@ loads passively depending on `slotBehavior`:
 }
 ```
 
-Passive mode keeps the tool/service surface available but skips prompt
-injection and extraction hooks so two memory plugins do not race each other.
+Passive mode keeps the tool/service surface available but skips context-building
+and extraction hooks so two memory plugins do not race each other.
 
 ## Supported OpenClaw Memory Features
 
 Remnic supports the following OpenClaw memory integration points:
 
-### Memory Prompt Injection
+### Memory Context Sections
 
 | Feature | Status | Since |
 |---------|--------|-------|
@@ -206,7 +212,7 @@ Reset handling is configurable:
 }
 ```
 
-The reset path clears per-session prompt caches and workspace override state.
+The reset path clears per-session context caches and workspace preference state.
 If `flushOnResetEnabled` is true, Remnic also attempts a bounded extraction
 flush before the reset completes.
 
@@ -242,7 +248,7 @@ OpenClaw's dreaming feature (background memory consolidation) is handled by Open
 
 The plugin manifest now accepts the OpenClaw `dreaming` config block directly
 so newer runtimes do not reject the config at validation time, and the OpenClaw
-adapter now injects recent diary entries as `## Recent Dreams (Remnic)` when
+adapter now adds recent diary entries as `## Recent Dreams (Remnic)` when
 the journal contains entries. The adapter also imports `DREAMS.md` entries into
 Remnic storage as `memoryKind: "dream"` with stable provenance so file-watch
 replays stay idempotent:
@@ -276,7 +282,7 @@ back to `DREAMS.md` through the shared writer using the OpenAI Responses API.
 
 The shared `@remnic/core` surface parsers also understand `HEARTBEAT.md`. The
 OpenClaw adapter imports those entries as `memoryKind: "procedural"`, gates
-normal recall during heartbeat-triggered runs, injects the active heartbeat plus
+normal recall during heartbeat-triggered runs, adds the active heartbeat plus
 `## Previous Runs`, and skips episodic buffering for heartbeat turns by default.
 Detection can use explicit runtime metadata, a documented heuristic fallback, or
 `auto` to prefer runtime metadata and fall back when needed. All of that logic

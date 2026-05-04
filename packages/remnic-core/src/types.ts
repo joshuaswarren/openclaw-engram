@@ -1140,7 +1140,7 @@ export interface PluginConfig {
    * Inline source attribution (issue #369).
    * When enabled, extracted facts carry a compact provenance tag (agent,
    * session, timestamp) inlined into the fact text — not just in YAML
-   * frontmatter — so the citation survives prompt injection, copy/paste,
+   * frontmatter — so the citation survives hostile memory text, copy/paste,
    * and LLM quoting. Off by default to preserve backwards compatibility
    * with existing downstream consumers that expect raw fact text.
    */
@@ -2857,7 +2857,7 @@ export interface RecallTraceEvent {
   durationMs: number;
   timings?: Record<string, string>;
   /**
-   * The full recalled memory context injected into the system prompt.
+   * The full recalled memory context added to the runtime context.
    * Only populated when `traceRecallContent` config option is `true`.
    * Omitted by default to avoid sending potentially sensitive memory content
    * to external trace collectors unless explicitly opted in.
