@@ -108,6 +108,15 @@ guarded in the adapter, including `registerMemoryCapability`, `registerCli`,
 and `registerCommand`; keep runtime capture coverage for those surfaces in a
 separate adapter test slice.
 
+## SDK Surface Drift Check
+
+The adapter keeps a conservative OpenClaw SDK surface snapshot at
+`openclaw-sdk-surface.expected.json`. Run
+`npm run check:openclaw-sdk-surface` after changing OpenClaw dependencies or
+with `-- --package-root <path>` to check a local OpenClaw checkout. When an
+upstream SDK change is intentional, review the adapter impact first, then
+refresh the snapshot with `npm run check:openclaw-sdk-surface -- --write`.
+
 ## Slot Selection
 
 Remnic is an exclusive memory-slot plugin. When `plugins.slots.memory` points

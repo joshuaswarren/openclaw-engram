@@ -41,6 +41,7 @@ needs_entity_hardening() {
 run npm run check-types
 run npm run check-config-contract
 run npm run plugin:inspect
+run npm run check:openclaw-sdk-surface
 run bash scripts/check-review-patterns.sh
 
 if needs_entity_hardening; then
@@ -51,6 +52,7 @@ if [[ "$MODE" == "quick" ]]; then
   # Registration contract tests catch silent lifecycle breakage (issues #282, #285).
   # Run first — registration regressions are caught before slower tests.
   run pnpm exec tsx --test tests/openclaw-registration-capture.test.ts
+  run pnpm exec tsx --test tests/openclaw-sdk-surface-check.test.ts
   run npm test -- tests/register-multi-registry.test.ts
   run npm test -- tests/intent.test.ts
   run npm test -- tests/runtime-input-guards.test.ts
