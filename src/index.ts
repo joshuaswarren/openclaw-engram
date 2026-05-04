@@ -2192,7 +2192,6 @@ const pluginDefinition = {
             }
             return result;
           },
-          ...([{ timeoutMs: cfg.initGateTimeoutMs }] as unknown as []),
         );
       } else {
         // Legacy SDK path — literal string for compat checker detection.
