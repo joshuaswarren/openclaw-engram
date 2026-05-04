@@ -93,6 +93,21 @@ This plugin hooks into the OpenClaw gateway lifecycle:
 
 All memory processing uses [`@remnic/core`](https://www.npmjs.com/package/@remnic/core). Memory files stay on your local filesystem as plain markdown files. When the plugin is configured to use OpenAI or an OpenAI-compatible endpoint, conversation and memory excerpts may be sent to that configured model provider for extraction, consolidation, summarization, and embeddings. Use `modelSource: "gateway"` or local LLM settings when those operations should stay on your own OpenClaw/local model path.
 
+## Plugin Inspection
+
+Run the OpenClaw plugin inspector with:
+
+```bash
+npm run plugin:inspect
+npm run plugin:inspect:runtime
+```
+
+The inspector gate covers the static OpenClaw adapter manifest, hook, tool, and
+service surfaces. Some registrations are intentionally casted or dynamically
+guarded in the adapter, including `registerMemoryCapability`, `registerCli`,
+and `registerCommand`; keep runtime capture coverage for those surfaces in a
+separate adapter test slice.
+
 ## Slot Selection
 
 Remnic is an exclusive memory-slot plugin. When `plugins.slots.memory` points

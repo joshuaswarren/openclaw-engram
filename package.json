@@ -89,6 +89,8 @@
     "check-config-contract": "tsx scripts/validate-config-contract.ts",
     "test": "tsx --test 'tests/**/*.test.ts' 'packages/remnic-core/src/**/*.test.ts' 'packages/bench/src/**/*.test.ts' 'packages/export-weclone/src/**/*.test.ts' 'packages/import-weclone/src/**/*.test.ts'",
     "test:entity-hardening": "tsx --test tests/intent.test.ts tests/recall-no-recall-short-circuit.test.ts tests/orchestrator-path-filter.test.ts tests/artifact-cache.test.ts tests/memory-cache.test.ts tests/entity-retrieval.test.ts tests/entity-synthesis-storage.test.ts tests/entity-synthesis-orchestrator.test.ts tests/config-recall-pipeline.test.ts tests/entity-contamination.test.ts",
+    "plugin:inspect": "pnpm --filter @remnic/plugin-openclaw run plugin:inspect",
+    "plugin:inspect:runtime": "pnpm --filter @remnic/plugin-openclaw run plugin:inspect:runtime",
     "scan:openclaw-plugin": "node scripts/openclaw-plugin-security-scan.mjs packages/plugin-openclaw",
     "verify:openclaw-clawpack": "node scripts/verify-openclaw-clawpack.mjs",
     "bench:list": "node scripts/run-bench-cli.mjs list",
@@ -109,6 +111,7 @@
     "prepack": "npm run build"
   },
   "devDependencies": {
+    "@openclaw/plugin-inspector": "0.3.10",
     "@remnic/bench": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "tsup": "^8.5.1",
