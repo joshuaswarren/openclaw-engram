@@ -134,8 +134,9 @@ for (const manifestPath of OPENCLAW_MANIFEST_PATHS) {
 
     assert.deepEqual(manifest.commandAliases, [
       {
-        command: "remnic",
-        pluginId: manifest.id,
+        name: "remnic",
+        kind: "runtime-slash",
+        cliCommand: "remnic",
       },
     ]);
     assert.deepEqual(manifest.activation, {

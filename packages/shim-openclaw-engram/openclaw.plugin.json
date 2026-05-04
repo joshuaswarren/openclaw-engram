@@ -5695,8 +5695,9 @@
   },
   "commandAliases": [
     {
-      "command": "remnic",
-      "pluginId": "openclaw-engram"
+      "name": "remnic",
+      "kind": "runtime-slash",
+      "cliCommand": "remnic"
     }
   ],
   "activation": {
