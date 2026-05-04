@@ -89,7 +89,7 @@ test("OpenClaw SDK snapshot includes native memory registrar surfaces reviewed b
 
 test("OpenClaw SDK surface check skips cleanly when OpenClaw is not installed", () => {
   const result = runCheck([], {
-    NODE_PATH: path.join(os.tmpdir(), "remnic-missing-openclaw-node-path"),
+    REMNIC_OPENCLAW_SURFACE_DISABLE_AUTO_RESOLVE: "1",
   });
 
   assert.equal(result.status, 0, result.stderr);
@@ -98,7 +98,7 @@ test("OpenClaw SDK surface check skips cleanly when OpenClaw is not installed", 
 
 test("OpenClaw SDK surface check can require an installed OpenClaw package", () => {
   const result = runCheck(["--require"], {
-    NODE_PATH: path.join(os.tmpdir(), "remnic-missing-openclaw-node-path"),
+    REMNIC_OPENCLAW_SURFACE_DISABLE_AUTO_RESOLVE: "1",
   });
 
   assert.equal(result.status, 1);

@@ -131,6 +131,10 @@ function expandTilde(value) {
 }
 
 async function resolveInstalledOpenClawRoot() {
+  if (process.env.REMNIC_OPENCLAW_SURFACE_DISABLE_AUTO_RESOLVE === "1") {
+    return null;
+  }
+
   const requireAnchors = [
     import.meta.url,
     path.join(repoRoot, "package.json"),
