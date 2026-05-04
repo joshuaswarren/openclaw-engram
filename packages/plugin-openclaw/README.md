@@ -104,6 +104,18 @@ The npm package also declares this surface in `package.json` under
 provider env vars, config path, and external-model routing behavior before
 installation.
 
+## Privacy Boundary
+
+OpenClaw hook runtime metadata such as authorization headers, API keys, provider
+credential objects, and bearer tokens is operational metadata. Remnic does not
+persist those fields to transcripts, extraction buffers, recall audit entries,
+logs, or memory content.
+
+User-authored message text is different: Remnic is a memory plugin, so message
+content can be stored, extracted, summarized, embedded, or recalled according to
+the configured memory policy. Do not paste secrets into chat when you do not
+want them treated as conversation content.
+
 ## Plugin Inspection
 
 Run the OpenClaw plugin inspector with:
@@ -127,6 +139,15 @@ npm run test:openclaw-scenarios
 
 The suite covers the registered memory tools and lifecycle hooks without live
 OpenClaw, LLM credentials, or network calls.
+
+Run the OpenClaw hook privacy suite with:
+
+```bash
+npm run test:openclaw-privacy
+```
+
+The suite guards against runtime auth metadata leaking into persisted memory,
+transcript, recall-audit, or debug-log surfaces.
 
 ## SDK Surface Drift Check
 
