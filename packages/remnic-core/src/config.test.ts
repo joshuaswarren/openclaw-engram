@@ -95,6 +95,35 @@ test("parseConfig initGateTimeoutMs clamps unsafe values", () => {
   assert.equal(parseConfig({ initGateTimeoutMs: "abc" }).initGateTimeoutMs, 30_000);
 });
 
+test("parseConfig modelSource=gateway does not inherit OPENAI_API_KEY from the process env", () => {
+  const original = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "sk-env-should-not-be-used";
+  try {
+    const cfg = parseConfig({ modelSource: "gateway" });
+    assert.equal(cfg.modelSource, "gateway");
+    assert.equal(cfg.openaiApiKey, undefined);
+  } finally {
+    if (original === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = original;
+  }
+});
+
+test("parseConfig modelSource=gateway still honors an explicit openaiApiKey override", () => {
+  const original = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "sk-env-should-not-be-used";
+  try {
+    const cfg = parseConfig({
+      modelSource: "gateway",
+      openaiApiKey: "sk-explicit",
+    });
+    assert.equal(cfg.modelSource, "gateway");
+    assert.equal(cfg.openaiApiKey, "sk-explicit");
+  } finally {
+    if (original === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = original;
+  }
+});
+
 test("parseConfig keeps explicit cue recall opt-in and budgets configurable", () => {
   const defaults = parseConfig({});
   assert.equal(defaults.explicitCueRecallEnabled, false);

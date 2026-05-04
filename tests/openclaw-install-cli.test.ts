@@ -127,6 +127,48 @@ test("CLI writes openclaw-remnic entry and memory slot", async () => {
   );
 });
 
+test("CLI openclaw install defaults Remnic to gateway model source", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes('modelSource: "gateway"'),
+    "OpenClaw install should prefer gateway LLM routing instead of requiring a Remnic OpenAI key",
+  );
+});
+
+test("CLI query does not wait for deferred QMD startup maintenance", async () => {
+  const src = await readCli();
+  const queryStart = src.indexOf("async function cmdQuery");
+  const xrayStart = src.indexOf("async function cmdXray");
+  assert.ok(queryStart >= 0, "cmdQuery must exist");
+  assert.ok(xrayStart > queryStart, "cmdXray should follow cmdQuery in CLI source");
+  const cmdQueryBody = src.slice(queryStart, xrayStart);
+  assert.ok(
+    !cmdQueryBody.includes("await orchestrator.deferredReady"),
+    "remnic query should not block foreground recall on startup index maintenance",
+  );
+  assert.ok(
+    cmdQueryBody.includes("orchestrator.abortDeferredInit()"),
+    "remnic query should cancel its own deferred startup maintenance before exit",
+  );
+});
+
+test("CLI xray does not wait for deferred QMD startup maintenance", async () => {
+  const src = await readCli();
+  const xrayStart = src.indexOf("async function cmdXray");
+  const versionsStart = src.indexOf("async function cmdVersions");
+  assert.ok(xrayStart >= 0, "cmdXray must exist");
+  assert.ok(versionsStart > xrayStart, "cmdVersions should follow cmdXray in CLI source");
+  const cmdXrayBody = src.slice(xrayStart, versionsStart);
+  assert.ok(
+    !cmdXrayBody.includes("await orchestrator.deferredReady"),
+    "remnic xray should not block foreground recall on startup index maintenance",
+  );
+  assert.ok(
+    cmdXrayBody.includes("orchestrator.abortDeferredInit()"),
+    "remnic xray should cancel its own deferred startup maintenance before exit",
+  );
+});
+
 test("CLI openclaw subcommand is in the main switch statement", async () => {
   const src = await readCli();
   assert.ok(

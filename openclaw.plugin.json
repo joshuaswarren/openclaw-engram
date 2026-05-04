@@ -28,14 +28,14 @@
       "provider": "openai",
       "method": "api-key",
       "choiceId": "remnic-openai-api-key",
-      "choiceLabel": "OpenAI API key for Remnic memory extraction",
-      "choiceHint": "Remnic sends memory extraction, consolidation, and embedding requests to OpenAI or the configured OpenAI-compatible endpoint unless you route those tasks through OpenClaw gateway/local LLM settings.",
+      "choiceLabel": "Optional OpenAI API key for Remnic plugin-mode extraction",
+      "choiceHint": "Not needed when Remnic uses the OpenClaw gateway model source. Set only if you intentionally use plugin mode with OpenAI or an OpenAI-compatible endpoint.",
       "groupId": "remnic-memory",
       "groupLabel": "Remnic memory",
       "optionKey": "openaiApiKey",
       "cliFlag": "--openai-api-key",
       "cliOption": "--openai-api-key <key>",
-      "cliDescription": "OpenAI API key used by Remnic memory extraction, consolidation, and embedding flows.",
+      "cliDescription": "Optional OpenAI API key used by Remnic plugin-mode extraction, consolidation, and embedding flows.",
       "onboardingScopes": [
         "text-inference"
       ]
@@ -107,7 +107,7 @@
     "properties": {
       "openaiApiKey": {
         "type": "string",
-        "description": "OpenAI API key (or set OPENAI_API_KEY env var). Remnic may send conversation and memory content to OpenAI or the configured OpenAI-compatible endpoint for extraction, consolidation, summarization, and embeddings."
+        "description": "Optional OpenAI API key for plugin mode (or set OPENAI_API_KEY env var). Ignored by default gateway-mode installs; in plugin mode, Remnic may send conversation and memory content to OpenAI or the configured OpenAI-compatible endpoint for extraction, consolidation, summarization, and embeddings."
       },
       "openaiBaseUrl": {
         "type": "string",
@@ -2874,8 +2874,8 @@
           "plugin",
           "gateway"
         ],
-        "default": "plugin",
-        "description": "LLM source: 'plugin' uses Engram's own openai/localLlm config; 'gateway' delegates to a gateway agent's model chain (agents.list[])."
+        "default": "gateway",
+        "description": "LLM source: 'gateway' delegates to a gateway agent's model chain (agents.list[]); 'plugin' uses Engram's own openai/localLlm config."
       },
       "gatewayAgentId": {
         "type": "string",
@@ -4610,7 +4610,7 @@
       "label": "OpenAI API Key",
       "sensitive": true,
       "placeholder": "sk-...",
-      "help": "API key for OpenAI (or use ${OPENAI_API_KEY})"
+      "help": "Optional API key for plugin mode only. Not needed when Model Source is gateway."
     },
     "openaiBaseUrl": {
       "label": "OpenAI Base URL",
@@ -5058,7 +5058,7 @@
     },
     "modelSource": {
       "label": "Model Source",
-      "help": "Route LLM calls through the gateway's agent model chain instead of Engram's own config. When set to 'gateway', localLlm and openai settings are ignored."
+      "help": "Route LLM calls through the gateway's agent model chain instead of Engram's own config. Default for OpenClaw installs. When set to 'gateway', localLlm and openai settings are ignored."
     },
     "gatewayAgentId": {
       "label": "Gateway Agent ID",

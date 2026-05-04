@@ -434,9 +434,18 @@ export function parseConfig(raw: unknown): PluginConfig {
     cfg = baseCfg;
   }
 
+  const modelSource =
+    cfg.modelSource === "gateway" ? "gateway" : "plugin";
+
   let apiKey: string | undefined;
   if (typeof cfg.openaiApiKey === "string" && cfg.openaiApiKey.length > 0) {
     apiKey = resolveEnvVars(cfg.openaiApiKey);
+  } else if (modelSource === "gateway") {
+    // Gateway mode deliberately delegates LLM calls to OpenClaw's model chain.
+    // Do not implicitly capture OPENAI_API_KEY from the Remnic process env here:
+    // doing so makes diagnostics look OpenAI-dependent and can accidentally
+    // route extraction through a stale direct key before gateway fallback.
+    apiKey = undefined;
   } else {
     apiKey = readEnvVar("OPENAI_API_KEY");
   }
@@ -2142,8 +2151,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     // Gateway config (passed from index.ts for fallback AI)
     gatewayConfig: cfg.gatewayConfig as PluginConfig["gatewayConfig"],
     // Gateway model source (v9.2) — route LLM calls through gateway agent model chain
-    modelSource:
-      cfg.modelSource === "gateway" ? "gateway" : "plugin",
+    modelSource,
     gatewayAgentId:
       typeof cfg.gatewayAgentId === "string" && cfg.gatewayAgentId.length > 0
         ? cfg.gatewayAgentId
