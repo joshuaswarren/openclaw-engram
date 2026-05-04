@@ -6418,6 +6418,7 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
     existingNewEntry?.config && typeof existingNewEntry.config === "object"
       ? (existingNewEntry.config as Record<string, unknown>)
       : {};
+  const defaultModelSource = !hasNew && !migrateLegacy ? "gateway" : "plugin";
 
   // Determine the final memoryDir. Operator-provided --memory-dir always wins.
   // On reinstall (no --memory-dir flag), preserve the currently configured value
@@ -6456,7 +6457,7 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
     ...legacyNonConfigFields,
     ...existingNewEntryFields,
     config: {
-      modelSource: "gateway",
+      modelSource: defaultModelSource,
       ...legacyConfigToMerge,
       ...existingNewEntryConfig,
       memoryDir,

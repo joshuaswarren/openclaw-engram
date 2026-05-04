@@ -56,10 +56,11 @@ function buildUpdatedOpenclawConfig(
     migrateLegacy && legacyEntry?.config && typeof legacyEntry.config === "object"
       ? (legacyEntry.config as Record<string, unknown>)
       : {};
+  const defaultModelSource = !existingNewEntry && !migrateLegacy ? "gateway" : "plugin";
 
   const newEntry: OpenclawPluginEntry = {
     config: {
-      modelSource: "gateway",
+      modelSource: defaultModelSource,
       ...legacyConfigToMerge,
       ...(existingNewEntry?.config && typeof existingNewEntry.config === "object" ? existingNewEntry.config : {}),
       memoryDir,
@@ -167,7 +168,28 @@ test("migration: merges legacy config values (except memoryDir)", () => {
   const newConfig = result.plugins!.entries!["openclaw-remnic"].config!;
   // Should inherit model from legacy
   assert.equal(newConfig.model, "gpt-5.2", "should inherit model from legacy entry");
+  assert.equal(newConfig.modelSource, "plugin", "implicit legacy installs should stay in plugin model mode");
   // memoryDir should be the new one (not the old one)
+  assert.equal(newConfig.memoryDir, "/new/path");
+});
+
+test("migration: preserves explicit legacy modelSource", () => {
+  const existing: OpenclawConfig = {
+    plugins: {
+      entries: {
+        "openclaw-engram": {
+          config: {
+            memoryDir: "/old/path",
+            modelSource: "gateway",
+          },
+        },
+      },
+    },
+  };
+  const result = buildUpdatedOpenclawConfig(existing, "/new/path", true);
+
+  const newConfig = result.plugins!.entries!["openclaw-remnic"].config!;
+  assert.equal(newConfig.modelSource, "gateway");
   assert.equal(newConfig.memoryDir, "/new/path");
 });
 

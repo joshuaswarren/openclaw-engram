@@ -130,7 +130,7 @@ test("CLI writes openclaw-remnic entry and memory slot", async () => {
 test("CLI openclaw install defaults Remnic to gateway model source", async () => {
   const src = await readCli();
   assert.ok(
-    src.includes('modelSource: "gateway"'),
+    src.includes('const defaultModelSource = !hasNew && !migrateLegacy ? "gateway" : "plugin"'),
     "OpenClaw install should prefer gateway LLM routing instead of requiring a Remnic OpenAI key",
   );
 });
