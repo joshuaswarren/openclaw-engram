@@ -1,6 +1,6 @@
 {
   "name": "@remnic/plugin-openclaw",
-  "version": "1.0.29",
+  "version": "1.0.30",
   "description": "OpenClaw adapter for Remnic memory with bundled @remnic/core runtime",
   "type": "module",
   "main": "dist/index.js",
@@ -31,6 +31,34 @@
     },
     "install": {
       "minHostVersion": ">=2026.4.8"
+    },
+    "environment": {
+      "externalServices": [
+        "openclaw-gateway-models",
+        "configured-llm-providers"
+      ],
+      "optionalEnv": [
+        "OPENAI_API_KEY",
+        "<PROVIDER>_API_KEY",
+        "<PROVIDER>_TOKEN"
+      ],
+      "configPaths": [
+        "~/.openclaw/agents/main/agent/models.json"
+      ],
+      "credentialSources": [
+        "OpenClaw runtime auth resolver",
+        "OpenClaw materialized provider model config",
+        "provider-specific environment variables"
+      ],
+      "dataSentToProviders": [
+        "conversation excerpts",
+        "memory excerpts",
+        "summaries",
+        "embedding inputs",
+        "active-recall query inputs",
+        "benchmark and evaluation inputs"
+      ],
+      "recommendedMode": "modelSource=gateway"
     }
   },
   "scripts": {

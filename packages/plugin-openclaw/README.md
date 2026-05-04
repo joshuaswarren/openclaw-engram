@@ -99,6 +99,11 @@ Credential and model-provider behavior is explicit:
 - Plugin/provider modes may read configured model credentials from the OpenClaw auth resolver, OpenClaw's materialized provider config at `~/.openclaw/agents/main/agent/models.json`, or provider-specific environment variables such as `<PROVIDER>_API_KEY` and `<PROVIDER>_TOKEN`.
 - Do not set `openaiApiKey` or provider environment variables for Remnic if you want all LLM-backed memory work routed through the gateway.
 
+The npm package also declares this surface in `package.json` under
+`openclaw.environment` so ClawHub and other registries can show the optional
+provider env vars, config path, and external-model routing behavior before
+installation.
+
 ## Plugin Inspection
 
 Run the OpenClaw plugin inspector with:
