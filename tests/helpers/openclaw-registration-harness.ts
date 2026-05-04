@@ -35,12 +35,15 @@ export function captureOpenClawRegistrationApi(options: {
   logger?: Record<"debug" | "info" | "warn" | "error", (...args: unknown[]) => void>;
 } = {}): CapturedOpenClawApi {
   const captured: Record<string, RegistrationArgs[]> = {};
+  const pluginConfig = options.pluginConfig ?? {};
+  const config = buildGatewayConfig(options.config, pluginConfig);
   const target: Record<string, unknown> = {
     id: SERVICE_ID,
+    pluginId: SERVICE_ID,
     label: options.label ?? "capture",
     registrationMode: options.registrationMode ?? "full",
-    pluginConfig: options.pluginConfig ?? {},
-    config: options.config ?? {},
+    pluginConfig,
+    config,
     runtime: options.runtime ?? {
       version: "2026.5.3-1",
       agent: {
@@ -93,6 +96,33 @@ export function captureOpenClawRegistrationApi(options: {
         .map(([value, secondary]) => registrationId(value, secondary))
         .filter((value): value is string => typeof value === "string")
         .sort();
+    },
+  };
+}
+
+function buildGatewayConfig(
+  config: Record<string, unknown> | undefined,
+  pluginConfig: Record<string, unknown>,
+): Record<string, unknown> {
+  const plugins =
+    config?.plugins && typeof config.plugins === "object" && !Array.isArray(config.plugins)
+      ? (config.plugins as Record<string, unknown>)
+      : {};
+  const entries =
+    plugins.entries && typeof plugins.entries === "object" && !Array.isArray(plugins.entries)
+      ? (plugins.entries as Record<string, unknown>)
+      : {};
+
+  return {
+    ...config,
+    plugins: {
+      ...plugins,
+      entries: {
+        [SERVICE_ID]: {
+          config: pluginConfig,
+        },
+        ...entries,
+      },
     },
   };
 }
