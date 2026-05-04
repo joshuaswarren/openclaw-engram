@@ -2154,45 +2154,59 @@ const pluginDefinition = {
         typeof (api as any).registerMemoryCapability === "function";
 
       if (sdkCaps.hasBeforePromptBuild) {
+        type HookApiWithOptions = {
+          on: (
+            event: string,
+            handler: (
+              event: Record<string, unknown>,
+              ctx: Record<string, unknown>,
+            ) => Promise<unknown>,
+            opts?: { timeoutMs?: number },
+          ) => void;
+        };
+
         // New SDK path — literal string for compat checker detection
-        api.on(
-          "before_prompt_build",
-          async (
-            event: Record<string, unknown>,
-            ctx: Record<string, unknown>,
-          ) => {
-            const sessionKey = (ctx?.sessionKey as string) ?? "default";
-            const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
-            // Reset the cache at the start of every turn so a recall miss
-            // can never serve stale memory from a prior turn through the
-            // capability promptBuilder fallback.
-            if (needsCacheFallback) {
-              cachePromptMemoryLines(
-                sessionKey,
-                sessionIdentity.providerThreadId,
-                null,
-              );
-            }
-            const result = await recallHookHandler("before_prompt_build", event, ctx);
-            // Populate cache for capability promptBuilder fallback using the
-            // same structured line format as the registerMemoryPromptSection path.
-            if (needsCacheFallback && result?.memoryLines) {
-              cachePromptMemoryLines(
-                sessionKey,
-                sessionIdentity.providerThreadId,
-                result.memoryLines,
-              );
-            }
-            // Strip the internal `memoryLines` field before returning to the
-            // gateway — it's a closure-private carrier for cache population
-            // and is not part of the hook contract.
-            if (result && "memoryLines" in result) {
-              const { memoryLines: _ml, ...gatewayResult } = result;
-              return Object.keys(gatewayResult).length > 0 ? gatewayResult : undefined;
-            }
-            return result;
-          },
-        );
+        ((api: HookApiWithOptions) => {
+          api.on(
+            "before_prompt_build",
+            async (
+              event: Record<string, unknown>,
+              ctx: Record<string, unknown>,
+            ) => {
+              const sessionKey = (ctx?.sessionKey as string) ?? "default";
+              const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
+              // Reset the cache at the start of every turn so a recall miss
+              // can never serve stale memory from a prior turn through the
+              // capability promptBuilder fallback.
+              if (needsCacheFallback) {
+                cachePromptMemoryLines(
+                  sessionKey,
+                  sessionIdentity.providerThreadId,
+                  null,
+                );
+              }
+              const result = await recallHookHandler("before_prompt_build", event, ctx);
+              // Populate cache for capability promptBuilder fallback using the
+              // same structured line format as the registerMemoryPromptSection path.
+              if (needsCacheFallback && result?.memoryLines) {
+                cachePromptMemoryLines(
+                  sessionKey,
+                  sessionIdentity.providerThreadId,
+                  result.memoryLines,
+                );
+              }
+              // Strip the internal `memoryLines` field before returning to the
+              // gateway — it's a closure-private carrier for cache population
+              // and is not part of the hook contract.
+              if (result && "memoryLines" in result) {
+                const { memoryLines: _ml, ...gatewayResult } = result;
+                return Object.keys(gatewayResult).length > 0 ? gatewayResult : undefined;
+              }
+              return result;
+            },
+            { timeoutMs: cfg.initGateTimeoutMs },
+          );
+        })(api as unknown as HookApiWithOptions);
       } else {
         // Legacy SDK path — literal string for compat checker detection.
         // Capability-only runtimes cannot reach this branch (they land on
