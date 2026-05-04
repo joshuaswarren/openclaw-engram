@@ -50,6 +50,34 @@
     "beforeReset": true
   },
   "contracts": {
+    "commands": [
+      "remnic"
+    ],
+    "hooks": [
+      "before_prompt_build",
+      "before_agent_start",
+      "agent_end",
+      "before_compaction",
+      "after_compaction",
+      "before_reset",
+      "session_start",
+      "session_end",
+      "before_tool_call",
+      "after_tool_call",
+      "llm_output",
+      "subagent_spawning",
+      "subagent_ended",
+      "commands.list"
+    ],
+    "memoryCapabilities": [
+      "openclaw-engram"
+    ],
+    "memoryPromptSections": [
+      "engram-memory"
+    ],
+    "services": [
+      "openclaw-engram"
+    ],
     "tools": [
       "compounding_promote_candidate",
       "compounding_weekly_synthesize",
@@ -5664,5 +5692,21 @@
       "advanced": true,
       "help": "Promote stored reasoning_trace memories to the top of recall results when the incoming query reads like a problem-solving ask. Default off; enable after benchmarking (issue #564)."
     }
+  },
+  "commandAliases": [
+    {
+      "name": "remnic",
+      "kind": "runtime-slash",
+      "cliCommand": "remnic"
+    }
+  ],
+  "activation": {
+    "onCommands": [
+      "remnic"
+    ],
+    "onCapabilities": [
+      "tool",
+      "hook"
+    ]
   }
 }
