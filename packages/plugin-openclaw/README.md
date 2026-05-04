@@ -120,6 +120,12 @@ CI jobs that provision OpenClaw should use
 `npm run check:openclaw-sdk-surface:required` or pass
 `-- --require --package-root <path>` so a missing SDK fails instead of skipping.
 
+Native memory registrars are tracked separately in
+[`docs/plugins/openclaw-native-memory-registrars.md`](../../docs/plugins/openclaw-native-memory-registrars.md).
+That spike explains why Remnic currently uses `registerMemoryCapability()` as
+the primary integration point instead of OpenClaw embedding, corpus supplement,
+or compaction-provider registrars.
+
 ## Slot Selection
 
 Remnic is an exclusive memory-slot plugin. When `plugins.slots.memory` points
