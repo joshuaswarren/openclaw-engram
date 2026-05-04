@@ -21,7 +21,7 @@ const REQUIRED_RUNTIME_SURFACE_KEYS = [
   "activeRecallAllowedChatTypes",
   "activeRecallQueryMode",
   "activeRecallPromptStyle",
-  "activeRecallPromptOverride",
+  "activeRecallCustomInstruction",
   "activeRecallPromptAppend",
   "activeRecallMaxSummaryChars",
   "activeRecallRecentUserTurns",

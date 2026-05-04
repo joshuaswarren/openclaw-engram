@@ -792,13 +792,13 @@
         "default": "balanced",
         "description": "Prompt assembly style for the active-recall surface."
       },
-      "activeRecallPromptOverride": {
+      "activeRecallCustomInstruction": {
         "type": "string",
-        "description": "Optional full prompt override for the active-recall surface."
+        "description": "Optional custom guidance for the active-recall builder."
       },
       "activeRecallPromptAppend": {
         "type": "string",
-        "description": "Optional prompt suffix appended to the active-recall system prompt."
+        "description": "Optional additional guidance appended to the active-recall builder."
       },
       "activeRecallMaxSummaryChars": {
         "type": "integer",
@@ -1334,7 +1334,7 @@
       "injectQuestions": {
         "type": "boolean",
         "default": false,
-        "description": "Inject the most relevant open question into the system prompt"
+        "description": "Include the most relevant open question in generated memory context"
       },
       "commitmentDecayDays": {
         "type": "number",
@@ -4788,7 +4788,7 @@
     },
     "injectQuestions": {
       "label": "Inject Questions",
-      "help": "Include the most relevant open question in the system prompt"
+      "help": "Include the most relevant open question in generated memory context"
     },
     "commitmentDecayDays": {
       "label": "Commitment Decay (days)",
