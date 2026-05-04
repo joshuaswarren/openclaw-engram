@@ -140,14 +140,14 @@ function registrationId(value: unknown, secondary: unknown): string | undefined 
   if (secondary && typeof secondary === "object") {
     const record = secondary as Record<string, unknown>;
     if (Array.isArray(record.descriptors)) {
-      return record.descriptors
+      const names = record.descriptors
         .map((descriptor) =>
           descriptor && typeof descriptor === "object"
             ? (descriptor as Record<string, unknown>).name
             : undefined,
         )
-        .filter((name): name is string => typeof name === "string")
-        .join(", ");
+        .filter((name): name is string => typeof name === "string" && name.length > 0);
+      return names.length > 0 ? names.join(", ") : undefined;
     }
   }
   return undefined;
