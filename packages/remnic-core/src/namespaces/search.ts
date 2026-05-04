@@ -110,15 +110,26 @@ export class NamespaceSearchRouter {
     execution?: SearchExecutionOptions,
   ): Promise<number> {
     const unique = Array.from(new Set(namespaces.map((value) => value.trim()).filter(Boolean)));
-    const results = await Promise.all(
+    const eligible = (await Promise.all(
       unique.map(async (namespace) => {
         const record = await this.backendRecordFor(namespace);
-        if (!record.available || record.collectionState === "missing") return 0;
-        await record.backend.update(execution);
-        return 1;
+        return record.available && record.collectionState !== "missing"
+          ? record
+          : null;
       }),
-    );
-    return results.reduce<number>((sum, v) => sum + v, 0);
+    )).filter((record): record is NamespaceBackendRecord => record !== null);
+
+    const globalRecord = eligible.find((record) => record.backend.updatesAllCollections?.() === true);
+    const scopedRecords = globalRecord
+      ? eligible.filter((record) => record.backend.updatesAllCollections?.() !== true)
+      : eligible;
+
+    await Promise.all([
+      globalRecord ? globalRecord.backend.update(execution) : Promise.resolve(),
+      ...scopedRecords.map((record) => record.backend.update(execution)),
+    ]);
+
+    return (globalRecord ? 1 : 0) + scopedRecords.length;
   }
 
   async embedNamespaces(namespaces: string[]): Promise<void> {

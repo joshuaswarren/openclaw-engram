@@ -56,9 +56,11 @@ function buildUpdatedOpenclawConfig(
     migrateLegacy && legacyEntry?.config && typeof legacyEntry.config === "object"
       ? (legacyEntry.config as Record<string, unknown>)
       : {};
+  const defaultModelSource = !existingNewEntry && !migrateLegacy ? "gateway" : "plugin";
 
   const newEntry: OpenclawPluginEntry = {
     config: {
+      modelSource: defaultModelSource,
       ...legacyConfigToMerge,
       ...(existingNewEntry?.config && typeof existingNewEntry.config === "object" ? existingNewEntry.config : {}),
       memoryDir,
@@ -104,6 +106,11 @@ test("fresh install: creates openclaw-remnic entry and slot", () => {
     result.plugins!.entries!["openclaw-remnic"].config?.memoryDir,
     memoryDir,
     "memoryDir should match",
+  );
+  assert.equal(
+    result.plugins!.entries!["openclaw-remnic"].config?.modelSource,
+    "gateway",
+    "fresh OpenClaw installs should route Remnic LLM calls through the gateway by default",
   );
 });
 
@@ -161,7 +168,28 @@ test("migration: merges legacy config values (except memoryDir)", () => {
   const newConfig = result.plugins!.entries!["openclaw-remnic"].config!;
   // Should inherit model from legacy
   assert.equal(newConfig.model, "gpt-5.2", "should inherit model from legacy entry");
+  assert.equal(newConfig.modelSource, "plugin", "implicit legacy installs should stay in plugin model mode");
   // memoryDir should be the new one (not the old one)
+  assert.equal(newConfig.memoryDir, "/new/path");
+});
+
+test("migration: preserves explicit legacy modelSource", () => {
+  const existing: OpenclawConfig = {
+    plugins: {
+      entries: {
+        "openclaw-engram": {
+          config: {
+            memoryDir: "/old/path",
+            modelSource: "gateway",
+          },
+        },
+      },
+    },
+  };
+  const result = buildUpdatedOpenclawConfig(existing, "/new/path", true);
+
+  const newConfig = result.plugins!.entries!["openclaw-remnic"].config!;
+  assert.equal(newConfig.modelSource, "gateway");
   assert.equal(newConfig.memoryDir, "/new/path");
 });
 
@@ -179,6 +207,26 @@ test("collision: updates existing openclaw-remnic entry memoryDir", () => {
   assert.equal(result.plugins!.entries!["openclaw-remnic"].config?.memoryDir, "/new/path");
   // debug: true should be preserved
   assert.equal(result.plugins!.entries!["openclaw-remnic"].config?.debug, true);
+});
+
+test("collision: preserves an existing explicit modelSource", () => {
+  const existing: OpenclawConfig = {
+    plugins: {
+      entries: {
+        "openclaw-remnic": {
+          config: {
+            memoryDir: "/old/path",
+            modelSource: "plugin",
+          },
+        },
+      },
+      slots: { memory: "openclaw-remnic" },
+    },
+  };
+  const result = buildUpdatedOpenclawConfig(existing, "/new/path", false);
+
+  assert.equal(result.plugins!.entries!["openclaw-remnic"].config?.modelSource, "plugin");
+  assert.equal(result.plugins!.entries!["openclaw-remnic"].config?.memoryDir, "/new/path");
 });
 
 test("slot: always set to openclaw-remnic when no legacy entry", () => {

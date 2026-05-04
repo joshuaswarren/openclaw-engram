@@ -3205,75 +3205,80 @@ async function cmdQuery(queryText: string, json: boolean, explain: boolean): Pro
   const config = parseConfig(remnicCfg);
   const orchestrator = new Orchestrator(config);
   await orchestrator.initialize();
-  await orchestrator.deferredReady;
   const service = new EngramAccessService(orchestrator);
 
-  if (explain) {
-    // `query --explain` is a core-install feature; if @remnic/bench is
-    // installed we use its full tier-breakdown explainer, otherwise we
-    // fall back to a minimal "run the recall and show timing" path so
-    // the flag keeps working without forcing users to install an
-    // optional package. (Codex feedback on PR #545)
-    const bench = await tryLoadBenchModule();
-    if (bench?.runExplain) {
-      const result = await bench.runExplain(service, queryText);
-      if (json) {
-        console.log(JSON.stringify(result, null, 2));
-      } else {
-        console.log(`Query: ${result.query}`);
-        console.log(`Tiers used: ${result.tiersUsed.join(" → ")}`);
-        console.log(`Total duration: ${result.totalDurationMs}ms`);
-        for (const t of result.tierResults) {
-          console.log(`  ${t.tier}: ${t.latencyMs}ms (${t.resultsCount} results)`);
+  try {
+    if (explain) {
+      // `query --explain` is a core-install feature; if @remnic/bench is
+      // installed we use its full tier-breakdown explainer, otherwise we
+      // fall back to a minimal "run the recall and show timing" path so
+      // the flag keeps working without forcing users to install an
+      // optional package. (Codex feedback on PR #545)
+      const bench = await tryLoadBenchModule();
+      if (bench?.runExplain) {
+        const result = await bench.runExplain(service, queryText);
+        if (json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          console.log(`Query: ${result.query}`);
+          console.log(`Tiers used: ${result.tiersUsed.join(" → ")}`);
+          console.log(`Total duration: ${result.totalDurationMs}ms`);
+          for (const t of result.tierResults) {
+            console.log(`  ${t.tier}: ${t.latencyMs}ms (${t.resultsCount} results)`);
+          }
         }
+        return;
+      }
+
+      const explainStart = Date.now();
+      const recallResult = await service.recall({ query: queryText, mode: "auto" });
+      const totalDurationMs = Date.now() - explainStart;
+      // recall() returns { count, results, memoryIds, ... } (see
+      // EngramAccessRecallResponse). A prior version of this fallback
+      // read .memories, which doesn't exist, so resultsCount was always
+      // 0 and users saw misleading explain output. (Codex feedback on
+      // PR #545.) Prefer the numeric count and fall back to
+      // results.length for robustness across future schema tweaks.
+      const resultsCount =
+        typeof recallResult.count === "number"
+          ? recallResult.count
+          : Array.isArray(recallResult.results)
+            ? recallResult.results.length
+            : 0;
+      const minimalExplain = {
+        query: queryText,
+        totalDurationMs,
+        resultsCount,
+        note: "Install @remnic/bench for a full tier-level explain breakdown.",
+      };
+      if (json) {
+        console.log(JSON.stringify(minimalExplain, null, 2));
+      } else {
+        console.log(`Query: ${minimalExplain.query}`);
+        console.log(`Total duration: ${minimalExplain.totalDurationMs}ms`);
+        console.log(`Results: ${minimalExplain.resultsCount}`);
+        console.log(`Note: ${minimalExplain.note}`);
       }
       return;
     }
 
-    const explainStart = Date.now();
-    const recallResult = await service.recall({ query: queryText, mode: "auto" });
-    const totalDurationMs = Date.now() - explainStart;
-    // recall() returns { count, results, memoryIds, ... } (see
-    // EngramAccessRecallResponse). A prior version of this fallback
-    // read .memories, which doesn't exist, so resultsCount was always
-    // 0 and users saw misleading explain output. (Codex feedback on
-    // PR #545.) Prefer the numeric count and fall back to
-    // results.length for robustness across future schema tweaks.
-    const resultsCount =
-      typeof recallResult.count === "number"
-        ? recallResult.count
-        : Array.isArray(recallResult.results)
-          ? recallResult.results.length
-          : 0;
-    const minimalExplain = {
-      query: queryText,
-      totalDurationMs,
-      resultsCount,
-      note: "Install @remnic/bench for a full tier-level explain breakdown.",
-    };
+    const result = await service.recall({ query: queryText, mode: "auto" });
     if (json) {
-      console.log(JSON.stringify(minimalExplain, null, 2));
+      console.log(JSON.stringify(result, null, 2));
     } else {
-      console.log(`Query: ${minimalExplain.query}`);
-      console.log(`Total duration: ${minimalExplain.totalDurationMs}ms`);
-      console.log(`Results: ${minimalExplain.resultsCount}`);
-      console.log(`Note: ${minimalExplain.note}`);
+      const memories = (result as { memories?: Array<{ content: string }> }).memories ?? [];
+      if (memories.length === 0) {
+        console.log("No results.");
+        return;
+      }
+      for (const m of memories) {
+        console.log(`- ${m.content}`);
+      }
     }
-    return;
-  }
-
-  const result = await service.recall({ query: queryText, mode: "auto" });
-  if (json) {
-    console.log(JSON.stringify(result, null, 2));
-  } else {
-    const memories = (result as { memories?: Array<{ content: string }> }).memories ?? [];
-    if (memories.length === 0) {
-      console.log("No results.");
-      return;
-    }
-    for (const m of memories) {
-      console.log(`- ${m.content}`);
-    }
+  } finally {
+    // One-shot CLI calls should not wait for or orphan deferred QMD
+    // maintenance; the daemon/gateway process performs full warmup instead.
+    orchestrator.abortDeferredInit();
   }
 }
 
@@ -3407,14 +3412,20 @@ async function cmdXray(rest: string[]): Promise<void> {
   await orchestrator.deferredReady;
   const service = new EngramAccessService(orchestrator);
 
-  await runXrayCommand(rest, {
-    recallXray: (request) => service.recallXray(request),
-    writeFile: async (filePath, data) => {
-      const { writeFile: fsWriteFile } = await import("node:fs/promises");
-      await fsWriteFile(filePath, data, "utf8");
-    },
-    stdout: (line) => console.log(line),
-  });
+  try {
+    await runXrayCommand(rest, {
+      recallXray: (request) => service.recallXray(request),
+      writeFile: async (filePath, data) => {
+        const { writeFile: fsWriteFile } = await import("node:fs/promises");
+        await fsWriteFile(filePath, data, "utf8");
+      },
+      stdout: (line) => console.log(line),
+    });
+  } finally {
+    // Xray is diagnostic, so it waits for deferred startup sync before recall;
+    // abort remains a no-op guard if startup behavior changes later.
+    orchestrator.abortDeferredInit();
+  }
 }
 
 // ── Page-level versioning (issue #371) ─────────────────────────────────────
@@ -6407,6 +6418,7 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
     existingNewEntry?.config && typeof existingNewEntry.config === "object"
       ? (existingNewEntry.config as Record<string, unknown>)
       : {};
+  const defaultModelSource = !hasNew && !migrateLegacy ? "gateway" : "plugin";
 
   // Determine the final memoryDir. Operator-provided --memory-dir always wins.
   // On reinstall (no --memory-dir flag), preserve the currently configured value
@@ -6445,6 +6457,7 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
     ...legacyNonConfigFields,
     ...existingNewEntryFields,
     config: {
+      modelSource: defaultModelSource,
       ...legacyConfigToMerge,
       ...existingNewEntryConfig,
       memoryDir,

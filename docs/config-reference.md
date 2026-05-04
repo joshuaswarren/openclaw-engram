@@ -8,7 +8,7 @@ Use `openclaw engram config-review` for opinionated tuning recommendations and `
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `openaiApiKey` | `(env fallback)` | OpenAI API key or `${ENV_VAR}` reference |
+| `openaiApiKey` | `(env fallback in plugin mode)` | Optional OpenAI API key or `${ENV_VAR}` reference. When `modelSource` is `gateway`, Remnic does not inherit `OPENAI_API_KEY`; gateway provider auth is used instead. |
 | `openaiBaseUrl` | `(env fallback)` | Override OpenAI API base URL (e.g. for proxies or compatible endpoints); falls back to `OPENAI_BASE_URL` env var |
 | `model` | `gpt-5.2` | OpenAI model for extraction and consolidation |
 | `reasoningEffort` | `low` | `none`, `low`, `medium`, `high` |
@@ -16,6 +16,8 @@ Use `openclaw engram config-review` for opinionated tuning recommendations and `
 | `workspaceDir` | `~/.openclaw/workspace` | Workspace root (IDENTITY.md location) |
 | `captureMode` | `implicit` | Memory write policy: `implicit`, `explicit`, or `hybrid` |
 | `debug` | `false` | Enable debug logging |
+
+OpenClaw installs default new Remnic entries to `modelSource: "gateway"` so LLM calls use the gateway agent model chain instead of requiring a Remnic-specific OpenAI API key.
 
 `captureMode` behavior:
 
@@ -472,7 +474,7 @@ Route all Engram LLM calls through the OpenClaw gateway's agent model chain inst
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `modelSource` | `plugin` | `plugin` uses Engram's own openai/localLlm config; `gateway` delegates to a gateway agent's model chain |
+| `modelSource` | `gateway` for new OpenClaw installs; `plugin` otherwise | `gateway` delegates to a gateway agent's model chain; `plugin` uses Engram's own openai/localLlm config |
 | `gatewayAgentId` | `""` | Agent persona ID from `openclaw.json → agents.list[]` for primary LLM calls (extraction, consolidation, summarization). Falls back to `agents.defaults.model` if empty. |
 | `fastGatewayAgentId` | `""` | Agent persona ID for fast-tier ops (rerank, entity summaries, compression guidelines). Uses `gatewayAgentId` chain when empty. |
 
@@ -480,7 +482,7 @@ When `modelSource` is `gateway`:
 
 - `localLlmEnabled` and the direct OpenAI client are bypassed for primary LLM dispatch — all LLM calls flow through `FallbackLlmClient` with the configured agent chain
 - Extraction and consolidation start on the configured gateway chain directly; the historical "falling back to gateway" wording only applies when Engram is still in `plugin` mode
-- The existing `openaiApiKey`, `model`, and `localLlm*` settings are ignored for LLM dispatch but retained as config for backward compatibility
+- The existing `openaiApiKey`, `model`, and `localLlm*` settings are ignored for LLM dispatch but retained as config for backward compatibility; `OPENAI_API_KEY` is not inherited in gateway mode
 - `localLlmFast*` settings are also bypassed when `fastGatewayAgentId` is set
 - **Reranking** uses the `fastGatewayAgentId` chain (or `gatewayAgentId` if fast is unset) instead of the local LLM — this can dramatically reduce rerank latency when the fast chain points at a cloud provider
 
@@ -1078,7 +1080,7 @@ This appendix is flattened from the runtime config schema and the live `parseCon
 
 | Setting | Default | Recommended |
 |---------|---------|-------------|
-| `openaiApiKey` | `(env fallback)` | `(env fallback)` |
+| `openaiApiKey` | `(env fallback in plugin mode)` | unset when `modelSource` is `gateway`; otherwise explicit key or `OPENAI_API_KEY` env fallback |
 | `openaiBaseUrl` | (unset) | (unset) |
 | `model` | `gpt-5.2` | `gpt-5.2` |
 | `reasoningEffort` | `low` | `low` |

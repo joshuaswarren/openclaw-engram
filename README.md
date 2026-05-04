@@ -36,7 +36,7 @@ OpenClaw's built-in memory works for simple cases, but it doesn't scale. It lack
 
 ## The Solution
 
-Remnic is an open-source, local-first memory system that replaces OpenClaw's default memory with something much more capable — while keeping everything on your machine. It watches your agent conversations, extracts durable knowledge, and injects the right memories back at the start of every session. Use OpenAI or a **local LLM** (Ollama, LM Studio, etc.) for extraction — your choice.
+Remnic is an open-source, local-first memory system that replaces OpenClaw's default memory with something much more capable — while keeping everything on your machine. It watches your agent conversations, extracts durable knowledge, and injects the right memories back at the start of every session. Route extraction through the OpenClaw gateway model chain, OpenAI, or a **local LLM** (Ollama, LM Studio, etc.) — your choice.
 
 Remnic is the **universal memory layer for AI agents**. It works natively with **[OpenClaw](https://github.com/openclaw/openclaw)**, **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)**, **[Codex CLI](https://github.com/openai/codex)**, **[Hermes Agent](https://github.com/NousResearch/hermes-agent)**, and any **MCP-compatible client** (Replit, Cursor, etc.). When you tell any agent a preference, every agent knows it — they share one memory store.
 
@@ -194,18 +194,19 @@ After installation, add the Remnic bridge plugin to your `openclaw.json`:
       "openclaw-remnic": {
         "enabled": true,
         "config": {
-          // Option 1: Use OpenAI for extraction:
-          "openaiApiKey": "${OPENAI_API_KEY}"
+          // Recommended for OpenClaw: use the gateway model chain.
+          "modelSource": "gateway",
+          "gatewayAgentId": "remnic-llm",
+          "fastGatewayAgentId": "remnic-llm-fast",
 
-          // Option 2: Use Remnic's local LLM path (plugin mode only; no API key needed):
+          // Optional: Use Remnic's local LLM path (plugin mode only; no API key needed):
           // "localLlmEnabled": true,
           // "localLlmUrl": "http://localhost:1234/v1",
           // "localLlmModel": "qwen2.5-32b-instruct"
 
-          // Option 3: Use the gateway model chain (primary path in gateway mode):
-          // "modelSource": "gateway",
-          // "gatewayAgentId": "remnic-llm",
-          // "fastGatewayAgentId": "remnic-llm-fast"
+          // Optional: Use OpenAI directly (plugin mode only):
+          // "modelSource": "plugin",
+          // "openaiApiKey": "${OPENAI_API_KEY}"
         }
       }
     }
@@ -943,7 +944,8 @@ OpenClaw plugin settings live in `openclaw.json` under `plugins.entries.openclaw
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `openaiApiKey` | `(env)` | OpenAI API key (optional when using a local LLM) |
+| `modelSource` | `gateway` for new OpenClaw installs; `plugin` otherwise | `gateway` routes LLM calls through OpenClaw agent model chains; `plugin` uses Remnic's own OpenAI/local LLM config |
+| `openaiApiKey` | `(env in plugin mode)` | Optional OpenAI API key. Not needed when `modelSource` is `gateway`; Remnic does not inherit `OPENAI_API_KEY` in gateway mode. |
 | `localLlmEnabled` | `false` | Enable Remnic's local LLM path when `modelSource` is `plugin` |
 | `localLlmUrl` | unset | Local LLM endpoint (e.g., `http://localhost:1234/v1`) |
 | `localLlmModel` | unset | Local model name (e.g., `qwen2.5-32b-instruct`) |
