@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { createRequire } from "node:module";
 import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -135,19 +134,14 @@ async function resolveInstalledOpenClawRoot() {
     return null;
   }
 
-  const requireAnchors = [
-    import.meta.url,
-    path.join(repoRoot, "package.json"),
-    path.join(repoRoot, "packages", "plugin-openclaw", "package.json"),
+  const packageRoots = [
+    path.join(repoRoot, "node_modules", "openclaw"),
+    path.join(repoRoot, "packages", "plugin-openclaw", "node_modules", "openclaw"),
   ];
-  for (const anchor of requireAnchors) {
-    try {
-      const require = createRequire(anchor);
-      const packageJsonPath = require.resolve("openclaw/package.json");
-      return path.dirname(packageJsonPath);
-    } catch {
-      // Try the next workspace anchor. OpenClaw is a peer dependency and may be
-      // installed under a package-local node_modules in filtered installs.
+  for (const packageRoot of packageRoots) {
+    const packageInfo = await stat(path.join(packageRoot, "package.json")).catch(() => null);
+    if (packageInfo?.isFile()) {
+      return packageRoot;
     }
   }
   return null;
@@ -156,7 +150,7 @@ async function resolveInstalledOpenClawRoot() {
 async function inspectOpenClawSurface(root) {
   const files = await collectFiles(root);
   const manifestFiles = files.filter((file) =>
-    /(?:^|\/)manifest(?:-registry)?\.d\.ts$/.test(file),
+    /^manifest(?:-registry)?\.d\.ts$/.test(path.basename(file)),
   );
   const contractFiles = manifestFiles.length > 0 ? manifestFiles : files;
   const registrars = new Set();
