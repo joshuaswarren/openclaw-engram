@@ -2870,10 +2870,11 @@
       },
       "modelSource": {
         "type": "string",
-        "enum": [
-          "plugin",
-          "gateway"
-        ],
+      "enum": [
+        "plugin",
+        "gateway"
+      ],
+      "default": "gateway",
       "description": "LLM source: 'gateway' delegates to a gateway agent's model chain (agents.list[]); 'plugin' uses Engram's own openai/localLlm config."
       },
       "gatewayAgentId": {
