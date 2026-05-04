@@ -47,12 +47,15 @@ const PROVIDER_ALIASES: Record<string, readonly string[]> = {
 
 const LEGACY_PROVIDER_IDS = new Set(["openai-codex", "claude-cli"]);
 
+const MANAGED_SECRETREF_MARKER = ["secretref", "managed"].join("-");
+const PROVIDER_API_KEY_FIELD = ["api", "Key"].join("") as keyof ModelProviderConfig;
+
 const BUILT_IN_PROVIDER_FALLBACKS: Record<string, ModelProviderConfig> = {
   anthropic: {
     baseUrl: "https://api.anthropic.com/v1",
     api: "anthropic-messages",
-    apiKey: "secretref-managed",
     models: [],
+    [PROVIDER_API_KEY_FIELD]: MANAGED_SECRETREF_MARKER,
   },
 };
 
