@@ -96,6 +96,16 @@ test("OpenClaw SDK surface check skips cleanly when OpenClaw is not installed", 
   assert.match(result.stdout, /OpenClaw SDK surface check skipped/);
 });
 
+test("OpenClaw SDK surface check can require an installed OpenClaw package", () => {
+  const result = runCheck([], {
+    NODE_PATH: path.join(os.tmpdir(), "remnic-missing-openclaw-node-path"),
+    REMNIC_OPENCLAW_SURFACE_REQUIRE: "1",
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /OpenClaw SDK surface check skipped/);
+});
+
 const expectedRegistrars = [
   "registerCli",
   "registerCliBackend",
