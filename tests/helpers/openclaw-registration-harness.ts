@@ -118,10 +118,10 @@ function buildGatewayConfig(
     plugins: {
       ...plugins,
       entries: {
+        ...entries,
         [SERVICE_ID]: {
           config: pluginConfig,
         },
-        ...entries,
       },
     },
   };
