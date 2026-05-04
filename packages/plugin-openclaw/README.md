@@ -114,6 +114,15 @@ guarded in the adapter, including `registerMemoryCapability`, `registerCli`,
 and `registerCommand`; keep runtime capture coverage for those surfaces in a
 separate adapter test slice.
 
+Run the deterministic OpenClaw adapter scenario suite with:
+
+```bash
+npm run test:openclaw-scenarios
+```
+
+The suite covers the registered memory tools and lifecycle hooks without live
+OpenClaw, LLM credentials, or network calls.
+
 ## SDK Surface Drift Check
 
 The adapter keeps a conservative OpenClaw SDK surface snapshot at
