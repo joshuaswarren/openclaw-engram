@@ -105,10 +105,11 @@ test("OpenClaw SDK surface check can require an installed OpenClaw package", () 
   assert.match(result.stderr, /OpenClaw SDK surface check skipped/);
 });
 
-test("OpenClaw SDK surface check resolves a package-local peer install", () => {
+test("OpenClaw SDK surface check resolves a package-local peer install", (t) => {
   const packageNodeModules = path.join(ROOT, "packages/plugin-openclaw/node_modules");
   const packageRoot = path.join(packageNodeModules, "openclaw");
   if (fs.existsSync(packageRoot)) {
+    t.skip("package-local OpenClaw peer already exists");
     return;
   }
 
