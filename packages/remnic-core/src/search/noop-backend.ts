@@ -45,6 +45,9 @@ export class NoopSearchBackend implements SearchBackend {
 
   async update(_execution?: SearchExecutionOptions): Promise<void> {}
   async updateCollection(_collection: string, _execution?: SearchExecutionOptions): Promise<void> {}
+  updatesAllCollections(): boolean {
+    return false;
+  }
   async embed(): Promise<void> {}
   async embedCollection(_collection: string): Promise<void> {}
 

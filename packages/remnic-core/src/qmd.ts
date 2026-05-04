@@ -1683,6 +1683,10 @@ export class QmdClient implements SearchBackend {
     );
   }
 
+  updatesAllCollections(): boolean {
+    return true;
+  }
+
   private async runUpdateForCollection(
     collection: string,
     options: { perCollectionThrottle: boolean; strict?: boolean },

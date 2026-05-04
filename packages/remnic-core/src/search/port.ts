@@ -63,6 +63,12 @@ export interface SearchBackend {
   update(execution?: SearchExecutionOptions): Promise<void>;
   updateCollection(collection: string, execution?: SearchExecutionOptions): Promise<void>;
   /**
+   * True when update() refreshes every indexed collection, not just this
+   * backend's configured collection. Namespace routers use this to avoid
+   * repeating the same expensive global update once per namespace.
+   */
+  updatesAllCollections?(): boolean;
+  /**
    * Optional strict refresh used by callers that must know whether a collection
    * was actually refreshed before writing success markers. Ordinary update
    * calls remain fail-open for migration/maintenance resilience.
