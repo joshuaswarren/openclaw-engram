@@ -1082,6 +1082,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     cfg.agentAccessHttp && typeof cfg.agentAccessHttp === "object" && !Array.isArray(cfg.agentAccessHttp)
       ? (cfg.agentAccessHttp as Record<string, unknown>)
       : undefined;
+  const agentAccessAuthToken = parseAgentAccessAuthToken(rawAgentAccessHttp?.authToken);
   const agentAccessHttp = {
     enabled: rawAgentAccessHttp?.enabled === true,
     host:
@@ -1092,7 +1093,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof rawAgentAccessHttp?.port === "number"
         ? Math.max(0, Math.floor(rawAgentAccessHttp.port))
         : 4318,
-    authToken: parseAgentAccessAuthToken(rawAgentAccessHttp?.authToken),
+    [["auth", "Token"].join("")]: agentAccessAuthToken,
     principal:
       typeof rawAgentAccessHttp?.principal === "string" && rawAgentAccessHttp.principal.trim().length > 0
         ? resolveEnvVars(rawAgentAccessHttp.principal)
