@@ -252,6 +252,198 @@ test("buildExplicitCueRecallSection does not leak the next action into step wind
   assert.doesNotMatch(section, /Action 24/);
 });
 
+test("buildExplicitCueRecallSection resolves action and observation labels when transcript turns are offset", async () => {
+  const messages = Array.from({ length: 130 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: `filler turn ${index}`,
+  }));
+  messages[101] = {
+    role: "assistant",
+    content: "[Observation 46]: rule `door` 3 steps to the left",
+  };
+  messages[102] = { role: "user", content: "[Action 47]: left" };
+  messages[103] = {
+    role: "assistant",
+    content: "[Observation 47]: rule `door` 2 steps to the left",
+  };
+  messages[104] = { role: "user", content: "[Action 48]: up" };
+  messages[105] = {
+    role: "assistant",
+    content: "[Observation 48]: rule `door` 2 steps to the left and 1 step down",
+  };
+  messages[106] = {
+    role: "user",
+    content: "[Action 49]: future action should not appear",
+  };
+  const engine = new FakeCueEngine({ "bench-session": messages });
+
+  const section = await buildExplicitCueRecallSection({
+    engine,
+    sessionId: "bench-session",
+    query: "In steps 47 and 48, what did the left then up maneuver do?",
+    maxChars: 4000,
+  });
+
+  assert.match(section, /Observation 46/);
+  assert.match(section, /Action 47/);
+  assert.match(section, /Observation 47/);
+  assert.match(section, /Action 48/);
+  assert.match(section, /Observation 48/);
+  assert.doesNotMatch(section, /Action 49/);
+});
+
+test("buildExplicitCueRecallSection ignores quoted labels when resolving trajectory turns", async () => {
+  const messages = Array.from({ length: 120 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: `filler turn ${index}`,
+  }));
+  messages[94] = { role: "user", content: "[Action 47]: fallback move" };
+  messages[95] = { role: "assistant", content: "[Observation 47]: fallback state" };
+  messages[101] = {
+    role: "assistant",
+    content: "The user later quoted [Action 47] while explaining an unrelated review.",
+  };
+  const engine = new FakeCueEngine({ "bench-session": messages });
+
+  const section = await buildExplicitCueRecallSection({
+    engine,
+    sessionId: "bench-session",
+    query: "What happened in step 47?",
+    maxChars: 4000,
+  });
+
+  assert.match(section, /fallback move/);
+  assert.match(section, /fallback state/);
+  assert.doesNotMatch(section, /unrelated review/);
+});
+
+test("buildExplicitCueRecallSection keeps searching past short quoted-label clusters", async () => {
+  const messages = Array.from({ length: 150 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: `filler turn ${index}`,
+  }));
+  for (let index = 0; index < 10; index += 1) {
+    const turnIndex = 70 + index * 2;
+    messages[turnIndex] = {
+      role: "assistant",
+      content: `[Action 47]: quoted by assistant ${index}`,
+    };
+    messages[turnIndex + 1] = {
+      role: "user",
+      content: `[Observation 47]: quoted by user ${index}`,
+    };
+  }
+  messages[110] = { role: "user", content: "[Action 47]: true move" };
+  messages[111] = { role: "assistant", content: "[Observation 47]: true state" };
+  const engine = new FakeCueEngine({ "bench-session": messages });
+
+  const section = await buildExplicitCueRecallSection({
+    engine,
+    sessionId: "bench-session",
+    query: "What happened in step 47?",
+    maxChars: 4000,
+  });
+
+  assert.match(section, /true move/);
+  assert.match(section, /true state/);
+  assert.doesNotMatch(section, /quoted by assistant/);
+  assert.doesNotMatch(section, /quoted by user/);
+});
+
+test("buildExplicitCueRecallSection keeps numeric fallback when label search is saturated", async () => {
+  const messages = Array.from({ length: 180 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: `filler turn ${index}`,
+  }));
+  for (let index = 0; index < 70; index += 1) {
+    messages[index] = {
+      role: index % 2 === 0 ? "user" : "assistant",
+      content:
+        index % 2 === 0
+          ? `[Action 47]: earlier duplicate ${index}`
+          : `[Observation 47]: earlier duplicate ${index}`,
+    };
+  }
+  messages[93] = { role: "assistant", content: "[Observation 46]: true prior" };
+  messages[94] = { role: "user", content: "[Action 47]: true move" };
+  messages[95] = { role: "assistant", content: "[Observation 47]: true state" };
+  const engine = new FakeCueEngine({ "bench-session": messages });
+
+  const section = await buildExplicitCueRecallSection({
+    engine,
+    sessionId: "bench-session",
+    query: "What happened in step 47?",
+    maxChars: 8000,
+  });
+
+  assert.match(section, /true prior/);
+  assert.match(section, /true move/);
+  assert.match(section, /true state/);
+});
+
+test("buildExplicitCueRecallSection skips unpaired label clusters before fallback evidence", async () => {
+  const messages = Array.from({ length: 140 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: `filler turn ${index}`,
+  }));
+  for (let index = 0; index < 35; index += 1) {
+    messages[index] = {
+      role: "user",
+      content: `[Action 47]: same-role quote ${index}`,
+    };
+  }
+  messages[93] = { role: "assistant", content: "[Observation 46] true prior" };
+  messages[94] = { role: "user", content: "[Action 47] true legacy move" };
+  messages[95] = { role: "assistant", content: "[Observation 47] true legacy state" };
+  const engine = new FakeCueEngine({ "bench-session": messages });
+
+  const section = await buildExplicitCueRecallSection({
+    engine,
+    sessionId: "bench-session",
+    query: "What happened in step 47?",
+    maxChars: 3000,
+  });
+
+  assert.match(section, /true prior/);
+  assert.match(section, /true legacy move/);
+  assert.match(section, /true legacy state/);
+  assert.doesNotMatch(section, /same-role quote/);
+});
+
+test("buildExplicitCueRecallSection prefers nearby legacy labels over early long quote pairs", async () => {
+  const messages = Array.from({ length: 140 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: `filler turn ${index}`,
+  }));
+  for (let index = 0; index < 3; index += 1) {
+    const turnIndex = index * 2;
+    const longQuote = "quoted detail ".repeat(250);
+    messages[turnIndex] = {
+      role: "user",
+      content: `[Action 47]: early quote pair ${index} ${longQuote}`,
+    };
+    messages[turnIndex + 1] = {
+      role: "assistant",
+      content: `[Observation 47]: early quote pair ${index} ${longQuote}`,
+    };
+  }
+  messages[93] = { role: "assistant", content: "[Observation 46] true prior" };
+  messages[94] = { role: "user", content: "[Action 47] true legacy move" };
+  messages[95] = { role: "assistant", content: "[Observation 47] true legacy state" };
+  const engine = new FakeCueEngine({ "bench-session": messages });
+
+  const section = await buildExplicitCueRecallSection({
+    engine,
+    sessionId: "bench-session",
+    query: "What happened in step 47?",
+    maxChars: 3000,
+  });
+
+  assert.match(section, /true legacy move/);
+  assert.match(section, /true legacy state/);
+  assert.doesNotMatch(section, /early quote pair/);
+});
+
 test("buildExplicitCueRecallSection expands direct turn references", async () => {
   const engine = new FakeCueEngine({
     "bench-session": [
