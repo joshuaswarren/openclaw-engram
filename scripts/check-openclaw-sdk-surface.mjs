@@ -131,13 +131,22 @@ function expandTilde(value) {
 }
 
 async function resolveInstalledOpenClawRoot() {
-  try {
-    const require = createRequire(import.meta.url);
-    const packageJsonPath = require.resolve("openclaw/package.json");
-    return path.dirname(packageJsonPath);
-  } catch {
-    return null;
+  const requireAnchors = [
+    import.meta.url,
+    path.join(repoRoot, "package.json"),
+    path.join(repoRoot, "packages", "plugin-openclaw", "package.json"),
+  ];
+  for (const anchor of requireAnchors) {
+    try {
+      const require = createRequire(anchor);
+      const packageJsonPath = require.resolve("openclaw/package.json");
+      return path.dirname(packageJsonPath);
+    } catch {
+      // Try the next workspace anchor. OpenClaw is a peer dependency and may be
+      // installed under a package-local node_modules in filtered installs.
+    }
   }
+  return null;
 }
 
 async function inspectOpenClawSurface(root) {

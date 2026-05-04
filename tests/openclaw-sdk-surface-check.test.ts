@@ -105,6 +105,26 @@ test("OpenClaw SDK surface check can require an installed OpenClaw package", () 
   assert.match(result.stderr, /OpenClaw SDK surface check skipped/);
 });
 
+test("OpenClaw SDK surface check resolves a package-local peer install", () => {
+  const packageNodeModules = path.join(ROOT, "packages/plugin-openclaw/node_modules");
+  const packageRoot = path.join(packageNodeModules, "openclaw");
+  if (fs.existsSync(packageRoot)) {
+    return;
+  }
+
+  try {
+    fs.mkdirSync(packageRoot, { recursive: true });
+    writeFakeOpenClawPackage(packageRoot);
+
+    const result = runCheck([]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /OpenClaw SDK surface matches expected snapshot/);
+  } finally {
+    fs.rmSync(packageRoot, { force: true, recursive: true });
+  }
+});
+
 const expectedRegistrars = [
   "registerCli",
   "registerCliBackend",
@@ -155,15 +175,27 @@ function withFakeOpenClawSurface(
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "remnic-openclaw-sdk-"));
   try {
     const packageRoot = path.join(tempRoot, "openclaw");
-    fs.mkdirSync(packageRoot);
-    fs.writeFileSync(
-      path.join(packageRoot, "package.json"),
-      JSON.stringify({ name: "openclaw", version: "0.0.0-test" }, null, 2),
-    );
+    writeFakeOpenClawPackage(packageRoot);
     const sdkPath = path.join(packageRoot, "plugin-sdk.d.ts");
-    fs.writeFileSync(
+    fn({
+      packageRoot,
+      expectedPath: path.join(tempRoot, "expected.json"),
       sdkPath,
-      `
+    });
+  } finally {
+    fs.rmSync(tempRoot, { force: true, recursive: true });
+  }
+}
+
+function writeFakeOpenClawPackage(packageRoot: string) {
+  fs.mkdirSync(packageRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(packageRoot, "package.json"),
+    JSON.stringify({ name: "openclaw", version: "0.0.0-test" }, null, 2),
+  );
+  fs.writeFileSync(
+    path.join(packageRoot, "plugin-sdk.d.ts"),
+    `
 export function registerCli(): void;
 export function registerCliBackend(): void;
 export function registerCommand(): void;
@@ -207,15 +239,7 @@ export interface PluginContracts {
   tools?: string[];
 }
 `,
-    );
-    fn({
-      packageRoot,
-      expectedPath: path.join(tempRoot, "expected.json"),
-      sdkPath,
-    });
-  } finally {
-    fs.rmSync(tempRoot, { force: true, recursive: true });
-  }
+  );
 }
 
 function writeExpectedSurface(expectedPath: string) {

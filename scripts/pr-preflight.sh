@@ -51,6 +51,7 @@ if [[ "$MODE" == "quick" ]]; then
   # Registration contract tests catch silent lifecycle breakage (issues #282, #285).
   # Run first — registration regressions are caught before slower tests.
   run pnpm exec tsx --test tests/openclaw-registration-capture.test.ts
+  run npm run check:openclaw-sdk-surface
   run pnpm exec tsx --test tests/openclaw-sdk-surface-check.test.ts
   run npm test -- tests/register-multi-registry.test.ts
   run npm test -- tests/intent.test.ts
