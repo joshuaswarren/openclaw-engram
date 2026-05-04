@@ -57,6 +57,7 @@ test("full modern registration captures hooks, commands, tools, memory capabilit
     assert.ok(memoryCapability, "registerMemoryCapability should be called");
     const capability = memoryCapability[0] as Record<string, unknown>;
     assert.equal(typeof capability.promptBuilder, "function");
+    assert.equal(typeof capability.flushPlanResolver, "function");
     assert.equal(typeof capability.runtime, "object");
     assert.equal(typeof capability.publicArtifacts, "object");
 
@@ -65,10 +66,62 @@ test("full modern registration captures hooks, commands, tools, memory capabilit
       1,
       "modern SDKs should still receive the prompt-section registration",
     );
+    assert.equal(
+      capture.registrations("registerMemoryRuntime").length,
+      1,
+      "split SDKs should receive the same Remnic runtime surface",
+    );
+    assert.equal(
+      capture.registrations("registerMemoryFlushPlan").length,
+      1,
+      "split SDKs should receive the same Remnic flush-plan surface",
+    );
+    const [flushPlanResolver] = capture.registrations("registerMemoryFlushPlan")[0] as [
+      () => Record<string, unknown>,
+    ];
+    assert.equal(
+      flushPlanResolver().relativePath,
+      "state/plugins/openclaw-remnic/flush-plan.md",
+    );
+    assert.deepEqual(capture.registrationNames("registerMemoryCorpusSupplement"), [
+      "openclaw-remnic:remnic-memory-corpus",
+    ]);
 
     assert.equal(capture.registrations("registerMemoryEmbeddingProvider").length, 0);
-    assert.equal(capture.registrations("registerMemoryCorpusSupplement").length, 0);
     assert.equal(capture.registrations("registerCompactionProvider").length, 0);
+  });
+});
+
+test("shim plugin ids keep flush-plan artifacts in their own plugin state namespace", async () => {
+  await withCapturedRegistration((plugin) => {
+    const capture = captureOpenClawRegistrationApi();
+
+    plugin.register.call({ id: "openclaw-engram" }, capture.api);
+
+    const [flushPlanResolver] = capture.registrations("registerMemoryFlushPlan")[0] as [
+      () => Record<string, unknown>,
+    ];
+    assert.equal(
+      flushPlanResolver().relativePath,
+      "state/plugins/openclaw-engram/flush-plan.md",
+    );
+    assert.deepEqual(capture.registrationNames("registerMemoryCorpusSupplement"), [
+      "openclaw-engram:remnic-memory-corpus",
+    ]);
+  });
+});
+
+test("split-only SDKs receive runtime and flush-plan registrations without unified capability", async () => {
+  await withCapturedRegistration((plugin) => {
+    const capture = captureOpenClawRegistrationApi({
+      disabledMethods: ["registerMemoryCapability"],
+    });
+
+    plugin.register(capture.api);
+
+    assert.equal(capture.registrations("registerMemoryCapability").length, 0);
+    assert.equal(capture.registrations("registerMemoryRuntime").length, 1);
+    assert.equal(capture.registrations("registerMemoryFlushPlan").length, 1);
   });
 });
 
@@ -112,6 +165,9 @@ test("passive slot mode suppresses active memory hooks and capability surfaces",
     assert.equal(capture.registrations("registerMemoryCapability").length, 0);
     assert.equal(capture.registrations("registerMemoryPromptSection").length, 0);
     assert.equal(capture.registrations("registerCommand").length, 0);
+    assert.deepEqual(capture.registrationNames("registerMemoryCorpusSupplement"), [
+      "openclaw-remnic:remnic-memory-corpus",
+    ]);
 
     assert.ok(
       capture.registrationNames("registerTool").includes("memory_search"),

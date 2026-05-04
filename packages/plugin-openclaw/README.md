@@ -205,6 +205,15 @@ Remnic supports the following OpenClaw memory integration points:
 | `before_prompt_build` hook (new SDK) | Supported | 2026.3.22 |
 | `registerMemoryPromptSection()` (structured builder) | Supported | 2026.3.22 |
 | `registerMemoryCapability()` (unified capability) | Supported | 2026.4.5 |
+| `registerMemoryRuntime()` (split runtime surface) | Supported | 2026.4.x |
+| `registerMemoryFlushPlan()` (split flush-plan surface) | Supported | 2026.4.x |
+| `registerMemoryCorpusSupplement()` (read-only corpus supplement) | Supported | 2026.4.x |
+
+On current OpenClaw SDKs, Remnic registers both the unified memory capability
+and the compatible split surfaces. That lets OpenClaw consume Remnic through
+the active memory runtime, the explicit flush-plan resolver, and additive
+corpus search/read APIs without changing Remnic's ownership of storage,
+retrieval, extraction, and QMD behavior.
 
 ### Public Artifacts (memory-wiki bridge)
 
@@ -223,6 +232,10 @@ When `registerMemoryCapability` is available, Remnic registers a `publicArtifact
 Private runtime state (state/, questions/, transcripts/, archive/, buffers) is never exposed.
 
 With this feature, `openclaw wiki status` reports Remnic artifacts, and `memory-wiki` bridge mode can discover and ingest them.
+
+The corpus supplement exposes read-only search/get access to Remnic memories as
+the `remnic` corpus under a service-scoped supplement ID. It does not expose
+private plugin state, transcript buffers, auth metadata, or artifact paths.
 
 ### Session Lifecycle
 

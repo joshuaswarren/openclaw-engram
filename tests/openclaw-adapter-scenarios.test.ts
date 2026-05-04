@@ -106,6 +106,129 @@ test("scenario: memory_store writes through the registered tool and memory_searc
   });
 });
 
+test("scenario: native corpus supplement searches and reads Remnic memory", async () => {
+  await withScenarioRegistration(async ({ capture, orchestrator, memoryDir }) => {
+    const corpus = capture.registrations("registerMemoryCorpusSupplement")[0]?.[0] as
+      | {
+          search(params: {
+            query: string;
+            maxResults?: number;
+            agentSessionKey?: string;
+          }): Promise<Array<Record<string, unknown>>>;
+          get(params: {
+            lookup: string;
+            fromLine?: number;
+            lineCount?: number;
+          }): Promise<Record<string, unknown> | null>;
+        }
+      | undefined;
+    assert.equal(typeof corpus?.search, "function");
+    assert.equal(typeof corpus?.get, "function");
+
+    orchestrator.searchAcrossNamespaces = async (params: Record<string, unknown>) => {
+      assert.equal(params.query, "compact dashboards");
+      assert.equal(params.maxResults, 2);
+      assert.deepEqual(params.namespaces, ["default"]);
+      return [
+        {
+          id: "memory-dashboard-preference",
+          path: "facts/dashboard.md",
+          score: 0.91,
+          snippet: "Dashboards should stay compact.",
+          metadata: { updatedAt: "2026-05-04T12:00:00.000Z" },
+        },
+      ];
+    };
+
+    const searchResults = await corpus!.search({
+      query: "compact dashboards",
+      maxResults: 2,
+      agentSessionKey: "corpus-session",
+    });
+
+    assert.deepEqual(searchResults[0], {
+      corpus: "remnic",
+      path: "facts/dashboard.md",
+      title: "memory-dashboard-preference",
+      kind: "memory",
+      score: 0.91,
+      snippet: "Dashboards should stay compact.",
+      id: "memory-dashboard-preference",
+      startLine: 1,
+      endLine: 1,
+      citation: "facts/dashboard.md",
+      source: "remnic",
+      provenanceLabel: "Remnic",
+      sourceType: "memory",
+      sourcePath: "facts/dashboard.md",
+      updatedAt: "2026-05-04T12:00:00.000Z",
+    });
+
+    orchestrator.storage.readAllMemories = async () => [
+      {
+        path: path.join(memoryDir, "facts", "dashboard.md"),
+        frontmatter: {
+          id: "memory-dashboard-preference",
+          category: "preference",
+          updated: "2026-05-04T12:00:00.000Z",
+        },
+        content: "first line\nsecond line\nthird line",
+      },
+    ];
+    orchestrator.getStorageForNamespace = async () => orchestrator.storage;
+
+    const readResult = await corpus!.get({
+      lookup: String(searchResults[0].path),
+      fromLine: 2,
+      lineCount: 1,
+    });
+
+    assert.deepEqual(readResult, {
+      corpus: "remnic",
+      path: "facts/dashboard.md",
+      title: "memory-dashboard-preference",
+      kind: "preference",
+      content: "second line",
+      fromLine: 2,
+      lineCount: 1,
+      id: "memory-dashboard-preference",
+      provenanceLabel: "Remnic",
+      sourceType: "memory",
+      sourcePath: "facts/dashboard.md",
+      updatedAt: "2026-05-04T12:00:00.000Z",
+    });
+
+    orchestrator.storage.readAllMemories = async () => [
+      {
+        path: path.join(memoryDir, "artifacts", "private.md"),
+        frontmatter: {
+          id: "artifact-by-id",
+          category: "preference",
+          updated: "2026-05-04T12:00:00.000Z",
+        },
+        content: "private artifact content",
+      },
+    ];
+    assert.equal(await corpus!.get({ lookup: "artifact-by-id" }), null);
+
+    orchestrator.searchAcrossNamespaces = async () => {
+      throw new Error("search unavailable");
+    };
+    await assert.rejects(
+      corpus!.search({ query: "compact dashboards" }),
+      /Remnic corpus search failed: search unavailable/,
+    );
+
+    orchestrator.storage.readAllMemories = async () => {
+      throw new Error("store locked");
+    };
+    await assert.rejects(
+      corpus!.get({ lookup: "facts/dashboard.md" }),
+      /Remnic corpus get failed: store locked/,
+    );
+  });
+});
+
 test("scenario: prompt injection precomputes recall and serves the cached prompt-section builder", async () => {
   await withScenarioRegistration(async ({ capture, orchestrator }) => {
     let recallCount = 0;
