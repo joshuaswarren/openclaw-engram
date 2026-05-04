@@ -1,6 +1,6 @@
 import { log } from "./logger.js";
 import type { PluginConfig } from "./types.js";
-import { existsSync, readFileSync } from "node:fs";
+import fs from "node:fs";
 import os from "node:os";
 import type { ModelRegistry } from "./model-registry.js";
 import { launchProcessSync } from "./runtime/child-process.js";
@@ -387,12 +387,12 @@ export class LocalLlmClient {
       const homeDir = this.resolveHomeDir();
       const settingsPath = `${homeDir}/.cache/lm-studio/settings.json`;
 
-      if (!existsSync(settingsPath)) {
+      if (!fs.existsSync(settingsPath)) {
         log.debug(`LM Studio settings: file not found at ${settingsPath}`);
         return null;
       }
 
-      const content = readFileSync(settingsPath, "utf-8");
+      const content = fs.readFileSync(settingsPath, "utf-8");
       const settings = JSON.parse(content) as {
         defaultContextLength?: {
           type?: string;
@@ -431,7 +431,7 @@ export class LocalLlmClient {
         "/opt/homebrew/bin/lms",
       ];
 
-      const lmsPath = lmsPaths.find((p) => p.length > 0 && existsSync(p));
+      const lmsPath = lmsPaths.find((p) => p.length > 0 && fs.existsSync(p));
       if (!lmsPath) {
         log.debug(`LMS CLI: not found in standard locations (checked: ${lmsPaths.join(", ")})`);
         return null;

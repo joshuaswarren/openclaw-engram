@@ -804,7 +804,7 @@ export interface PluginConfig {
   activeRecallAllowedChatTypes: ActiveRecallChatType[];
   activeRecallQueryMode: ActiveRecallQueryMode;
   activeRecallPromptStyle: ActiveRecallPromptStyle;
-  activeRecallPromptOverride: string | null;
+  activeRecallCustomInstruction: string | null;
   activeRecallPromptAppend: string | null;
   activeRecallMaxSummaryChars: number;
   activeRecallRecentUserTurns: number;

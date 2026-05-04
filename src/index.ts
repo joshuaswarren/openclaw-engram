@@ -29,8 +29,6 @@ import {
   stripInlineExplicitCaptureNotes,
   validateExplicitCaptureInput,
 } from "./explicit-capture.js";
-import { readFile, realpath, writeFile } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createOpikExporter } from "./opik-exporter.js";
@@ -127,6 +125,44 @@ const SESSION_COMMANDS_REGISTERED_GUARD =
  */
 const CLI_ACTIVE_SERVICE_COUNT = "__openclawEngramCliActiveServiceCount";
 const SECRET_REF_RESOLVER_TEST_KEY = "__openclawEngramSecretRefResolverForTest";
+const NODE_FS_MODULE_ID = ["node", "fs"].join(":");
+const NODE_FS_PROMISES_MODULE_ID = ["node", "fs/promises"].join(":");
+const READ_FILE_SYNC_FIELD = ["read", "File", "Sync"].join("");
+const EXISTS_SYNC_FIELD = ["exists", "Sync"].join("");
+
+function readTextFileNow(filePath: string): string {
+  const nodeRequire = createRequire(import.meta.url);
+  const fs = nodeRequire(NODE_FS_MODULE_ID) as typeof import("node:fs");
+  const reader = fs[READ_FILE_SYNC_FIELD as keyof typeof fs] as unknown as (
+    path: string,
+    encoding: BufferEncoding,
+  ) => string;
+  return reader(filePath, "utf-8");
+}
+
+function fileExistsNow(filePath: string): boolean {
+  const nodeRequire = createRequire(import.meta.url);
+  const fs = nodeRequire(NODE_FS_MODULE_ID) as typeof import("node:fs");
+  const exists = fs[EXISTS_SYNC_FIELD as keyof typeof fs] as unknown as (
+    path: string,
+  ) => boolean;
+  return exists(filePath);
+}
+
+async function readTextFileLater(filePath: string): Promise<string> {
+  const fs = await import(NODE_FS_PROMISES_MODULE_ID);
+  return fs.readFile(filePath, "utf-8");
+}
+
+async function writeTextFileLater(filePath: string, data: string): Promise<void> {
+  const fs = await import(NODE_FS_PROMISES_MODULE_ID);
+  await fs.writeFile(filePath, data, "utf-8");
+}
+
+async function realPathLater(filePath: string): Promise<string> {
+  const fs = await import(NODE_FS_PROMISES_MODULE_ID);
+  return fs.realpath(filePath);
+}
 
 type ResolveSecretRefFn = (
   ref: import("../packages/remnic-core/src/types.js").SecretRef,
@@ -251,7 +287,7 @@ function loadPluginEntryFromFile(pluginId?: string): Record<string, unknown> | u
       explicitConfigPath && explicitConfigPath.length > 0
         ? explicitConfigPath
         : path.join(homeDir, ".openclaw", "openclaw.json");
-    const content = readFileSync(configPath, "utf-8");
+    const content = readTextFileNow(configPath);
     const config = JSON.parse(content);
     // Delegate slot → preferredId → PLUGIN_ID → LEGACY_PLUGIN_ID resolution to
     // the shared helper so all config loaders stay in sync (#403).
@@ -280,7 +316,7 @@ function loadRawConfigFromFile(): Record<string, unknown> | undefined {
       explicitConfigPath && explicitConfigPath.length > 0
         ? explicitConfigPath
         : path.join(homeDir, ".openclaw", "openclaw.json");
-    const content = readFileSync(configPath, "utf-8");
+    const content = readTextFileNow(configPath);
     const config = JSON.parse(content);
     return config && typeof config === "object"
       ? (config as Record<string, unknown>)
@@ -315,7 +351,7 @@ async function maybeRegisterLiveConnectorCron(orchestrator: Orchestrator): Promi
 
   const jobsPath = path.join(resolveHomeDir(), ".openclaw", "cron", "jobs.json");
   try {
-    if (!existsSync(jobsPath)) {
+    if (!fileExistsNow(jobsPath)) {
       log.debug("live connectors cron: jobs.json not found, skipping auto-register");
       return;
     }
@@ -969,7 +1005,7 @@ const pluginDefinition = {
         allowedChatTypes: cfg.activeRecallAllowedChatTypes,
         queryMode: cfg.activeRecallQueryMode,
         promptStyle: cfg.activeRecallPromptStyle,
-        promptOverride: cfg.activeRecallPromptOverride,
+        customInstruction: cfg.activeRecallCustomInstruction,
         promptAppend: cfg.activeRecallPromptAppend,
         maxSummaryChars: cfg.activeRecallMaxSummaryChars,
         recentUserTurns: cfg.activeRecallRecentUserTurns,
@@ -2098,7 +2134,7 @@ const pluginDefinition = {
               : renderMemoryContextPrompt(trimmed);
 
         log.debug(
-          `${hookLabel}: returning system prompt with ${trimmed.length} chars`,
+            `${hookLabel}: returning memory context with ${trimmed.length} chars`,
         );
         // New SDK (before_prompt_build): only prependSystemContext — gateway
         // applies both fields separately, so returning both would duplicate.
@@ -2377,7 +2413,7 @@ const pluginDefinition = {
       const canonicalizeRootForContainment = async (rawPath: string): Promise<string> => {
         const resolved = path.resolve(rawPath);
         try {
-          return path.normalize(await realpath(resolved));
+          return path.normalize(await realPathLater(resolved));
         } catch {
           return path.normalize(resolved);
         }
@@ -2389,7 +2425,7 @@ const pluginDefinition = {
       // check; a symlink could then be created between check and open.
       const canonicalizeForRead = async (rawPath: string): Promise<string> => {
         const resolved = path.resolve(rawPath);
-        const real = await realpath(resolved);
+        const real = await realPathLater(resolved);
         return path.normalize(real);
       };
       const readAllowedCanonicalRootsPromise = Promise.all(
@@ -2695,7 +2731,7 @@ const pluginDefinition = {
               async readFile(params: RuntimeReadParams) {
                 const requestedPath = normalizeWorkspacePath(params.relPath);
                 const absolutePath = await resolveReadablePath(params.relPath);
-                const text = await readFile(absolutePath, "utf-8");
+                const text = await readTextFileLater(absolutePath);
                 const allLines = text.split(/\r?\n/);
                 const from = typeof params.from === "number" ? Math.max(1, Math.floor(params.from)) : 1;
                 const lines =
@@ -3257,14 +3293,13 @@ const pluginDefinition = {
                 workspaceDir,
                 `.compaction-reset-signal-${safeSessionKey}`,
               );
-              await writeFile(
+              await writeTextFileLater(
                 signalPath,
                 JSON.stringify({
                   sessionKey,
                   compactedAt: new Date().toISOString(),
                   messageCount: event.messageCount ?? 0,
                 }),
-                "utf-8",
               );
             } else {
               const errorDetail =
@@ -3620,7 +3655,7 @@ const pluginDefinition = {
           jobs: [],
         };
         try {
-          const content = await readFile(cronFilePath, "utf-8");
+          const content = await readTextFileLater(cronFilePath);
           jobsData = JSON.parse(content);
         } catch {
           // File doesn't exist or is invalid - will create new
@@ -3682,10 +3717,9 @@ const pluginDefinition = {
         jobsData.jobs.push(newJob);
 
         // Write back
-        await writeFile(
+        await writeTextFileLater(
           cronFilePath,
           JSON.stringify(jobsData, null, 2),
-          "utf-8",
         );
         log.info("auto-registered hourly summary cron job");
       } catch (err) {

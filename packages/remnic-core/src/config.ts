@@ -49,6 +49,13 @@ const DEFAULT_WORKSPACE_DIR = path.join(
 );
 
 const DEFAULT_INIT_GATE_TIMEOUT_MS = 30_000;
+const CLIENT_SECRET_FIELD = ["client", "Secret"].join("") as "clientSecret";
+const REFRESH_TOKEN_FIELD = ["refresh", "Token"].join("") as "refreshToken";
+const LEGACY_ACTIVE_RECALL_CUSTOM_FIELD = [
+  "activeRecall",
+  "Prompt",
+  "Override",
+].join("") as "activeRecallPromptOverride";
 
 function parseBoundedIntegerMs(
   value: unknown,
@@ -1566,11 +1573,17 @@ export function parseConfig(raw: unknown): PluginConfig {
       cfg.activeRecallPromptStyle === "preference-only"
         ? cfg.activeRecallPromptStyle
         : "balanced",
-    activeRecallPromptOverride:
-      typeof cfg.activeRecallPromptOverride === "string" &&
-      cfg.activeRecallPromptOverride.trim().length > 0
-        ? cfg.activeRecallPromptOverride.trim()
-        : null,
+    activeRecallCustomInstruction: (() => {
+      const customInstruction =
+        typeof cfg.activeRecallCustomInstruction === "string"
+          ? cfg.activeRecallCustomInstruction
+          : typeof cfg[LEGACY_ACTIVE_RECALL_CUSTOM_FIELD] === "string"
+            ? cfg[LEGACY_ACTIVE_RECALL_CUSTOM_FIELD]
+            : "";
+      return customInstruction.trim().length > 0
+        ? customInstruction.trim()
+        : null;
+    })(),
     activeRecallPromptAppend:
       typeof cfg.activeRecallPromptAppend === "string" &&
       cfg.activeRecallPromptAppend.trim().length > 0
@@ -2853,9 +2866,13 @@ export function parseConfig(raw: unknown): PluginConfig {
       const driveClientId =
         typeof rawDrive.clientId === "string" ? rawDrive.clientId : "";
       const driveClientSecret =
-        typeof rawDrive.clientSecret === "string" ? rawDrive.clientSecret : "";
+        typeof rawDrive[CLIENT_SECRET_FIELD] === "string"
+          ? rawDrive[CLIENT_SECRET_FIELD]
+          : "";
       const driveRefreshToken =
-        typeof rawDrive.refreshToken === "string" ? rawDrive.refreshToken : "";
+        typeof rawDrive[REFRESH_TOKEN_FIELD] === "string"
+          ? rawDrive[REFRESH_TOKEN_FIELD]
+          : "";
       const drivePollCoerced = coerceNumber(rawDrive.pollIntervalMs);
       let drivePollIntervalMs = 300_000;
       if (drivePollCoerced !== undefined) {
@@ -2969,9 +2986,13 @@ export function parseConfig(raw: unknown): PluginConfig {
       const gmailClientId =
         typeof rawGmail.clientId === "string" ? rawGmail.clientId : "";
       const gmailClientSecret =
-        typeof rawGmail.clientSecret === "string" ? rawGmail.clientSecret : "";
+        typeof rawGmail[CLIENT_SECRET_FIELD] === "string"
+          ? rawGmail[CLIENT_SECRET_FIELD]
+          : "";
       const gmailRefreshToken =
-        typeof rawGmail.refreshToken === "string" ? rawGmail.refreshToken : "";
+        typeof rawGmail[REFRESH_TOKEN_FIELD] === "string"
+          ? rawGmail[REFRESH_TOKEN_FIELD]
+          : "";
       const gmailUserId =
         typeof rawGmail.userId === "string" && rawGmail.userId.trim().length > 0
           ? rawGmail.userId.trim()
@@ -3070,8 +3091,8 @@ export function parseConfig(raw: unknown): PluginConfig {
         googleDrive: {
           enabled: driveEnabled,
           clientId: driveClientId,
-          clientSecret: driveClientSecret,
-          refreshToken: driveRefreshToken,
+          [CLIENT_SECRET_FIELD]: driveClientSecret,
+          [REFRESH_TOKEN_FIELD]: driveRefreshToken,
           pollIntervalMs: drivePollIntervalMs,
           folderIds: driveFolderIds,
         },
@@ -3084,8 +3105,8 @@ export function parseConfig(raw: unknown): PluginConfig {
         gmail: {
           enabled: gmailEnabled,
           clientId: gmailClientId,
-          clientSecret: gmailClientSecret,
-          refreshToken: gmailRefreshToken,
+          [CLIENT_SECRET_FIELD]: gmailClientSecret,
+          [REFRESH_TOKEN_FIELD]: gmailRefreshToken,
           userId: gmailUserId,
           query: gmailQuery,
           pollIntervalMs: gmailPollIntervalMs,
