@@ -70,7 +70,13 @@ if (!packageRootInfo?.isDirectory()) {
   process.exit(1);
 }
 
-const surface = await inspectOpenClawSurface(packageRoot);
+let surface;
+try {
+  surface = await inspectOpenClawSurface(packageRoot);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
 if (args.write) {
   await writeFile(expectedPath, `${JSON.stringify(surface, null, 2)}\n`);
   console.log(`Updated ${path.relative(repoRoot, expectedPath)}`);
@@ -149,6 +155,11 @@ async function resolveInstalledOpenClawRoot() {
 
 async function inspectOpenClawSurface(root) {
   const files = await collectFiles(root);
+  if (files.length === 0) {
+    throw new Error(
+      `OpenClaw SDK surface check failed: no SDK declaration files found under ${root}. Build OpenClaw or pass --package-root to a package containing dist/plugin-sdk declarations.`,
+    );
+  }
   const manifestFiles = files.filter((file) =>
     /^manifest(?:-registry)?\.d\.ts$/.test(path.basename(file)),
   );
@@ -219,7 +230,11 @@ async function collectFiles(root) {
         stack.push(fullPath);
         continue;
       }
-      if (!/\.(?:cjs|cts|d\.ts|js|json|mjs|mts|ts)$/.test(entry.name)) continue;
+      if (!/\.d\.ts$/.test(entry.name)) continue;
+      const relativePath = path.relative(root, fullPath).split(path.sep).join("/");
+      if (relativePath !== "plugin-sdk.d.ts" && !relativePath.includes("plugin-sdk/")) {
+        continue;
+      }
       const info = await stat(fullPath).catch(() => null);
       if (info && info.size <= 500_000) files.push(fullPath);
     }

@@ -105,6 +105,28 @@ test("OpenClaw SDK surface check can require an installed OpenClaw package", () 
   assert.match(result.stderr, /OpenClaw SDK surface check skipped/);
 });
 
+test("OpenClaw SDK surface check fails clearly when SDK declarations are missing", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "remnic-openclaw-no-sdk-"));
+  try {
+    fs.writeFileSync(
+      path.join(tempRoot, "package.json"),
+      JSON.stringify({ name: "openclaw", version: "0.0.0-test" }, null, 2),
+    );
+    fs.writeFileSync(
+      path.join(tempRoot, "internal.ts"),
+      "export function registerMemoryInternalHelper() {}\n",
+    );
+
+    const result = runCheck(["--package-root", tempRoot]);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /no SDK declaration files found/);
+    assert.doesNotMatch(result.stderr, /registerMemoryInternalHelper/);
+  } finally {
+    fs.rmSync(tempRoot, { force: true, recursive: true });
+  }
+});
+
 test("OpenClaw SDK surface check resolves a package-local peer install", (t) => {
   const packageNodeModules = path.join(ROOT, "packages/plugin-openclaw/node_modules");
   const packageRoot = path.join(packageNodeModules, "openclaw");
