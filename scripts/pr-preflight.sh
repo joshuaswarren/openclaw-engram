@@ -41,7 +41,6 @@ needs_entity_hardening() {
 run npm run check-types
 run npm run check-config-contract
 run npm run plugin:inspect
-run env REMNIC_OPENCLAW_SURFACE_REQUIRE=1 npm run check:openclaw-sdk-surface
 run bash scripts/check-review-patterns.sh
 
 if needs_entity_hardening; then

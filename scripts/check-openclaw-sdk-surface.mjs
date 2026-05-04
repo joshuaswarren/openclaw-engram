@@ -57,7 +57,7 @@ if (!packageRoot) {
   const message =
     "OpenClaw SDK surface check skipped: `openclaw` is not installed. " +
     "Install the peer package or pass --package-root to check a specific checkout.";
-  if (process.env.REMNIC_OPENCLAW_SURFACE_REQUIRE === "1") {
+  if (args.require || process.env.REMNIC_OPENCLAW_SURFACE_REQUIRE === "1") {
     console.error(message);
     process.exit(1);
   }
@@ -100,6 +100,10 @@ function parseArgs(rawArgs) {
     const arg = rawArgs[index];
     if (arg === "--write") {
       parsed.write = true;
+      continue;
+    }
+    if (arg === "--require") {
+      parsed.require = true;
       continue;
     }
     if (arg === "--package-root" || arg === "--expected") {

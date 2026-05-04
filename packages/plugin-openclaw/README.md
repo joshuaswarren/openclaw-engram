@@ -116,6 +116,9 @@ The adapter keeps a conservative OpenClaw SDK surface snapshot at
 with `-- --package-root <path>` to check a local OpenClaw checkout. When an
 upstream SDK change is intentional, review the adapter impact first, then
 refresh the snapshot with `npm run check:openclaw-sdk-surface -- --write`.
+CI jobs that provision OpenClaw should use
+`npm run check:openclaw-sdk-surface:required` or pass
+`-- --require --package-root <path>` so a missing SDK fails instead of skipping.
 
 ## Slot Selection
 
