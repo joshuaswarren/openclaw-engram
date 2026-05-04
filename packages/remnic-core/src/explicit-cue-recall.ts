@@ -46,6 +46,9 @@ const TURN_REFERENCE_WINDOW_RADIUS = 0;
 const LEXICAL_CUE_WINDOW_RADIUS = 1;
 const LEXICAL_CUE_SEARCH_LIMIT = 3;
 const LEXICAL_CUE_MAX_TOKENS = 400;
+const CONTENT_LABEL_SEARCH_LIMIT = 64;
+const CONTENT_LABEL_MAX_TOKENS = 2_000;
+const CONTENT_LABEL_MAX_PAIRED_WINDOWS_PER_REFERENCE = 1;
 const LATEST_STATE_CUES = new Set([
   "as of",
   "currently",
@@ -298,6 +301,14 @@ async function collectTurnReferenceEvidence(options: {
     return;
   }
 
+  await collectContentLabelReferenceEvidence({
+    engine: options.engine,
+    sessionId: options.sessionId,
+    references,
+    evidenceItems: options.evidenceItems,
+    seenTurns: options.seenTurns,
+  });
+
   const windows = new Map<string, { fromTurn: number; toTurn: number }>();
   for (const reference of references) {
     for (const center of candidateTurnIndexesForReference(reference)) {
@@ -327,6 +338,214 @@ async function collectTurnReferenceEvidence(options: {
       expanded,
     );
   }
+}
+
+async function collectContentLabelReferenceEvidence(options: {
+  engine: ExplicitCueRecallEngine;
+  sessionId?: string;
+  references: ExplicitTurnReference[];
+  evidenceItems: Array<{
+    id: string;
+    sessionId: string;
+    turnIndex: number;
+    role: string;
+    content: string;
+  }>;
+  seenTurns: Set<string>;
+}): Promise<Set<number>> {
+  const resolved = new Set<number>();
+
+  for (const reference of options.references) {
+    if (reference.includeDirectTurn) {
+      continue;
+    }
+
+    const hits = await searchReferenceContentLabels(
+      options.engine,
+      reference.number,
+      options.sessionId,
+    );
+    if (hits.length === 0) {
+      continue;
+    }
+
+    resolved.add(reference.number);
+    let appendedWindows = 0;
+    for (const hit of hits) {
+      if (appendedWindows >= CONTENT_LABEL_MAX_PAIRED_WINDOWS_PER_REFERENCE) {
+        break;
+      }
+
+      const { fromTurn, toTurn } = contentLabelEvidenceWindow(hit);
+      const expanded = await options.engine.expandContext(
+        hit.session_id,
+        fromTurn,
+        toTurn,
+        CONTENT_LABEL_MAX_TOKENS,
+      );
+      if (!expandedHasPairedTrajectoryLabels(expanded, reference.number)) {
+        continue;
+      }
+      if (expanded.length === 0) {
+        appendEvidenceItem(options.evidenceItems, options.seenTurns, {
+          id: `${hit.session_id}:${hit.turn_index}`,
+          sessionId: hit.session_id,
+          turnIndex: hit.turn_index,
+          role: hit.role,
+          content: hit.content,
+        });
+        continue;
+      }
+      appendExpandedEvidence(
+        options.evidenceItems,
+        options.seenTurns,
+        hit.session_id,
+        expanded,
+      );
+      appendedWindows += 1;
+    }
+  }
+
+  return resolved;
+}
+
+async function searchReferenceContentLabels(
+  engine: ExplicitCueRecallEngine,
+  referenceNumber: number,
+  sessionId?: string,
+): Promise<
+  Array<{
+    turn_index: number;
+    role: string;
+    content: string;
+    session_id: string;
+    labelKind: "action" | "observation";
+  }>
+> {
+  const hits = new Map<
+    string,
+    {
+      turn_index: number;
+      role: string;
+      content: string;
+      session_id: string;
+      labelKind: "action" | "observation";
+    }
+  >();
+
+  for (const labelKind of ["action", "observation"] as const) {
+    const label = labelKind === "action" ? "Action" : "Observation";
+    for (const query of [`[${label} ${referenceNumber}]`, `${label} ${referenceNumber}`]) {
+      const results = await engine.searchContextFull(
+        query,
+        CONTENT_LABEL_SEARCH_LIMIT,
+        sessionId,
+      );
+      for (const result of results) {
+        if (
+          !isReferenceLabelRole(result.role, labelKind) ||
+          !contentHasReferenceLabel(result.content, labelKind, referenceNumber)
+        ) {
+          continue;
+        }
+        hits.set(`${result.session_id}:${result.turn_index}:${labelKind}`, {
+          turn_index: result.turn_index,
+          role: result.role,
+          content: result.content,
+          session_id: result.session_id,
+          labelKind,
+        });
+      }
+    }
+  }
+
+  const numericCandidates = candidateTurnIndexesForReference({
+    number: referenceNumber,
+    includeDirectTurn: false,
+  });
+  return [...hits.values()].sort((left, right) => {
+    const sessionOrder = left.session_id.localeCompare(right.session_id);
+    if (sessionOrder !== 0) {
+      return sessionOrder;
+    }
+    const leftDistance = nearestTurnDistance(left.turn_index, numericCandidates);
+    const rightDistance = nearestTurnDistance(right.turn_index, numericCandidates);
+    if (leftDistance !== rightDistance) {
+      return leftDistance - rightDistance;
+    }
+    return left.turn_index - right.turn_index || left.labelKind.localeCompare(right.labelKind);
+  });
+}
+
+function nearestTurnDistance(turnIndex: number, candidates: readonly number[]): number {
+  let nearest = Number.POSITIVE_INFINITY;
+  for (const candidate of candidates) {
+    nearest = Math.min(nearest, Math.abs(turnIndex - candidate));
+  }
+  return nearest;
+}
+
+function contentLabelEvidenceWindow(hit: {
+  turn_index: number;
+  labelKind: "action" | "observation";
+}): { fromTurn: number; toTurn: number } {
+  if (hit.labelKind === "action") {
+    return {
+      fromTurn: Math.max(0, hit.turn_index - 1),
+      toTurn: hit.turn_index + 1,
+    };
+  }
+
+  return {
+    fromTurn: Math.max(0, hit.turn_index - 1),
+    toTurn: hit.turn_index,
+  };
+}
+
+function contentHasReferenceLabel(
+  content: string,
+  labelKind: "action" | "observation",
+  referenceNumber: number,
+): boolean {
+  const label = labelKind === "action" ? "Action" : "Observation";
+  const escapedNumber = String(referenceNumber).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `^\\s*\\[\\s*${label}\\s+${escapedNumber}\\s*\\]\\s*(?::\\s*)?`,
+    "i",
+  ).test(content);
+}
+
+function isReferenceLabelRole(
+  role: string,
+  labelKind: "action" | "observation",
+): boolean {
+  if (labelKind === "action") {
+    return role === "user";
+  }
+  return role === "assistant";
+}
+
+function expandedHasPairedTrajectoryLabels(
+  expanded: Array<{ role: string; content: string }>,
+  referenceNumber: number,
+): boolean {
+  let hasAction = false;
+  let hasObservation = false;
+  for (const message of expanded) {
+    if (
+      isReferenceLabelRole(message.role, "action") &&
+      contentHasReferenceLabel(message.content, "action", referenceNumber)
+    ) {
+      hasAction = true;
+    }
+    if (
+      isReferenceLabelRole(message.role, "observation") &&
+      contentHasReferenceLabel(message.content, "observation", referenceNumber)
+    ) {
+      hasObservation = true;
+    }
+  }
+  return hasAction && hasObservation;
 }
 
 async function collectLexicalCueEvidence(options: {

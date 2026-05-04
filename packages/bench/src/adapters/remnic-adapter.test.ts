@@ -424,6 +424,44 @@ test("adapter recall keeps AMA explicit step prompts focused on the cited window
   }
 });
 
+test("adapter recall resolves AMA step labels when stored transcript turns are offset", async () => {
+  const adapter = await createRemnicAdapter();
+
+  try {
+    const preamble = Array.from({ length: 60 }, (_, index) => ({
+      role: (index % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+      content: `preamble turn ${index}`,
+    }));
+    const trace = Array.from({ length: 52 }, (_, index) => [
+      {
+        role: "user" as const,
+        content: `[Action ${index}]: move-${index}`,
+      },
+      {
+        role: "assistant" as const,
+        content: `[Observation ${index}]: state-${index}`,
+      },
+    ]).flat();
+
+    await adapter.store("ama-ep-offset", [...preamble, ...trace]);
+    await adapter.drain?.();
+
+    const recalled = await adapter.recall(
+      "ama-ep-offset",
+      "In steps 47 and 48, what did the maneuver accomplish?",
+      24_000,
+    );
+
+    assert.match(recalled, /## Explicit Cue Evidence/);
+    assert.match(recalled, /\[Observation 46\]: state-46/);
+    assert.match(recalled, /\[Action 47\]: move-47/);
+    assert.match(recalled, /\[Observation 48\]: state-48/);
+    assert.doesNotMatch(recalled, /\[Action 49\]: move-49/);
+  } finally {
+    await adapter.destroy();
+  }
+});
+
 test("adapter recall preserves long explicit reference lists", async () => {
   const adapter = await createRemnicAdapter();
 
