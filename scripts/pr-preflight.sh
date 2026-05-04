@@ -53,14 +53,15 @@ if [[ "$MODE" == "quick" ]]; then
   run pnpm exec tsx --test tests/openclaw-registration-capture.test.ts
   run npm run check:openclaw-sdk-surface
   run pnpm exec tsx --test tests/openclaw-sdk-surface-check.test.ts
-  run npm test -- tests/register-multi-registry.test.ts
-  run npm test -- tests/intent.test.ts
-  run npm test -- tests/runtime-input-guards.test.ts
-  run npm test -- tests/artifact-recall-limit.test.ts
-  run npm test -- tests/artifact-status-snapshot.test.ts
-  run npm test -- tests/recall-no-recall-short-circuit.test.ts
-  run npm test -- tests/orchestrator-path-filter.test.ts
-  run npm test -- tests/artifact-cache.test.ts
+  run npm run test:openclaw-scenarios
+  run pnpm exec tsx --test tests/register-multi-registry.test.ts
+  run pnpm exec tsx --test tests/intent.test.ts
+  run pnpm exec tsx --test tests/runtime-input-guards.test.ts
+  run pnpm exec tsx --test tests/artifact-recall-limit.test.ts
+  run pnpm exec tsx --test tests/artifact-status-snapshot.test.ts
+  run pnpm exec tsx --test tests/recall-no-recall-short-circuit.test.ts
+  run pnpm exec tsx --test tests/orchestrator-path-filter.test.ts
+  run pnpm exec tsx --test tests/artifact-cache.test.ts
 else
   run npm test
   run npm run build
