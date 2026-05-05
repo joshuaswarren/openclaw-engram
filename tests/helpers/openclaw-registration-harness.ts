@@ -8,6 +8,7 @@ export interface CapturedOpenClawApi {
 }
 
 const SERVICE_ID = "openclaw-remnic";
+const LEGACY_SERVICE_ID = "openclaw-engram";
 const GLOBAL_KEYS = [
   `__openclawEngramRegistered::${SERVICE_ID}`,
   `__openclawEngramHookApis::${SERVICE_ID}`,
@@ -17,6 +18,14 @@ const GLOBAL_KEYS = [
   `__openclawEngramAccessHttpAuthState::${SERVICE_ID}`,
   `__openclawEngramServiceStarted::${SERVICE_ID}`,
   `__openclawEngramInitPromise::${SERVICE_ID}`,
+  `__openclawEngramRegistered::${LEGACY_SERVICE_ID}`,
+  `__openclawEngramHookApis::${LEGACY_SERVICE_ID}`,
+  `__openclawEngramOrchestrator::${LEGACY_SERVICE_ID}`,
+  `__openclawEngramAccessService::${LEGACY_SERVICE_ID}`,
+  `__openclawEngramAccessHttpServer::${LEGACY_SERVICE_ID}`,
+  `__openclawEngramAccessHttpAuthState::${LEGACY_SERVICE_ID}`,
+  `__openclawEngramServiceStarted::${LEGACY_SERVICE_ID}`,
+  `__openclawEngramInitPromise::${LEGACY_SERVICE_ID}`,
   "__openclawEngramOrchestrator",
   "__openclawEngramCliRegistered",
   "__openclawEngramCliActiveServiceCount",
@@ -32,11 +41,13 @@ export function captureOpenClawRegistrationApi(options: {
   config?: Record<string, unknown>;
   registrationMode?: "full" | "setup-only" | "setup-runtime";
   runtime?: Record<string, unknown>;
+  disabledMethods?: string[];
   logger?: Record<"debug" | "info" | "warn" | "error", (...args: unknown[]) => void>;
 } = {}): CapturedOpenClawApi {
   const captured: Record<string, RegistrationArgs[]> = {};
   const pluginConfig = options.pluginConfig ?? {};
   const config = buildGatewayConfig(options.config, pluginConfig);
+  const disabledMethods = new Set(options.disabledMethods ?? []);
   const target: Record<string, unknown> = {
     id: SERVICE_ID,
     pluginId: SERVICE_ID,
@@ -68,6 +79,9 @@ export function captureOpenClawRegistrationApi(options: {
     get(currentTarget, property) {
       if (property in currentTarget) {
         return currentTarget[property as keyof typeof currentTarget];
+      }
+      if (typeof property === "string" && disabledMethods.has(property)) {
+        return undefined;
       }
       if (property === "on") {
         return (...args: RegistrationArgs) => capture("on", args);
